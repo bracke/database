@@ -1,0 +1,23 @@
+with "config/database_config.gpr";
+
+library project Database is
+   for Source_Dirs use ("src");
+   for Object_Dir use "obj";
+   for Library_Dir use "lib";
+   for Library_Name use "database";
+   for Library_Kind use "static";
+
+
+   package Compiler is
+      for Default_Switches ("Ada") use Database_Config.Ada_Compiler_Switches & ("-gnat2022","-gnatyM120","-gnatX", "-gnata");
+   end Compiler;
+
+   package Binder is
+      for Switches ("Ada") use ("-Es"); --  Symbolic traceback
+   end Binder;
+
+   package Install is
+      for Artifacts (".") use ("share");
+   end Install;
+
+end Database;

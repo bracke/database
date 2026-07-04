@@ -1,0 +1,714 @@
+{
+  "project": {
+    "name": "database",
+    "language": "Ada 2022",
+    "kind": "Ada-native strictly typed relational storage engine",
+    "sql": false,
+    "parser": false,
+    "server_mode": false,
+    "distributed_clustering": false,
+    "runtime_reflection": false
+  },
+  "core_rules": {
+    "ada_api_primary": true,
+    "explicit_schemas": true,
+    "explicit_mapping_functions": [
+      "To_Row",
+      "From_Row",
+      "Key_Of"
+    ],
+    "all_reads_writes_through_transactions": true,
+    "public_text_api": [
+      "Wide_Wide_String",
+      "Unbounded_Wide_Wide_String"
+    ],
+    "tests": "AUnit",
+    "gnatdoc_param_return_required": true,
+    "no_goto": true,
+    "no_reserved_words_as_identifiers": true,
+    "ordinary_corruption_uses_status_results": true
+  },
+  "non_goals": [
+    "SQL",
+    "SQL parser",
+    "runtime reflection",
+    "automatic Ada record persistence",
+    "Ada record memory layout serialization",
+    "distributed clustering",
+    "server mode"
+  ],
+  "counts": {
+    "source_specs": 96,
+    "source_bodies": 96,
+    "packages": 96,
+    "test_specs": 33,
+    "test_bodies": 35,
+    "test_assertions_detected": 1161,
+    "registered_aunit_routines_detected": 214,
+    "examples": 16,
+    "spark_projects": 6
+  },
+  "packages": [
+    {
+      "name": "Database.Aggregate_Functions",
+      "spec": "src/database-aggregate_functions.ads",
+      "body": "src/database-aggregate_functions.adb"
+    },
+    {
+      "name": "Database.Aggregates",
+      "spec": "src/database-aggregates.ads",
+      "body": "src/database-aggregates.adb"
+    },
+    {
+      "name": "Database.Backup",
+      "spec": "src/database-backup.ads",
+      "body": "src/database-backup.adb"
+    },
+    {
+      "name": "Database.Backup_Format",
+      "spec": "src/database-backup_format.ads",
+      "body": "src/database-backup_format.adb"
+    },
+    {
+      "name": "Database.Catalog",
+      "spec": "src/database-catalog.ads",
+      "body": "src/database-catalog.adb"
+    },
+    {
+      "name": "Database.Check",
+      "spec": "src/database-check.ads",
+      "body": "src/database-check.adb"
+    },
+    {
+      "name": "Database.Check_Constraints",
+      "spec": "src/database-check_constraints.ads",
+      "body": "src/database-check_constraints.adb"
+    },
+    {
+      "name": "Database.Checkpointing",
+      "spec": "src/database-checkpointing.ads",
+      "body": "src/database-checkpointing.adb"
+    },
+    {
+      "name": "Database.Checksums",
+      "spec": "src/database-checksums.ads",
+      "body": "src/database-checksums.adb"
+    },
+    {
+      "name": "Database.Collations",
+      "spec": "src/database-collations.ads",
+      "body": "src/database-collations.adb"
+    },
+    {
+      "name": "Database.Constraints",
+      "spec": "src/database-constraints.ads",
+      "body": "src/database-constraints.adb"
+    },
+    {
+      "name": "Database.Crash_Harness",
+      "spec": "src/database-crash_harness.ads",
+      "body": "src/database-crash_harness.adb"
+    },
+    {
+      "name": "Database.Crypto",
+      "spec": "src/database-crypto.ads",
+      "body": "src/database-crypto.adb"
+    },
+    {
+      "name": "Database.Crypto_Checks",
+      "spec": "src/database-crypto_checks.ads",
+      "body": "src/database-crypto_checks.adb"
+    },
+    {
+      "name": "Database.Cursors",
+      "spec": "src/database-cursors.ads",
+      "body": "src/database-cursors.adb"
+    },
+    {
+      "name": "Database.Date_Time",
+      "spec": "src/database-date_time.ads",
+      "body": "src/database-date_time.adb"
+    },
+    {
+      "name": "Database.Diagnostics.Runtime",
+      "spec": "src/database-diagnostics-runtime.ads",
+      "body": "src/database-diagnostics-runtime.adb"
+    },
+    {
+      "name": "Database.Diagnostics",
+      "spec": "src/database-diagnostics.ads",
+      "body": "src/database-diagnostics.adb"
+    },
+    {
+      "name": "Database.Encrypted_Persistence",
+      "spec": "src/database-encrypted_persistence.ads",
+      "body": "src/database-encrypted_persistence.adb"
+    },
+    {
+      "name": "Database.Encryption",
+      "spec": "src/database-encryption.ads",
+      "body": "src/database-encryption.adb"
+    },
+    {
+      "name": "Database.Events",
+      "spec": "src/database-events.ads",
+      "body": "src/database-events.adb"
+    },
+    {
+      "name": "Database.Execution_Plans",
+      "spec": "src/database-execution_plans.ads",
+      "body": "src/database-execution_plans.adb"
+    },
+    {
+      "name": "Database.Export",
+      "spec": "src/database-export.ads",
+      "body": "src/database-export.adb"
+    },
+    {
+      "name": "Database.Expressions",
+      "spec": "src/database-expressions.ads",
+      "body": "src/database-expressions.adb"
+    },
+    {
+      "name": "Database.Extension_Metadata",
+      "spec": "src/database-extension_metadata.ads",
+      "body": "src/database-extension_metadata.adb"
+    },
+    {
+      "name": "Database.Extensions",
+      "spec": "src/database-extensions.ads",
+      "body": "src/database-extensions.adb"
+    },
+    {
+      "name": "Database.Fault_Hooks",
+      "spec": "src/database-fault_hooks.ads",
+      "body": "src/database-fault_hooks.adb"
+    },
+    {
+      "name": "Database.Fault_Injection",
+      "spec": "src/database-fault_injection.ads",
+      "body": "src/database-fault_injection.adb"
+    },
+    {
+      "name": "Database.Foreign_Keys",
+      "spec": "src/database-foreign_keys.ads",
+      "body": "src/database-foreign_keys.adb"
+    },
+    {
+      "name": "Database.Full_Text.Compression",
+      "spec": "src/database-full_text-compression.ads",
+      "body": "src/database-full_text-compression.adb"
+    },
+    {
+      "name": "Database.Full_Text.Indexes",
+      "spec": "src/database-full_text-indexes.ads",
+      "body": "src/database-full_text-indexes.adb"
+    },
+    {
+      "name": "Database.Full_Text.Normalization",
+      "spec": "src/database-full_text-normalization.ads",
+      "body": "src/database-full_text-normalization.adb"
+    },
+    {
+      "name": "Database.Full_Text.Postings",
+      "spec": "src/database-full_text-postings.ads",
+      "body": "src/database-full_text-postings.adb"
+    },
+    {
+      "name": "Database.Full_Text.Queries",
+      "spec": "src/database-full_text-queries.ads",
+      "body": "src/database-full_text-queries.adb"
+    },
+    {
+      "name": "Database.Full_Text.Ranking",
+      "spec": "src/database-full_text-ranking.ads",
+      "body": "src/database-full_text-ranking.adb"
+    },
+    {
+      "name": "Database.Full_Text.Segments",
+      "spec": "src/database-full_text-segments.ads",
+      "body": "src/database-full_text-segments.adb"
+    },
+    {
+      "name": "Database.Full_Text.Snippets",
+      "spec": "src/database-full_text-snippets.ads",
+      "body": "src/database-full_text-snippets.adb"
+    },
+    {
+      "name": "Database.Full_Text.Storage",
+      "spec": "src/database-full_text-storage.ads",
+      "body": "src/database-full_text-storage.adb"
+    },
+    {
+      "name": "Database.Full_Text.Tokenizers",
+      "spec": "src/database-full_text-tokenizers.ads",
+      "body": "src/database-full_text-tokenizers.adb"
+    },
+    {
+      "name": "Database.Full_Text",
+      "spec": "src/database-full_text.ads",
+      "body": "src/database-full_text.adb"
+    },
+    {
+      "name": "Database.Functions",
+      "spec": "src/database-functions.ads",
+      "body": "src/database-functions.adb"
+    },
+    {
+      "name": "Database.Fuzzing",
+      "spec": "src/database-fuzzing.ads",
+      "body": "src/database-fuzzing.adb"
+    },
+    {
+      "name": "Database.Generated_Columns",
+      "spec": "src/database-generated_columns.ads",
+      "body": "src/database-generated_columns.adb"
+    },
+    {
+      "name": "Database.Import",
+      "spec": "src/database-import.ads",
+      "body": "src/database-import.adb"
+    },
+    {
+      "name": "Database.Indexes.BTree",
+      "spec": "src/database-indexes-btree.ads",
+      "body": "src/database-indexes-btree.adb"
+    },
+    {
+      "name": "Database.Indexes.BTree_Invariants",
+      "spec": "src/database-indexes-btree_invariants.ads",
+      "body": "src/database-indexes-btree_invariants.adb"
+    },
+    {
+      "name": "Database.Indexes",
+      "spec": "src/database-indexes.ads",
+      "body": "src/database-indexes.adb"
+    },
+    {
+      "name": "Database.Invariant_Checks",
+      "spec": "src/database-invariant_checks.ads",
+      "body": "src/database-invariant_checks.adb"
+    },
+    {
+      "name": "Database.Joins",
+      "spec": "src/database-joins.ads",
+      "body": "src/database-joins.adb"
+    },
+    {
+      "name": "Database.Keys",
+      "spec": "src/database-keys.ads",
+      "body": "src/database-keys.adb"
+    },
+    {
+      "name": "Database.Locking",
+      "spec": "src/database-locking.ads",
+      "body": "src/database-locking.adb"
+    },
+    {
+      "name": "Database.Log_Sequence",
+      "spec": "src/database-log_sequence.ads",
+      "body": "src/database-log_sequence.adb"
+    },
+    {
+      "name": "Database.Materialized_Views",
+      "spec": "src/database-materialized_views.ads",
+      "body": "src/database-materialized_views.adb"
+    },
+    {
+      "name": "Database.Metrics",
+      "spec": "src/database-metrics.ads",
+      "body": "src/database-metrics.adb"
+    },
+    {
+      "name": "Database.Migrations",
+      "spec": "src/database-migrations.ads",
+      "body": "src/database-migrations.adb"
+    },
+    {
+      "name": "Database.MVCC",
+      "spec": "src/database-mvcc.ads",
+      "body": "src/database-mvcc.adb"
+    },
+    {
+      "name": "Database.Optimizer",
+      "spec": "src/database-optimizer.ads",
+      "body": "src/database-optimizer.adb"
+    },
+    {
+      "name": "Database.Optional",
+      "spec": "src/database-optional.ads",
+      "body": "src/database-optional.adb"
+    },
+    {
+      "name": "Database.Ordering",
+      "spec": "src/database-ordering.ads",
+      "body": "src/database-ordering.adb"
+    },
+    {
+      "name": "Database.Plans",
+      "spec": "src/database-plans.ads",
+      "body": "src/database-plans.adb"
+    },
+    {
+      "name": "Database.Predicates",
+      "spec": "src/database-predicates.ads",
+      "body": "src/database-predicates.adb"
+    },
+    {
+      "name": "Database.Profiling",
+      "spec": "src/database-profiling.ads",
+      "body": "src/database-profiling.adb"
+    },
+    {
+      "name": "Database.Queries",
+      "spec": "src/database-queries.ads",
+      "body": "src/database-queries.adb"
+    },
+    {
+      "name": "Database.Randomized",
+      "spec": "src/database-randomized.ads",
+      "body": "src/database-randomized.adb"
+    },
+    {
+      "name": "Database.Replay",
+      "spec": "src/database-replay.ads",
+      "body": "src/database-replay.adb"
+    },
+    {
+      "name": "Database.Restore",
+      "spec": "src/database-restore.ads",
+      "body": "src/database-restore.adb"
+    },
+    {
+      "name": "Database.Rows",
+      "spec": "src/database-rows.ads",
+      "body": "src/database-rows.adb"
+    },
+    {
+      "name": "Database.Schema",
+      "spec": "src/database-schema.ads",
+      "body": "src/database-schema.adb"
+    },
+    {
+      "name": "Database.Statistics",
+      "spec": "src/database-statistics.ads",
+      "body": "src/database-statistics.adb"
+    },
+    {
+      "name": "Database.Status",
+      "spec": "src/database-status.ads",
+      "body": "src/database-status.adb"
+    },
+    {
+      "name": "Database.Storage.File_IO",
+      "spec": "src/database-storage-file_io.ads",
+      "body": "src/database-storage-file_io.adb"
+    },
+    {
+      "name": "Database.Storage.Free_List",
+      "spec": "src/database-storage-free_list.ads",
+      "body": "src/database-storage-free_list.adb"
+    },
+    {
+      "name": "Database.Storage.Free_List_Manager",
+      "spec": "src/database-storage-free_list_manager.ads",
+      "body": "src/database-storage-free_list_manager.adb"
+    },
+    {
+      "name": "Database.Storage.Page_Parser",
+      "spec": "src/database-storage-page_parser.ads",
+      "body": "src/database-storage-page_parser.adb"
+    },
+    {
+      "name": "Database.Storage.Pages",
+      "spec": "src/database-storage-pages.ads",
+      "body": "src/database-storage-pages.adb"
+    },
+    {
+      "name": "Database.Storage.Record_Format",
+      "spec": "src/database-storage-record_format.ads",
+      "body": "src/database-storage-record_format.adb"
+    },
+    {
+      "name": "Database.Storage.Record_Serializer",
+      "spec": "src/database-storage-record_serializer.ads",
+      "body": "src/database-storage-record_serializer.adb"
+    },
+    {
+      "name": "Database.Storage.Table_Heap",
+      "spec": "src/database-storage-table_heap.ads",
+      "body": "src/database-storage-table_heap.adb"
+    },
+    {
+      "name": "Database.Storage",
+      "spec": "src/database-storage.ads",
+      "body": "src/database-storage.adb"
+    },
+    {
+      "name": "Database.Stress",
+      "spec": "src/database-stress.ads",
+      "body": "src/database-stress.adb"
+    },
+    {
+      "name": "Database.Tables",
+      "spec": "src/database-tables.ads",
+      "body": "src/database-tables.adb"
+    },
+    {
+      "name": "Database.Testing",
+      "spec": "src/database-testing.ads",
+      "body": "src/database-testing.adb"
+    },
+    {
+      "name": "Database.Tracing",
+      "spec": "src/database-tracing.ads",
+      "body": "src/database-tracing.adb"
+    },
+    {
+      "name": "Database.Transactions",
+      "spec": "src/database-transactions.ads",
+      "body": "src/database-transactions.adb"
+    },
+    {
+      "name": "Database.Type_Metadata",
+      "spec": "src/database-type_metadata.ads",
+      "body": "src/database-type_metadata.adb"
+    },
+    {
+      "name": "Database.Types",
+      "spec": "src/database-types.ads",
+      "body": "src/database-types.adb"
+    },
+    {
+      "name": "Database.UUIDs",
+      "spec": "src/database-uuids.ads",
+      "body": "src/database-uuids.adb"
+    },
+    {
+      "name": "Database.Vacuum",
+      "spec": "src/database-vacuum.ads",
+      "body": "src/database-vacuum.adb"
+    },
+    {
+      "name": "Database.Validation_Hooks",
+      "spec": "src/database-validation_hooks.ads",
+      "body": "src/database-validation_hooks.adb"
+    },
+    {
+      "name": "Database.Values",
+      "spec": "src/database-values.ads",
+      "body": "src/database-values.adb"
+    },
+    {
+      "name": "Database.Versioning",
+      "spec": "src/database-versioning.ads",
+      "body": "src/database-versioning.adb"
+    },
+    {
+      "name": "Database.Views",
+      "spec": "src/database-views.ads",
+      "body": "src/database-views.adb"
+    },
+    {
+      "name": "Database.Visibility",
+      "spec": "src/database-visibility.ads",
+      "body": "src/database-visibility.adb"
+    },
+    {
+      "name": "Database.WAL.Frame_Parser",
+      "spec": "src/database-wal-frame_parser.ads",
+      "body": "src/database-wal-frame_parser.adb"
+    },
+    {
+      "name": "Database.WAL",
+      "spec": "src/database-wal.ads",
+      "body": "src/database-wal.adb"
+    },
+    {
+      "name": "Database",
+      "spec": "src/database.ads",
+      "body": "src/database.adb"
+    }
+  ],
+  "package_groups": {
+    "advanced_relational": [
+      "Database.Check_Constraints",
+      "Database.Expressions",
+      "Database.Foreign_Keys",
+      "Database.Generated_Columns",
+      "Database.Materialized_Views",
+      "Database.Views"
+    ],
+    "backup_import_export": [
+      "Database.Backup",
+      "Database.Backup_Format",
+      "Database.Export",
+      "Database.Import",
+      "Database.Restore"
+    ],
+    "core": [
+      "Database",
+      "Database.Catalog",
+      "Database.Check",
+      "Database.Checksums",
+      "Database.Constraints",
+      "Database.Cursors",
+      "Database.Migrations",
+      "Database.Optional",
+      "Database.Predicates",
+      "Database.Status",
+      "Database.Storage",
+      "Database.Tables",
+      "Database.Vacuum",
+      "Database.Validation_Hooks"
+    ],
+    "encryption": [
+      "Database.Crypto",
+      "Database.Crypto_Checks",
+      "Database.Encrypted_Persistence",
+      "Database.Encryption",
+      "Database.Keys"
+    ],
+    "extensions": [
+      "Database.Aggregate_Functions",
+      "Database.Collations",
+      "Database.Extension_Metadata",
+      "Database.Extensions",
+      "Database.Functions"
+    ],
+    "full_text": [
+      "Database.Full_Text",
+      "Database.Full_Text.Compression",
+      "Database.Full_Text.Indexes",
+      "Database.Full_Text.Normalization",
+      "Database.Full_Text.Postings",
+      "Database.Full_Text.Queries",
+      "Database.Full_Text.Ranking",
+      "Database.Full_Text.Segments",
+      "Database.Full_Text.Snippets",
+      "Database.Full_Text.Storage",
+      "Database.Full_Text.Tokenizers"
+    ],
+    "hardening": [
+      "Database.Crash_Harness",
+      "Database.Fault_Hooks",
+      "Database.Fault_Injection",
+      "Database.Fuzzing",
+      "Database.Invariant_Checks",
+      "Database.Randomized",
+      "Database.Stress",
+      "Database.Testing"
+    ],
+    "indexes": [
+      "Database.Indexes",
+      "Database.Indexes.BTree",
+      "Database.Indexes.BTree_Invariants"
+    ],
+    "observability": [
+      "Database.Diagnostics",
+      "Database.Diagnostics.Runtime",
+      "Database.Events",
+      "Database.Metrics",
+      "Database.Profiling",
+      "Database.Tracing"
+    ],
+    "query_optimization": [
+      "Database.Aggregates",
+      "Database.Execution_Plans",
+      "Database.Joins",
+      "Database.Optimizer",
+      "Database.Ordering",
+      "Database.Plans",
+      "Database.Queries",
+      "Database.Statistics"
+    ],
+    "storage": [
+      "Database.Storage.File_IO",
+      "Database.Storage.Free_List",
+      "Database.Storage.Free_List_Manager",
+      "Database.Storage.Page_Parser",
+      "Database.Storage.Pages",
+      "Database.Storage.Record_Format",
+      "Database.Storage.Record_Serializer",
+      "Database.Storage.Table_Heap"
+    ],
+    "transactions_mvcc": [
+      "Database.Locking",
+      "Database.MVCC",
+      "Database.Transactions",
+      "Database.Versioning",
+      "Database.Visibility"
+    ],
+    "typed_data_model": [
+      "Database.Date_Time",
+      "Database.Rows",
+      "Database.Schema",
+      "Database.Type_Metadata",
+      "Database.Types",
+      "Database.UUIDs",
+      "Database.Values"
+    ],
+    "wal_recovery": [
+      "Database.Checkpointing",
+      "Database.Log_Sequence",
+      "Database.Replay",
+      "Database.WAL",
+      "Database.WAL.Frame_Parser"
+    ]
+  },
+  "examples": [
+    "examples/README.md",
+    "examples/concurrency/concurrency.gpr",
+    "examples/concurrency/src/main.adb",
+    "examples/integrity_check/integrity_check.gpr",
+    "examples/integrity_check/src/main.adb",
+    "examples/migrations/migrations.gpr",
+    "examples/migrations/src/main.adb",
+    "examples/minimal/minimal.gpr",
+    "examples/minimal/src/main.adb",
+    "examples/persistent/persistent.gpr",
+    "examples/persistent/src/main.adb",
+    "examples/queries/queries.gpr",
+    "examples/queries/src/main.adb",
+    "examples/typed_table/README.md",
+    "examples/typed_table/src/main.adb",
+    "examples/typed_table/typed_table.gpr"
+  ],
+  "spark_projects": [
+    "spark_btree_invariants.gpr",
+    "spark_checksums.gpr",
+    "spark_free_list_manager.gpr",
+    "spark_page_parser.gpr",
+    "spark_record_serializer.gpr",
+    "spark_wal_frame_parser.gpr"
+  ],
+  "important_docs": [
+    "README.md",
+    "AI_CONTEXT.md",
+    "docs/getting-started.md",
+    "docs/design.md",
+    "docs/package-inventory.md",
+    "docs/testing.md",
+    "docs/build-and-verification.md",
+    "docs/spark-verification.md",
+    "docs/ai-usage-guide.md",
+    "docs/maintenance-recipes.md"
+  ],
+  "validation_commands": {
+    "build_checker": "gprbuild -P tools/tools.gpr",
+    "release_check": "tools/bin/check_all",
+    "build_library": "gprbuild -P database.gpr",
+    "build_tests": "cd tests && alr build",
+    "run_tests": "cd tests && ./bin/tests",
+    "generate_gnatdoc": "gnatdoc -P database.gpr",
+    "gnatprove": [
+      "gnatprove -P spark_checksums.gpr --level=2",
+      "gnatprove -P spark_wal_frame_parser.gpr --level=2",
+      "gnatprove -P spark_page_parser.gpr --level=2",
+      "gnatprove -P spark_record_serializer.gpr --level=2",
+      "gnatprove -P spark_free_list_manager.gpr --level=2",
+      "gnatprove -P spark_btree_invariants.gpr --level=2"
+    ]
+  },
+  "environment_note": "Use the project_tools-backed tools/bin/check_all entrypoint for normal build and test validation."
+}

@@ -1,0 +1,8 @@
+name = "database"
+description = "Ada-native strictly typed relational storage engine"
+version = "0.14.0"
+licenses = "MIT"
+authors = ["Bent Bracke"]
+maintainers = ["Bent Bracke <bent@bracke.dk>"]
+maintainers-logins = ["bracke"]
+project-files = ["database.gpr"]

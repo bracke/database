@@ -1,0 +1,16 @@
+/obj/
+/lib/
+/alire/
+/config/
+/tools/bin/
+/tools/obj/
+/tests/bin/
+/tests/obj/
+/tests/alire/
+/tests/config/
+/tests/*.db
+/tests/*.db.*
+/tests/*.database
+/tests/*.database.*
+/tests/*.dbenc
+/tests/*.fts

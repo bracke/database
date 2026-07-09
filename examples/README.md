@@ -5,7 +5,7 @@ Each example is a small standalone GPR project that depends on `../../database.g
 Build from an example directory, for example:
 
 ```sh
-gprbuild -P minimal.gpr
+alr exec -- gprbuild -P minimal.gpr
 ```
 
 Examples:

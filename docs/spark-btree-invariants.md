@@ -55,13 +55,13 @@ The checker has:
 When GNATprove is available:
 
 ```sh
-gnatprove -P spark_btree_invariants.gpr --level=2
+alr exec -- gnatprove -P spark_btree_invariants.gpr --level=2
 ```
 
 For deeper proof attempts:
 
 ```sh
-gnatprove -P spark_btree_invariants.gpr --level=4
+alr exec -- gnatprove -P spark_btree_invariants.gpr --level=4
 ```
 
 ## Integration Policy

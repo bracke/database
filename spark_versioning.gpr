@@ -1,0 +1,12 @@
+project Spark_Versioning is
+   for Source_Dirs use ("spark_stubs", "src");
+   for Source_Files use
+     ("database.ads",
+      "database-indexes.ads",
+      "database-versioning.ads",
+      "database-versioning.adb");
+   for Main use ();
+   package Builder is
+      for Global_Configuration_Pragmas use "gnat.adc";
+   end Builder;
+end Spark_Versioning;

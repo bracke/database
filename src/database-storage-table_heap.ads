@@ -8,6 +8,7 @@ with Database.Storage.Pages;
 with Database.Transactions;
 with Database.Indexes;
 with Database.Versioning;
+with Ada.Containers.Indefinite_Vectors;
 
    --  Public nested package `Database.Storage.Table_Heap`.
 package Database.Storage.Table_Heap is
@@ -18,6 +19,14 @@ package Database.Storage.Table_Heap is
       Has_Row      : Boolean := False;
       Row          : Database.Rows.Row;
    end record;
+
+   type Reclaimed_Row is record
+      Ref : Database.Indexes.Row_Reference := Database.Indexes.Invalid_Row_Reference;
+      Row : Database.Rows.Row;
+   end record;
+
+   package Reclaimed_Row_Vectors is new Ada.Containers.Indefinite_Vectors
+     (Index_Type => Natural, Element_Type => Reclaimed_Row);
 
    --  Public operation `Create_Heap`. See the package documentation for transaction, ownership, and error-result
    --  semantics.
@@ -167,6 +176,24 @@ package Database.Storage.Table_Heap is
      (F          : in out Database.Storage.File_IO.File_Handle;
       First_Page : Database.Storage.Pages.Page_Id;
       Schema     : Database.Schema.Table_Schema) return Database.Status.Result;
+
+   --  Tombstone committed deleted row slots that no active snapshot can see.
+   --  Payload bytes are wiped while slot boundaries are preserved so existing
+   --  stale index references continue to fail as Not_Found instead of becoming
+   --  malformed offsets.
+   function Vacuum_Deleted
+     (Tx         : in out Database.Transactions.Transaction;
+      F          : in out Database.Storage.File_IO.File_Handle;
+      First_Page : Database.Storage.Pages.Page_Id;
+      Reclaimed  : out Natural) return Database.Status.Result;
+
+   function Vacuum_Deleted
+     (Tx             : in out Database.Transactions.Transaction;
+      F              : in out Database.Storage.File_IO.File_Handle;
+      First_Page     : Database.Storage.Pages.Page_Id;
+      Schema         : Database.Schema.Table_Schema;
+      Reclaimed      : out Natural;
+      Reclaimed_Rows : out Reclaimed_Row_Vectors.Vector) return Database.Status.Result;
 
    --  Return the highest committed row version recorded in a heap chain.
    function Max_Commit_Version

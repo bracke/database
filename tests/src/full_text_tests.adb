@@ -15,6 +15,7 @@ with Database.Full_Text.Postings;
 with Database.Full_Text.Segments;
 with Database.Storage.Pages;
 with Database.Full_Text.Tokenizers;
+with Database.MVCC;
 with Database.Rows;
 with Database.Schema;
 with Database.Status;
@@ -22,6 +23,7 @@ with Database.Tables;
 with Database.Transactions;
 with Database.Types; use Database.Types;
 with Database.Values;
+with Database.Versioning;
 with Database.Plans;
 with Database.Optimizer;
 with Database.Execution_Plans;
@@ -31,6 +33,7 @@ with Database.Ordering;
 package body Full_Text_Tests is
    use AUnit.Assertions;
    use type Database.Status.Status_Code;
+   use type Database.Full_Text.Segments.Segment_Id;
    use type Database.Full_Text.Segments.Segment_State;
 
    type Doc_Row is record
@@ -109,6 +112,8 @@ package body Full_Text_Tests is
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
+      Config : Database.Full_Text.Normalization.Normalization_Config :=
+        Database.Full_Text.Normalization.Default_Config;
    begin
       Assert
         (Database.Full_Text.Normalization.Normalize ("ÄDA") = "äda",
@@ -116,7 +121,76 @@ package body Full_Text_Tests is
       Assert
         (Database.Full_Text.Normalization.Normalize ("é") = "é",
          "accent should be preserved by default");
+      Assert
+        (Database.Full_Text.Normalization.Normalize ("ŁÓDŹ") = "łódź",
+         "Latin Extended lowercasing failed");
+      Config.Accents := Database.Full_Text.Normalization.Strip_Basic_Latin_Accents;
+      Assert
+        (Database.Full_Text.Normalization.Normalize ("Ærø Łódź Škoda", Config) =
+         "aro lodz skoda",
+         "expanded Latin accent stripping failed");
+      Config.Accents := Database.Full_Text.Normalization.Preserve_Accents;
+      Config.Stemming := Database.Full_Text.Normalization.Simple_English_Stemming;
+      Assert
+        (Database.Full_Text.Normalization.Normalize ("databases", Config) = "database",
+         "plural stemming failed");
+      Assert
+        (Database.Full_Text.Normalization.Normalize ("queries", Config) = "query",
+         "ies stemming failed");
    end Normalization_Is_Conservative;
+
+   procedure Configured_Stemmed_Search
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      DB : Database.Handle;
+      Tx : Database.Transactions.Transaction;
+      S  : Database.Schema.Table_Schema;
+      R  : Database.Status.Result;
+      C  : Database.Full_Text.Search_Cursor;
+   begin
+      Database.Full_Text.Clear;
+      Database.Open_In_Memory (DB);
+      S := Doc_Schema;
+      R := Docs.Register (DB, S);
+      Assert (Database.Status.Is_Ok (R), "register failed");
+      Database.Transactions.Begin_Write (DB, Tx);
+      R :=
+        Database.Full_Text.Create_Full_Text_Index
+          (Tx, "docs_body_ft_stemmed", "docs", 1, True);
+      Assert (Database.Status.Is_Ok (R), "create configured full-text index failed");
+      R :=
+        Docs.Insert
+          (Tx,
+           DB,
+           S,
+           (Id      => 1,
+            Content =>
+              Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String
+                ("Ada database engines process relational queries")));
+      Assert (Database.Status.Is_Ok (R), "insert failed");
+
+      C :=
+        Database.Full_Text.Search
+          (Tx,
+           "docs_body_ft_stemmed",
+           "query");
+      Assert
+        (Database.Full_Text.Row_Count (C) = 1,
+         "stemmed query did not match plural indexed term");
+      C :=
+        Database.Full_Text.Search
+          (Tx,
+           "docs_body_ft_stemmed",
+           "engine");
+      Assert
+        (Database.Full_Text.Row_Count (C) = 1,
+         "singular query did not match plural indexed term");
+
+      R := Database.Transactions.Rollback (Tx);
+      Assert (Database.Status.Is_Ok (R), "rollback failed");
+      Database.Close (DB);
+   end Configured_Stemmed_Search;
 
    procedure Index_Rejects_Non_Text_Column
      (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -1045,6 +1119,18 @@ package body Full_Text_Tests is
          Assert (Snippet /= "", "snippet should not be empty");
          Assert (Snippet'Length < 80, "snippet should be bounded");
       end;
+      declare
+         Combining_Acute : constant Wide_Wide_Character :=
+           Wide_Wide_Character'Val (16#0301#);
+         Snippet : constant Wide_Wide_String :=
+           Database.Full_Text.Snippets.Generate
+             ("Cafe" & Combining_Acute & " database",
+              Database.Full_Text.Queries.Term ("Cafe"));
+      begin
+         Assert
+           (Snippet = "[Cafe" & Combining_Acute & "] database",
+            "snippet split a combining-mark cluster");
+      end;
       R := Database.Transactions.Rollback (Tx);
       Assert (Database.Status.Is_Ok (R), "rollback failed");
       Database.Close (DB);
@@ -1139,6 +1225,19 @@ package body Full_Text_Tests is
       Assert
         (Tokens.Element (0).Position = 1,
          "filtered tokenizer must preserve original token positions");
+      Config.Minimum_Token_Length := 1;
+      Config.Builtin_Stop_Words := Database.Full_Text.Tokenizers.Danish_Stop_Words;
+      Tokens :=
+        Database.Full_Text.Tokenizers.Tokenize
+          ("det Ada indeks er hurtigt", Config);
+      Assert
+        (Natural (Tokens.Length) = 3,
+         "Danish stop-word profile returned wrong count");
+      Assert
+        (Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String
+           (Tokens.Element (0).Text)
+         = "Ada",
+         "Danish stop-word profile retained wrong first token");
 
       for I in 1 .. 40 loop
          P :=
@@ -1225,6 +1324,108 @@ package body Full_Text_Tests is
          "active segment count wrong");
    end Full_Text_Segments_Merge_And_Compact_Work;
 
+   procedure Full_Text_Segment_Compaction_Policy_Applies
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Segments  : Database.Full_Text.Segments.Segment_Vectors.Vector;
+      Next_Id   : Database.Full_Text.Segments.Segment_Id := 10;
+      Compacted : Boolean := False;
+      Policy    : constant Database.Full_Text.Segments.Segment_Compaction_Policy :=
+        (Max_Active_Segments       => 2,
+         Minimum_Obsolete_Postings => 1,
+         Minimum_Obsolete_Percent  => 20);
+      P         : Database.Full_Text.Postings.Posting;
+   begin
+      P.Ref.Table_Id := 1;
+      P.Ref.Column_Id := 1;
+      P.Frequency := 1;
+      Database.Full_Text.Postings.Add_Position (P, 0);
+
+      for I in 1 .. 3 loop
+         declare
+            S : Database.Full_Text.Segments.Segment :=
+              Database.Full_Text.Segments.Create
+                (Database.Full_Text.Segments.Segment_Id (I));
+         begin
+            P.Ref.Row_Id := I;
+            Database.Full_Text.Segments.Add_Posting (S, "ada", P);
+            Database.Full_Text.Segments.Seal (S);
+            Segments.Append (S);
+         end;
+      end loop;
+
+      Assert
+        (Database.Full_Text.Segments.Needs_Compaction (Segments, Policy),
+         "segment policy should request compaction");
+      Database.Full_Text.Segments.Compact_With_Policy
+        (Segments, Next_Id, Compacted, Policy);
+      Assert (Compacted, "segment policy did not compact");
+      Assert
+        (Database.Full_Text.Segments.Segment_Count (Segments) = 1,
+         "segment policy should replace active segments with one segment");
+      Assert
+        (Segments.Element (0).Metadata.Id = 10,
+         "compacted segment id should use next id");
+      Assert
+        (Next_Id = 11,
+         "next segment id should advance after compaction");
+      Assert
+        (Database.Full_Text.Segments.Posting_Count (Segments) = 3,
+         "segment policy should preserve live postings");
+   end Full_Text_Segment_Compaction_Policy_Applies;
+
+   procedure Full_Text_Index_Compaction_Rebuilds_Document_Stats
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      IX      : Database.Full_Text.Indexes.Full_Text_Index :=
+        Database.Full_Text.Indexes.Create ("compact", Doc_Schema, 1);
+      TE      : Database.Full_Text.Indexes.Term_Entry;
+      Live    : Database.Full_Text.Postings.Posting;
+      Deleted : Database.Full_Text.Postings.Posting;
+      Removed : Natural;
+   begin
+      Live.Ref := (Table_Id => 1,
+                   Row_Id => 1,
+                   Row_Key =>
+                     Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String
+                       ("1"),
+                   Column_Id => 1);
+      Live.Frequency := 1;
+      Database.Full_Text.Postings.Add_Position (Live, 0);
+
+      Deleted := Live;
+      Deleted.Ref.Row_Id := 2;
+      Deleted.Ref.Row_Key :=
+        Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("2");
+      Deleted.Deleted_By := Database.Versioning.Transaction_Id (901);
+      Deleted.Deleted_At := Database.Versioning.Commit_Version (20);
+      Database.MVCC.Mark_Committed
+        (Deleted.Deleted_By, Deleted.Deleted_At);
+
+      TE.Term :=
+        Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("ada");
+      TE.Postings.Append (Live);
+      TE.Postings.Append (Deleted);
+      IX.Terms.Append (TE);
+      IX.Deleted_Posting_Count := 1;
+      Database.Full_Text.Indexes.Recompute_Document_Statistics_From_Postings
+        (IX);
+
+      Removed := Database.Full_Text.Indexes.Compact_Reclaimable_Postings (IX);
+      Assert (Removed = 1, "index compaction removed wrong posting count");
+      Assert
+        (Database.Full_Text.Indexes.Posting_Count (IX) = 1,
+         "index compaction should keep only live postings");
+      Assert
+        (Database.Full_Text.Indexes.Document_Count (IX) = 1,
+         "index compaction should rebuild live document statistics");
+      Assert
+        (IX.Deleted_Posting_Count = 0,
+         "index compaction should refresh deleted posting count");
+   end Full_Text_Index_Compaction_Rebuilds_Document_Stats;
+
    procedure Full_Text_Document_Statistics_Drive_Ranking
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
@@ -1280,6 +1481,10 @@ package body Full_Text_Tests is
         (T,
          Normalization_Is_Conservative'Access,
          "normalization is conservative");
+      Register_Routine
+        (T,
+         Configured_Stemmed_Search'Access,
+         "configured stemmed search");
       Register_Routine
         (T,
          Index_Rejects_Non_Text_Column'Access,
@@ -1354,6 +1559,14 @@ package body Full_Text_Tests is
         (T,
          Full_Text_Segments_Merge_And_Compact_Work'Access,
          "full-text segments merge and compact work");
+      Register_Routine
+        (T,
+         Full_Text_Segment_Compaction_Policy_Applies'Access,
+         "full-text segment compaction policy applies");
+      Register_Routine
+        (T,
+         Full_Text_Index_Compaction_Rebuilds_Document_Stats'Access,
+         "full-text index compaction rebuilds document stats");
       Register_Routine
         (T,
          Full_Text_Document_Statistics_Drive_Ranking'Access,

@@ -1,0 +1,12 @@
+project Spark_Log_Sequence is
+   for Source_Dirs use ("spark_stubs", "src");
+   for Source_Files use
+     ("database.ads",
+      "database-log_sequence.ads",
+      "database-log_sequence-rules.ads",
+      "database-log_sequence-rules.adb");
+   for Main use ();
+   package Builder is
+      for Global_Configuration_Pragmas use "gnat.adc";
+   end Builder;
+end Spark_Log_Sequence;

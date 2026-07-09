@@ -1,5 +1,6 @@
 with Database.Schema;
 with Database.Status;
+with Database.Catalog.Rules;
 with Database.Fault_Hooks;
 with Ada.Containers;
 with Ada.Containers.Indefinite_Vectors;
@@ -23,6 +24,7 @@ with Database.Expressions;
 with Database.Queries;
 
 package body Database.Catalog is
+   use type Database.Views.View_Id;
    use type Database.Materialized_Views.Materialized_View_Id;
    use type Database.Full_Text.Indexes.Full_Text_Index_Id;
    use type Database.Schema.Table_Schema;
@@ -160,7 +162,8 @@ package body Database.Catalog is
             return Database.Status.Failure (Database.Status.Already_Exists, "table already registered");
          end if;
       end loop;
-      Schema.Table_Id := Natural (Current_State.all.Tables.Length) + 1;
+      Schema.Table_Id :=
+        Database.Catalog.Rules.Next_Table_Id (Natural (Current_State.all.Tables.Length));
       if Database.Backend (DB) = Database.Persistent_Backend and then Schema.Heap_First_Page = 0 then
          declare
             First : Database.Storage.Pages.Page_Id;
@@ -1236,6 +1239,26 @@ package body Database.Catalog is
    begin
       return Current_State.all.Views.Element (Index);
    end View_At;
+
+   function Update_View
+     (DB   : in out Database.Handle;
+      View : Database.Views.View_Definition) return Database.Status.Result is
+      R : Database.Status.Result := Database.Views.Validate (View);
+   begin
+      Select_Database (Database.Catalog_State_Key (DB));
+      if not Database.Status.Is_Ok (R) then
+         return R;
+      end if;
+      if Current_State.all.Views.Length > 0 then
+         for I in 0 .. Natural (Current_State.all.Views.Length) - 1 loop
+            if Current_State.all.Views.Element (I).Id = View.Id then
+               Current_State.all.Views.Replace_Element (I, View);
+               return Save (DB);
+            end if;
+         end loop;
+      end if;
+      return Database.Status.Failure (Database.Status.Not_Found, "view not found");
+   end Update_View;
 
    function Add_Materialized_View
      (DB   : in out Database.Handle;

@@ -41,13 +41,13 @@ The checksum code is a good SPARK candidate because it is:
 When GNATprove is available:
 
 ```sh
-gnatprove -P spark_checksums.gpr --level=2
+alr exec -- gnatprove -P spark_checksums.gpr --level=2
 ```
 
 For a deeper run:
 
 ```sh
-gnatprove -P spark_checksums.gpr --level=4
+alr exec -- gnatprove -P spark_checksums.gpr --level=4
 ```
 
 ## Behavioral Tests

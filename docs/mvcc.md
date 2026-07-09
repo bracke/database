@@ -83,8 +83,9 @@ invisible even after later unrelated commits advance the global commit version.
 Persistent indexes are treated as candidate locators: primary and secondary
 index entries may reference multiple older row versions, and table
 operations perform a heap visibility check after index lookup before returning
-rows or enforcing uniqueness. Deletes are logical MVCC deletes; index entries
-are preserved until a future version-aware vacuum can safely remove obsolete
-candidates.
+rows or enforcing uniqueness. Deletes are logical MVCC deletes. Version-aware
+vacuum tombstones committed deleted heap payloads only after they are older
+than every active snapshot, then removes the matching obsolete primary and
+secondary index candidates for the reclaimed row references.
 
-Rollback semantics are intentionally conservative. Persistent rollback uses transaction-local before-images for the active process; durability is governed by WAL commit records. In-memory rollback is enforced by visibility rules over transaction lifecycle state. Vacuum/check integration validates MVCC slot metadata and must never reclaim a version whose create/delete version can still be seen by an active snapshot.
+Rollback semantics are intentionally conservative. Persistent rollback uses transaction-local before-images for the active process; durability is governed by WAL commit records. In-memory rollback is enforced by visibility rules over transaction lifecycle state. Vacuum/check integration validates MVCC slot metadata. Vacuum may tombstone committed deleted heap slots only when their delete version is older than every active snapshot, and it must never reclaim a version whose create/delete version can still be seen by an active snapshot.

@@ -137,6 +137,50 @@ package body Database.Full_Text.Segments is
       return M;
    end Compact;
 
+   function Needs_Compaction
+     (Input  : Segment_Vectors.Vector;
+      Policy : Segment_Compaction_Policy := Default_Compaction_Policy)
+      return Boolean is
+      Active   : constant Natural := Segment_Count (Input);
+      Postings : constant Natural := Posting_Count (Input);
+      Dead     : constant Natural := Obsolete_Count (Input);
+   begin
+      if Active > Policy.Max_Active_Segments then
+         return True;
+      end if;
+
+      if Dead < Policy.Minimum_Obsolete_Postings then
+         return False;
+      end if;
+
+      if Postings = 0 then
+         return Dead > 0;
+      end if;
+
+      return (Dead * 100) / Postings >= Policy.Minimum_Obsolete_Percent;
+   end Needs_Compaction;
+
+   procedure Compact_With_Policy
+     (Input     : in out Segment_Vectors.Vector;
+      Next_Id   : in out Segment_Id;
+      Compacted : out Boolean;
+      Policy    : Segment_Compaction_Policy := Default_Compaction_Policy) is
+      M : Segment;
+   begin
+      Compacted := False;
+      if not Needs_Compaction (Input, Policy) then
+         return;
+      end if;
+
+      M := Compact (Input, Next_Id);
+      Next_Id := Next_Id + 1;
+      Input.Clear;
+      if M.Metadata.Posting_Count > 0 then
+         Input.Append (M);
+      end if;
+      Compacted := True;
+   end Compact_With_Policy;
+
    function Segment_Count (Input : Segment_Vectors.Vector) return Natural is
       Count : Natural := 0;
    begin

@@ -126,7 +126,7 @@ is
        Global => null,
        Depends =>
          (List => (List, First_Usable, Page_Count),
-          Page => List,
+          Page => (List, First_Usable, Page_Count),
           Status => (List, First_Usable, Page_Count));
 
    --  Remove Page from List when it is currently free.

@@ -128,7 +128,7 @@ package body Page_Parser_Tests is
       Data (39) := 4;
       Build_Page (Data, 3, 7, 6, 8, 10, 36);
 
-      Status := Database.Storage.Page_Parser.Validate_Page (Data, 5, Header);
+      Database.Storage.Page_Parser.Validate_Page (Data, 5, Header, Status);
 
       Assert
         (Status = Database.Storage.Page_Parser.Parse_OK,
@@ -147,10 +147,11 @@ package body Page_Parser_Tests is
       Data   : constant Database.Storage.Page_Parser.Byte_Array (0 .. 5) :=
         [others => 0];
       Header : Database.Storage.Page_Parser.Page_Header;
+      Status : Database.Storage.Page_Parser.Parse_Status;
    begin
+      Database.Storage.Page_Parser.Validate_Page (Data, 0, Header, Status);
       Assert
-        (Database.Storage.Page_Parser.Validate_Page (Data, 0, Header)
-         = Database.Storage.Page_Parser.Page_Too_Short,
+        (Status = Database.Storage.Page_Parser.Page_Too_Short,
          "short page must be rejected");
    end Test_Rejects_Short_Page;
 
@@ -161,14 +162,15 @@ package body Page_Parser_Tests is
       Data   : Database.Storage.Page_Parser.Byte_Array (0 .. 39) :=
         [others => 0];
       Header : Database.Storage.Page_Parser.Page_Header;
+      Status : Database.Storage.Page_Parser.Parse_Status;
    begin
       Data (36) := 1;
       Build_Page (Data, 3, 7, 0, 0, 10, 36);
       Data (0) := 0;
 
+      Database.Storage.Page_Parser.Validate_Page (Data, 0, Header, Status);
       Assert
-        (Database.Storage.Page_Parser.Validate_Page (Data, 0, Header)
-         = Database.Storage.Page_Parser.Invalid_Magic,
+        (Status = Database.Storage.Page_Parser.Invalid_Magic,
          "bad magic must be rejected");
    end Test_Rejects_Bad_Magic;
 
@@ -179,13 +181,14 @@ package body Page_Parser_Tests is
       Data   : Database.Storage.Page_Parser.Byte_Array (0 .. 39) :=
         [others => 0];
       Header : Database.Storage.Page_Parser.Page_Header;
+      Status : Database.Storage.Page_Parser.Parse_Status;
    begin
       Data (36) := 1;
       Build_Page (Data, 3, 0, 0, 0, 10, 36);
 
+      Database.Storage.Page_Parser.Validate_Page (Data, 0, Header, Status);
       Assert
-        (Database.Storage.Page_Parser.Validate_Page (Data, 0, Header)
-         = Database.Storage.Page_Parser.Invalid_Page_Id,
+        (Status = Database.Storage.Page_Parser.Invalid_Page_Id,
          "zero page id must be rejected");
    end Test_Rejects_Zero_Page_Id;
 
@@ -196,13 +199,14 @@ package body Page_Parser_Tests is
       Data   : Database.Storage.Page_Parser.Byte_Array (0 .. 39) :=
         [others => 0];
       Header : Database.Storage.Page_Parser.Page_Header;
+      Status : Database.Storage.Page_Parser.Parse_Status;
    begin
       Data (36) := 1;
       Build_Page (Data, 3, 7, 7, 0, 10, 36);
 
+      Database.Storage.Page_Parser.Validate_Page (Data, 0, Header, Status);
       Assert
-        (Database.Storage.Page_Parser.Validate_Page (Data, 0, Header)
-         = Database.Storage.Page_Parser.Invalid_Linkage,
+        (Status = Database.Storage.Page_Parser.Invalid_Linkage,
          "self link must be rejected");
    end Test_Rejects_Self_Link;
 
@@ -213,13 +217,14 @@ package body Page_Parser_Tests is
       Data   : Database.Storage.Page_Parser.Byte_Array (0 .. 39) :=
         [others => 0];
       Header : Database.Storage.Page_Parser.Page_Header;
+      Status : Database.Storage.Page_Parser.Parse_Status;
    begin
       Data (36) := 1;
       Build_Page (Data, 3, 7, 0, 0, 10, 36);
 
+      Database.Storage.Page_Parser.Validate_Page (Data, 11, Header, Status);
       Assert
-        (Database.Storage.Page_Parser.Validate_Page (Data, 11, Header)
-         = Database.Storage.Page_Parser.Page_LSN_Order_Violation,
+        (Status = Database.Storage.Page_Parser.Page_LSN_Order_Violation,
          "stale page LSN must be rejected");
    end Test_Rejects_Stale_LSN;
 
@@ -230,14 +235,15 @@ package body Page_Parser_Tests is
       Data   : Database.Storage.Page_Parser.Byte_Array (0 .. 39) :=
         [others => 0];
       Header : Database.Storage.Page_Parser.Page_Header;
+      Status : Database.Storage.Page_Parser.Parse_Status;
    begin
       Data (36) := 1;
       Build_Page (Data, 3, 7, 0, 0, 10, 36);
       Data (16) := Data (16) + 1;
 
+      Database.Storage.Page_Parser.Validate_Page (Data, 0, Header, Status);
       Assert
-        (Database.Storage.Page_Parser.Validate_Page (Data, 0, Header)
-         = Database.Storage.Page_Parser.Header_Checksum_Mismatch,
+        (Status = Database.Storage.Page_Parser.Header_Checksum_Mismatch,
          "header mutation must be rejected");
    end Test_Rejects_Header_Tamper;
 
@@ -248,14 +254,15 @@ package body Page_Parser_Tests is
       Data   : Database.Storage.Page_Parser.Byte_Array (0 .. 39) :=
         [others => 0];
       Header : Database.Storage.Page_Parser.Page_Header;
+      Status : Database.Storage.Page_Parser.Parse_Status;
    begin
       Data (36) := 1;
       Build_Page (Data, 3, 7, 0, 0, 10, 36);
       Data (36) := Data (36) + 1;
 
+      Database.Storage.Page_Parser.Validate_Page (Data, 0, Header, Status);
       Assert
-        (Database.Storage.Page_Parser.Validate_Page (Data, 0, Header)
-         = Database.Storage.Page_Parser.Payload_Checksum_Mismatch,
+        (Status = Database.Storage.Page_Parser.Payload_Checksum_Mismatch,
          "payload mutation must be rejected");
    end Test_Rejects_Payload_Tamper;
 

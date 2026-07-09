@@ -7,10 +7,15 @@ package Database.Full_Text.Normalization is
 
    --  Accent_Mode enumerates the supported values for this database abstraction.
    type Accent_Mode is (Preserve_Accents, Strip_Basic_Latin_Accents);
+   --  Stem_Mode controls optional conservative stemming after case/accent
+   --  normalization. Stemming is disabled by default to preserve exact term
+   --  behavior unless callers opt in.
+   type Stem_Mode is (No_Stemming, Simple_English_Stemming);
    --  Normalization_Config stores the public fields for this database abstraction.
    type Normalization_Config is record
       Case_Insensitive : Boolean := True;
       Accents          : Accent_Mode := Preserve_Accents;
+      Stemming         : Stem_Mode := No_Stemming;
    end record;
 
    --  Return default config for the supplied database state or arguments.

@@ -43,6 +43,87 @@ package body Encryption_Tests is
       end loop;
    end Derived_Key_Is_Reproducible;
 
+   procedure Key_Derivation_Uses_Passphrase_And_Salt
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Salt_1 : constant Database.Keys.Fixed_Salt := Database.Keys.Default_Salt;
+      Salt_2 : Database.Keys.Fixed_Salt := Database.Keys.Default_Salt;
+      K1     : constant Database.Keys.Encryption_Key :=
+        Database.Keys.Derive_Key ("secret", Salt_1);
+      K2     : constant Database.Keys.Encryption_Key :=
+        Database.Keys.Derive_Key ("different", Salt_1);
+      K3     : Database.Keys.Encryption_Key;
+      Passphrase_Changed : Boolean := False;
+      Salt_Changed       : Boolean := False;
+   begin
+      Salt_2 (Salt_2'First) := Salt_2 (Salt_2'First) xor 16#5A#;
+      K3 := Database.Keys.Derive_Key ("secret", Salt_2);
+
+      for I in 0 .. 31 loop
+         if Database.Keys.Byte_At (K1, I) /= Database.Keys.Byte_At (K2, I) then
+            Passphrase_Changed := True;
+         end if;
+         if Database.Keys.Byte_At (K1, I) /= Database.Keys.Byte_At (K3, I) then
+            Salt_Changed := True;
+         end if;
+      end loop;
+
+      Assert (Passphrase_Changed, "passphrase changes derived key bytes");
+      Assert (Salt_Changed, "salt changes derived key bytes");
+   end Key_Derivation_Uses_Passphrase_And_Salt;
+
+   procedure Key_Derivation_Accepts_Empty_Inputs
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Empty_Salt : constant Database.Keys.Salt_Type (1 .. 0) := (others => 0);
+      K          : constant Database.Keys.Encryption_Key :=
+        Database.Keys.Derive_Key ("", Empty_Salt);
+      Nonzero    : Boolean := False;
+   begin
+      Assert (Database.Keys.Is_Valid (K), "empty derivation inputs still produce a valid key");
+      for I in 0 .. 31 loop
+         if Database.Keys.Byte_At (K, I) /= 0 then
+            Nonzero := True;
+         end if;
+      end loop;
+      Assert (Nonzero, "empty derivation inputs do not produce an all-zero key");
+   end Key_Derivation_Accepts_Empty_Inputs;
+
+   procedure Authentication_Binds_Nonce_And_Associated_Data
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Key         : constant Database.Keys.Encryption_Key :=
+        Database.Keys.Derive_Key ("secret", Database.Keys.Default_Salt);
+      Nonce       : constant Database.Crypto.Nonce :=
+        Database.Crypto.Generate_Nonce (42, 7);
+      Wrong_Nonce : constant Database.Crypto.Nonce :=
+        Database.Crypto.Generate_Nonce (42, 8);
+      AD          : constant Database.Crypto.Byte_Array (0 .. 2) := (1, 2, 3);
+      Wrong_AD    : constant Database.Crypto.Byte_Array (0 .. 2) := (1, 2, 4);
+      Plain       : constant Database.Crypto.Byte_Array (0 .. 4) :=
+        (10, 20, 30, 40, 50);
+      Cipher      : Database.Crypto.Byte_Array (0 .. 4);
+      Back        : Database.Crypto.Byte_Array (0 .. 4);
+      Tag         : Database.Crypto.Authentication_Tag;
+      R           : Database.Status.Result;
+   begin
+      R := Database.Crypto.Encrypt (Key, Nonce, AD, Plain, Cipher, Tag);
+      Assert (Database.Status.Is_Ok (R), "encrypt succeeds");
+
+      R := Database.Crypto.Decrypt (Key, Wrong_Nonce, AD, Cipher, Tag, Back);
+      Assert
+        (R.Code = Database.Status.Authentication_Failure,
+         "wrong nonce is rejected");
+
+      R := Database.Crypto.Decrypt (Key, Nonce, Wrong_AD, Cipher, Tag, Back);
+      Assert
+        (R.Code = Database.Status.Authentication_Failure,
+         "wrong associated data is rejected");
+   end Authentication_Binds_Nonce_And_Associated_Data;
+
    procedure Authenticated_Encryption_Round_Trips
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
@@ -67,6 +148,28 @@ package body Encryption_Tests is
       Assert (Database.Status.Is_Ok (R), "decrypt succeeds");
       Assert (Back = Plain, "plaintext round trips");
    end Authenticated_Encryption_Round_Trips;
+
+   procedure Empty_Plaintext_And_AD_Round_Trip
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Key    : constant Database.Keys.Encryption_Key :=
+        Database.Keys.Derive_Key ("secret", Database.Keys.Default_Salt);
+      Nonce  : constant Database.Crypto.Nonce :=
+        Database.Crypto.Generate_Nonce (42, 9);
+      AD     : constant Database.Crypto.Byte_Array (1 .. 0) := (others => 0);
+      Plain  : constant Database.Crypto.Byte_Array (1 .. 0) := (others => 0);
+      Cipher : Database.Crypto.Byte_Array (1 .. 0);
+      Back   : Database.Crypto.Byte_Array (1 .. 0);
+      Tag    : Database.Crypto.Authentication_Tag;
+      R      : Database.Status.Result;
+   begin
+      R := Database.Crypto.Encrypt (Key, Nonce, AD, Plain, Cipher, Tag);
+      Assert (Database.Status.Is_Ok (R), "empty plaintext encrypt succeeds");
+      R := Database.Crypto.Decrypt (Key, Nonce, AD, Cipher, Tag, Back);
+      Assert (Database.Status.Is_Ok (R), "empty plaintext decrypt succeeds");
+      Assert (Back = Plain, "empty plaintext round trips");
+   end Empty_Plaintext_And_AD_Round_Trip;
 
    procedure Tampering_Is_Rejected
      (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -283,8 +386,24 @@ package body Encryption_Tests is
         (T, Derived_Key_Is_Reproducible'Access, "derived key reproducible");
       AUnit.Test_Cases.Registration.Register_Routine
         (T,
+         Key_Derivation_Uses_Passphrase_And_Salt'Access,
+         "key derivation uses passphrase and salt");
+      AUnit.Test_Cases.Registration.Register_Routine
+        (T,
+         Key_Derivation_Accepts_Empty_Inputs'Access,
+         "key derivation accepts empty inputs");
+      AUnit.Test_Cases.Registration.Register_Routine
+        (T,
+         Authentication_Binds_Nonce_And_Associated_Data'Access,
+         "authentication binds nonce and associated data");
+      AUnit.Test_Cases.Registration.Register_Routine
+        (T,
          Authenticated_Encryption_Round_Trips'Access,
          "authenticated encryption round trip");
+      AUnit.Test_Cases.Registration.Register_Routine
+        (T,
+         Empty_Plaintext_And_AD_Round_Trip'Access,
+         "empty plaintext and ad round trip");
       AUnit.Test_Cases.Registration.Register_Routine
         (T, Tampering_Is_Rejected'Access, "tampering rejected");
       AUnit.Test_Cases.Registration.Register_Routine

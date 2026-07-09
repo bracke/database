@@ -99,6 +99,14 @@ Diagnostics must not expose keys, derived key bytes, nonces used with secret mat
 - Plaintext temporary buffers should be cleared where feasible.
 - Secure erase of already-written storage is not guaranteed by filesystems, SSD firmware, snapshots, journaling filesystems, or backups.
 
+## Database-owned compatibility glue
+
+The cryptographic primitives come from CryptoLib, while `database` still owns the durable artifact contract around them. `Database.Crypto.Generate_Nonce` derives the public 24-byte nonce from object id and LSN, and the AES-CTR IV is derived from that nonce with CryptoLib SHA-256 so the existing nonce type remains stable. The authentication message also remains database-owned: it includes a `DBENC1` domain marker plus length-prefixed nonce, associated data, and ciphertext bytes before CryptoLib HMAC-SHA256 is applied.
+
+This keeps encrypted artifact identity, associated-data binding, and the current 24-byte nonce / 32-byte tag API stable for storage, WAL, backup, restore, export, and import callers.
+
 ## Current implementation note
 
-This crate contains a self-contained authenticated-encryption abstraction so the Ada package set compiles without external crypto bindings. For production deployments, `Database.Crypto` should be bound to a reviewed cryptographic backend such as a platform AEAD provider while preserving the same package-level contract.
+`database.gpr` depends on the sibling `../cryptolib/cryptolib.gpr` project. The implementation uses CryptoLib PBKDF2-HMAC-SHA256 for passphrase key derivation, AES-256-CTR for byte transformation, HMAC-SHA256 for the 32-byte authentication tag, CryptoLib constant-time comparison for tag checks, and CryptoLib secure wipe for key and plaintext buffer clearing.
+
+The public `Database.Keys` and `Database.Crypto` contracts remain centralized so storage, WAL, backup, restore, export, and import code do not embed ad-hoc cryptographic logic.

@@ -34,6 +34,20 @@ package Database.Full_Text.Segments is
       Obsolete_Count : Natural := 0;
    end record;
 
+   --  Segment_Compaction_Policy controls explicit full-text segment merging.
+   --  Compaction runs when either too many non-obsolete segments are present or
+   --  the obsolete posting ratio reaches the configured threshold.
+   type Segment_Compaction_Policy is record
+      Max_Active_Segments       : Positive := 4;
+      Minimum_Obsolete_Postings : Natural := 1;
+      Minimum_Obsolete_Percent  : Natural range 0 .. 100 := 25;
+   end record;
+
+   Default_Compaction_Policy : constant Segment_Compaction_Policy :=
+     (Max_Active_Segments       => 4,
+      Minimum_Obsolete_Postings => 1,
+      Minimum_Obsolete_Percent  => 25);
+
    --  Segment_Term stores the public fields for this database abstraction.
    type Segment_Term is record
       Term     : Unbounded_Wide_Wide_String;
@@ -100,6 +114,22 @@ package Database.Full_Text.Segments is
    function Compact
      (Input  : Segment_Vectors.Vector;
       New_Id : Segment_Id) return Segment;
+
+   --  Return True when the supplied segment set crosses the configured
+   --  compaction threshold.
+   function Needs_Compaction
+     (Input  : Segment_Vectors.Vector;
+      Policy : Segment_Compaction_Policy := Default_Compaction_Policy)
+      return Boolean;
+
+   --  Apply the compaction policy in place. When Compacted is True, active
+   --  segments are replaced by one sealed compacted segment and Next_Id is
+   --  advanced.
+   procedure Compact_With_Policy
+     (Input     : in out Segment_Vectors.Vector;
+      Next_Id   : in out Segment_Id;
+      Compacted : out Boolean;
+      Policy    : Segment_Compaction_Policy := Default_Compaction_Policy);
 
    --  Return segment count for the supplied database state or arguments.
    --  @param Input input argument supplied to the operation.

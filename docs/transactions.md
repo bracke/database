@@ -34,11 +34,24 @@ indexes, and storage.
 
 ## Isolation model
 
-The implementation uses snapshot-based MVCC with one writer and multiple non-blocking readers. A reader sees committed versions at or below its snapshot version plus its own writes. It does not see uncommitted writes from other transactions, committed versions newer than its snapshot, or deletes committed at or before its snapshot. The lock model remains in-process; it is not a multi-process file locking protocol.
+The implementation uses snapshot-based MVCC with one writer and multiple
+non-blocking readers inside an open handle. A reader sees committed versions at
+or below its snapshot version plus its own writes. It does not see uncommitted
+writes from other transactions, committed versions newer than its snapshot, or
+deletes committed at or before its snapshot.
+
+Persistent `Create`, `Open`, and `Open_Encrypted` acquire an exclusive
+process-level advisory lock on the database carrier file. A second process that
+tries to open the same persistent database receives `Lock_Error` instead of
+racing WAL replay, checkpoint, or file writes. The lock is released by
+`Database.Close` and by the operating system if the process exits. In-memory
+databases keep the in-process lock model only.
 
 ## Commit guarantees
 
-A successful persistent commit means the engine has appended physical WAL page frames, appended a commit record, and flushed the WAL with `Ada.Streams.Stream_IO.Flush`. The main database file may lag until checkpoint. The implementation does not overclaim full power-loss safety on every filesystem because directory sync and hardware storage barriers are platform-specific.
+A successful persistent commit means the engine has appended physical WAL page frames, appended a commit record, flushed the Ada stream buffer, and called POSIX `fsync` on the WAL file before advancing the durable LSN. The main database file may lag until checkpoint; checkpoint flushes and `fsync`s the carrier file before removing the WAL. File creation, WAL removal, and rewrite/rename paths also sync the parent directory.
+
+The durability contract assumes a local POSIX filesystem and storage stack that honor `fsync` and directory `fsync`. The engine cannot force disk controllers, virtualized storage, network filesystems, or mount options that acknowledge barriers without actually preserving the bytes.
 
 ## Rollback guarantees
 
@@ -71,4 +84,4 @@ Snapshot-based MVCC gives read-only transactions a stable snapshot and keeps the
 
 ## WAL commit durability
 
-Persistent read-write transactions append physical WAL page frames and then a durable commit record. A transaction is considered committed only after the WAL commit record has been flushed. Recovery ignores frames for transactions that do not have a durable commit record. WAL is the persistent transaction mode.
+Persistent read-write transactions append physical WAL page frames and then a durable commit record. A transaction is considered committed only after the WAL commit record has been flushed and `fsync` has completed successfully. Recovery ignores frames for transactions that do not have a durable commit record. WAL is the persistent transaction mode.

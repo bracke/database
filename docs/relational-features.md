@@ -48,11 +48,11 @@ An expression index stores a deterministic expression result rather than a raw c
 
 ## Views
 
-Logical views are read-only query-backed relations. They are expanded during planning and evaluated under the caller's transaction snapshot. Nested view support is allowed when expansion can be proven acyclic.
+Logical views are query-backed relations. They are expanded during planning and evaluated under the caller's transaction snapshot. Stored row-query views also support Ada-native `Insert_Row`, `Update_Row`, and `Delete_Row` helpers; callers can persist the changed view definition through `Database.Catalog.Update_View`.
 
 ## Materialized views
 
-Materialized views store a persisted snapshot of a query result. The implementation uses full refresh only. Refresh requires a write transaction and must be WAL/MVCC safe.
+Materialized views store a persisted snapshot of a query result. Full refresh records a new refresh commit boundary, and `Refresh_Incremental` can merge inserted, updated, and deleted row deltas by key column into an existing materialized row set. Refresh requires a write transaction and must be WAL/MVCC safe.
 
 ## MVCC and WAL interaction
 
@@ -64,8 +64,6 @@ All enforcement must use transaction-scoped operations. Foreign-key probes, casc
 - no parser
 - no runtime reflection
 - no non-deterministic generated columns or expression indexes
-- no updatable views
-- no incremental materialized-view refresh
 
 ## Implementation integration pass
 
@@ -77,6 +75,6 @@ Relational metadata is registered through `Database.Catalog` rather than SQL DDL
 - referenced-row delete actions are evaluated before the referenced row is marked deleted;
 - composite, partial, and expression index definitions are stored as index metadata for optimizer and maintenance use.
 
-Deferred constraints are represented in metadata and are skipped by immediate mutation checks. Commit-time deferred validation is the intended enforcement boundary; callers should register deferred constraints only when the transaction layer has been wired to validate the pending transaction set before durable commit.
+Deferred constraints are represented in metadata and are skipped by immediate mutation checks. Commit-time validation scans transaction-visible rows before durable commit and rejects deferred check or foreign-key violations with ordinary status results.
 
 No SQL parser is introduced. All definitions remain Ada-native values.

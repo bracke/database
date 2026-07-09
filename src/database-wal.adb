@@ -11,6 +11,8 @@ with Database.Fault_Hooks;
 with Database.Log_Sequence;
 with Database.Status;
 with Database.Tracing;
+with Database.WAL.Payload_Rules;
+with Interfaces.C;
 
 package body Database.WAL is
    use type Database.Log_Sequence.Log_Sequence_Number;
@@ -19,6 +21,7 @@ package body Database.WAL is
    use Ada.Strings.Wide_Wide_Unbounded;
    use Database.Log_Sequence;
    use Database.Storage.Pages;
+   use type Interfaces.C.int;
 
    Header_Size : constant := 40;
    Magic : constant Stream_Element_Array (0 .. 7)  :=
@@ -26,11 +29,94 @@ package body Database.WAL is
       Stream_Element (Character'Pos ('W')), Stream_Element (Character'Pos ('A')),
       Stream_Element (Character'Pos ('L')), Stream_Element (Character'Pos ('1')),
       Stream_Element (Character'Pos ('7')), 0);
+   O_RDONLY : constant Interfaces.C.int := 0;
+   O_RDWR : constant Interfaces.C.int := 2;
+   O_DIRECTORY : constant Interfaces.C.int := 16#10000#;
+   Mode_RW : constant Interfaces.C.int := 8#666#;
+
+   function C_Open
+     (Path  : Interfaces.C.char_array;
+      Flags : Interfaces.C.int;
+      Mode  : Interfaces.C.int) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "open";
+
+   function C_Close (FD : Interfaces.C.int) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "close";
+
+   function C_Fsync (FD : Interfaces.C.int) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "fsync";
 
    function Native (Path : Wide_Wide_String) return String is
    begin
       return Ada.Characters.Conversions.To_String (Path);
    end Native;
+
+   function Parent_Directory (Path : Wide_Wide_String) return String is
+      Native_Path : constant String := Native (Path);
+      Dir         : constant String := Ada.Directories.Containing_Directory (Native_Path);
+   begin
+      if Dir'Length = 0 then
+         return ".";
+      end if;
+      return Dir;
+   exception
+      when others =>
+         return ".";
+   end Parent_Directory;
+
+   function Sync_File_Path (Path : Wide_Wide_String) return Database.Status.Result is
+      FD : Interfaces.C.int;
+   begin
+      if not Ada.Directories.Exists (Native (Path)) then
+         return Database.Status.Success;
+      end if;
+      FD := C_Open (Interfaces.C.To_C (Native (Path)), O_RDWR, Mode_RW);
+      if FD < 0 then
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not open WAL file for fsync");
+      end if;
+      declare
+         Fsync_Result : constant Interfaces.C.int := C_Fsync (FD);
+         Close_Result : constant Interfaces.C.int := C_Close (FD);
+         pragma Unreferenced (Close_Result);
+      begin
+         if Fsync_Result /= 0 then
+            return Database.Status.Failure
+              (Database.Status.IOError, "could not fsync WAL file");
+         end if;
+      end;
+      return Database.Status.Success;
+   exception
+      when others =>
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not fsync WAL file");
+   end Sync_File_Path;
+
+   function Sync_Parent_Directory (Path : Wide_Wide_String) return Database.Status.Result is
+      Dir : constant String := Parent_Directory (Path);
+      FD  : Interfaces.C.int;
+   begin
+      FD := C_Open (Interfaces.C.To_C (Dir), O_RDONLY + O_DIRECTORY, Mode_RW);
+      if FD < 0 then
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not open WAL directory for fsync");
+      end if;
+      declare
+         Fsync_Result : constant Interfaces.C.int := C_Fsync (FD);
+         Close_Result : constant Interfaces.C.int := C_Close (FD);
+         pragma Unreferenced (Close_Result);
+      begin
+         if Fsync_Result /= 0 then
+            return Database.Status.Failure
+              (Database.Status.IOError, "could not fsync WAL directory");
+         end if;
+      end;
+      return Database.Status.Success;
+   exception
+      when others =>
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not fsync WAL directory");
+   end Sync_Parent_Directory;
 
    function WAL_Path (Database_Path : Wide_Wide_String) return Wide_Wide_String is
    begin
@@ -53,6 +139,13 @@ package body Database.WAL is
       if Ada.Streams.Stream_IO.Mode (W.File) /= Mode then
          if Ada.Streams.Stream_IO.Mode (W.File) /= In_File then
             Ada.Streams.Stream_IO.Flush (W.File);
+            declare
+               R : constant Database.Status.Result := Sync_File_Path (WAL_Path (P));
+            begin
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
+            end;
          end if;
          Ada.Streams.Stream_IO.Close (W.File);
          Ada.Streams.Stream_IO.Open (W.File, Mode, Native (WAL_Path (P)));
@@ -70,7 +163,7 @@ package body Database.WAL is
       if Ada.Directories.Exists (P) then
          Ada.Directories.Delete_File (P);
       end if;
-      return Database.Status.Success;
+      return Sync_Parent_Directory (WAL_Path (Database_Path));
    exception
       when others => return Database.Status.Failure (Database.Status.IOError, "could not delete WAL file");
    end Delete;
@@ -112,9 +205,11 @@ package body Database.WAL is
    function Kind_Code (K : Record_Kind) return Natural is
    begin
       case K is
-         when Page_Frame        => return 1;
-         when Commit_Record     => return 2;
-         when Checkpoint_Record => return 3;
+         when Page_Frame             => return 1;
+         when Commit_Record          => return 2;
+         when Checkpoint_Record      => return 3;
+         when Full_Text_Redo_Record  => return 4;
+         when Full_Text_Undo_Record  => return 5;
       end case;
    end Kind_Code;
 
@@ -127,9 +222,21 @@ package body Database.WAL is
          return True;
          when 3 => K := Checkpoint_Record;
          return True;
+         when 4 => K := Full_Text_Redo_Record;
+         return True;
+         when 5 => K := Full_Text_Undo_Record;
+         return True;
          when others => return False;
       end case;
    end Decode_Kind;
+
+   function Is_Full_Text_Page
+     (Page : Database.Storage.Pages.Page) return Boolean is
+      Kind : constant Page_Kind := Get_Kind (Page);
+   begin
+      return Kind = Full_Text_Dictionary_Page
+        or else Kind = Full_Text_Posting_Page;
+   end Is_Full_Text_Page;
 
    function Checksum (H : Stream_Element_Array; Payload : Stream_Element_Array) return Natural is
       S : Natural := 0;
@@ -184,6 +291,29 @@ package body Database.WAL is
       W.DB_Path := To_Unbounded_Wide_Wide_String (Database_Path);
       Database.Log_Sequence.Reset (W.Generator);
       W.Durable_Pos := Database.Log_Sequence.Invalid_LSN;
+      declare
+         R : Database.Status.Result;
+      begin
+         Ada.Streams.Stream_IO.Flush (W.File);
+         R := Sync_File_Path (WAL_Path (Database_Path));
+         if not Database.Status.Is_Ok (R) then
+            declare
+               Close_Result : constant Database.Status.Result := Close (W);
+               pragma Unreferenced (Close_Result);
+            begin
+               return R;
+            end;
+         end if;
+         R := Sync_Parent_Directory (WAL_Path (Database_Path));
+         if not Database.Status.Is_Ok (R) then
+            declare
+               Close_Result : constant Database.Status.Result := Close (W);
+               pragma Unreferenced (Close_Result);
+            begin
+               return R;
+            end;
+         end if;
+      end;
       return Database.Status.Success;
    exception
       when others =>
@@ -243,6 +373,14 @@ package body Database.WAL is
       if Ada.Streams.Stream_IO.Mode (W.File) /= In_File then
          Ada.Streams.Stream_IO.Flush (W.File);
       end if;
+      declare
+         R : constant Database.Status.Result :=
+           Sync_File_Path (WAL_Path (To_Wide_Wide_String (W.DB_Path)));
+      begin
+         if not Database.Status.Is_Ok (R) then
+            return R;
+         end if;
+      end;
       W.Durable_Pos := Database.Log_Sequence.Current (W.Generator);
       Database.Metrics.Increment_WAL_Flushes;
       Database.Tracing.Emit_Trace ((0, Database.Tracing.WAL_Trace,
@@ -332,6 +470,46 @@ package body Database.WAL is
         (W, Page_Frame, Transaction_Id, Natural (Get_Id (Page)), Page_Kind'Pos (Get_Kind (Page)), Payload, LSN);
    end Append_Page_Frame;
 
+   function Append_Full_Text_Image
+     (W              : in out WAL_Handle;
+      K              : Record_Kind;
+      Transaction_Id : Natural;
+      Page           : Database.Storage.Pages.Page;
+      LSN            : out Log_Sequence_Number) return Database.Status.Result is
+      Payload : constant Stream_Element_Array := To_Stream (Page);
+   begin
+      if not Is_Full_Text_Page (Page) then
+         LSN := Database.Log_Sequence.Invalid_LSN;
+         return Database.Status.Failure
+           (Database.Status.Invalid_Argument,
+            "full-text WAL image requires a full-text page");
+      end if;
+
+      return Append_Record
+        (W, K, Transaction_Id, Natural (Get_Id (Page)),
+         Page_Kind'Pos (Get_Kind (Page)), Payload, LSN);
+   end Append_Full_Text_Image;
+
+   function Append_Full_Text_Redo
+     (W              : in out WAL_Handle;
+      Transaction_Id : Natural;
+      Page           : Database.Storage.Pages.Page;
+      LSN            : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result is
+   begin
+      return Append_Full_Text_Image
+        (W, Full_Text_Redo_Record, Transaction_Id, Page, LSN);
+   end Append_Full_Text_Redo;
+
+   function Append_Full_Text_Undo
+     (W              : in out WAL_Handle;
+      Transaction_Id : Natural;
+      Page           : Database.Storage.Pages.Page;
+      LSN            : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result is
+   begin
+      return Append_Full_Text_Image
+        (W, Full_Text_Undo_Record, Transaction_Id, Page, LSN);
+   end Append_Full_Text_Undo;
+
    function Append_Commit
      (W              : in out WAL_Handle;
       Transaction_Id : Natural;
@@ -385,6 +563,38 @@ package body Database.WAL is
       end loop;
       return False;
    end Is_Committed;
+
+   function Apply_Page_Image
+     (F                  : in out Database.Storage.File_IO.File_Handle;
+      Payload            : Stream_Element_Array;
+      LSN                : Log_Sequence_Number;
+      Require_Full_Text  : Boolean) return Database.Status.Result is
+      P            : Database.Storage.Pages.Page := From_Stream (Payload);
+      Existing     : Database.Storage.Pages.Page;
+      Read_R       : Database.Status.Result;
+      Should_Write : Boolean := True;
+   begin
+      if Require_Full_Text and then not Is_Full_Text_Page (P) then
+         return Database.Status.Failure
+           (Database.Status.WAL_Corruption,
+            "full-text WAL image contains non-full-text page");
+      end if;
+
+      Read_R := Database.Storage.File_IO.Read_Raw_Page
+        (F, Database.Storage.Pages.Get_Id (P), Existing);
+      if Database.Status.Is_Ok (Read_R)
+        and then Database.Storage.Pages.Last_LSN (Existing) >= LSN
+      then
+         Should_Write := False;
+      end if;
+
+      if Should_Write then
+         Set_Last_LSN (P, LSN);
+         return Database.Storage.File_IO.Write_Page (F, P);
+      end if;
+
+      return Database.Status.Success;
+   end Apply_Page_Image;
 
    function Read_Header
      (File : in out File_Type;
@@ -443,26 +653,30 @@ package body Database.WAL is
            (Database.Status.WAL_Corruption, "invalid WAL record kind");
       end if;
 
-      case K is
-         when Page_Frame =>
-            if Len /= Database.Storage.Pages.Page_Size then
+      if not Database.WAL.Payload_Rules.Payload_Length_Is_Valid (K, Len) then
+         case K is
+            when Page_Frame =>
                return Database.Status.Failure
                  (Database.Status.WAL_Corruption,
                   "invalid WAL page-frame payload length");
-            end if;
-         when Commit_Record =>
-            if Len /= 4 then
+            when Commit_Record =>
                return Database.Status.Failure
                  (Database.Status.WAL_Corruption,
                   "invalid WAL commit payload length");
-            end if;
-         when Checkpoint_Record =>
-            if Len /= 0 then
+            when Checkpoint_Record =>
                return Database.Status.Failure
                  (Database.Status.WAL_Corruption,
                   "invalid WAL checkpoint payload length");
-            end if;
-      end case;
+            when Full_Text_Redo_Record =>
+               return Database.Status.Failure
+                 (Database.Status.WAL_Corruption,
+                  "invalid WAL full-text redo payload length");
+            when Full_Text_Undo_Record =>
+               return Database.Status.Failure
+                 (Database.Status.WAL_Corruption,
+                  "invalid WAL full-text undo payload length");
+         end case;
+      end if;
 
       return Database.Status.Success;
    end Validate_Payload_Length;
@@ -476,6 +690,7 @@ package body Database.WAL is
       Outp        : File_Type;
       Buffer      : Stream_Element_Array (0 .. 8191);
       Remaining   : Natural := New_Size;
+      R           : Database.Status.Result;
    begin
       if Ada.Directories.Exists (Native (Tmp_Path)) then
          Ada.Directories.Delete_File (Native (Tmp_Path));
@@ -483,6 +698,7 @@ package body Database.WAL is
 
       if New_Size = 0 then
          Ada.Streams.Stream_IO.Create (Outp, Out_File, Native (Tmp_Path));
+         Ada.Streams.Stream_IO.Flush (Outp);
          Ada.Streams.Stream_IO.Close (Outp);
       else
          Ada.Streams.Stream_IO.Open (Inp, In_File, Native (Source_Path));
@@ -508,12 +724,20 @@ package body Database.WAL is
             end;
          end loop;
          Ada.Streams.Stream_IO.Close (Inp);
+         Ada.Streams.Stream_IO.Flush (Outp);
          Ada.Streams.Stream_IO.Close (Outp);
       end if;
 
+      R := Sync_File_Path (Tmp_Path);
+      if not Database.Status.Is_Ok (R) then
+         if Ada.Directories.Exists (Native (Tmp_Path)) then
+            Ada.Directories.Delete_File (Native (Tmp_Path));
+         end if;
+         return R;
+      end if;
       Ada.Directories.Delete_File (Native (Source_Path));
       Ada.Directories.Rename (Native (Tmp_Path), Native (Source_Path));
-      return Database.Status.Success;
+      return Sync_Parent_Directory (Source_Path);
    exception
       when others =>
          begin
@@ -787,30 +1011,30 @@ package body Database.WAL is
                      Ada.Streams.Stream_IO.Close (File);
                      return R;
                   end if;
-                  if K = Page_Frame and then Is_Committed (Committed, Get_U32 (H, 17)) then
-                     declare
-                        P        : Database.Storage.Pages.Page := From_Stream (Payload);
-                        Existing : Database.Storage.Pages.Page;
-                        Read_R   : Database.Status.Result;
-                        Should_Write : Boolean := True;
-                     begin
-                        Read_R := Database.Storage.File_IO.Read_Raw_Page
-                          (F, Database.Storage.Pages.Get_Id (P), Existing);
-                        if Database.Status.Is_Ok (Read_R)
-                          and then Database.Storage.Pages.Last_LSN (Existing) >= L
-                        then
-                           Should_Write := False;
-                        end if;
-
-                        if Should_Write then
-                           Set_Last_LSN (P, L);
-                           R := Database.Storage.File_IO.Write_Page (F, P);
-                           if not Database.Status.Is_Ok (R) then
-                              Ada.Streams.Stream_IO.Close (File);
-                              return R;
-                           end if;
-                        end if;
-                     end;
+                  if K = Page_Frame
+                    and then Is_Committed (Committed, Get_U32 (H, 17))
+                  then
+                     R := Apply_Page_Image (F, Payload, L, False);
+                     if not Database.Status.Is_Ok (R) then
+                        Ada.Streams.Stream_IO.Close (File);
+                        return R;
+                     end if;
+                  elsif K = Full_Text_Redo_Record
+                    and then Is_Committed (Committed, Get_U32 (H, 17))
+                  then
+                     R := Apply_Page_Image (F, Payload, L, True);
+                     if not Database.Status.Is_Ok (R) then
+                        Ada.Streams.Stream_IO.Close (File);
+                        return R;
+                     end if;
+                  elsif K = Full_Text_Undo_Record
+                    and then not Is_Committed (Committed, Get_U32 (H, 17))
+                  then
+                     R := Apply_Page_Image (F, Payload, L, True);
+                     if not Database.Status.Is_Ok (R) then
+                        Ada.Streams.Stream_IO.Close (File);
+                        return R;
+                     end if;
                   end if;
                end;
             end if;

@@ -54,4 +54,16 @@ package Database.Materialized_Views is
      (Tx   : in out Database.Transactions.Transaction;
       View : in out Materialized_View_Definition;
       Rows : Row_Vectors.Vector) return Database.Status.Result;
+
+   --  Incrementally merge row-set changes into a materialized result. Rows are
+   --  matched by Key_Column. Deleted_Rows need only contain the key column.
+   function Refresh_Incremental
+     (Tx           : in out Database.Transactions.Transaction;
+      View         : in out Materialized_View_Definition;
+      Current_Rows : Row_Vectors.Vector;
+      Inserted     : Row_Vectors.Vector;
+      Updated      : Row_Vectors.Vector;
+      Deleted_Rows : Row_Vectors.Vector;
+      Key_Column   : Natural;
+      Result       : out Row_Vectors.Vector) return Database.Status.Result;
 end Database.Materialized_Views;

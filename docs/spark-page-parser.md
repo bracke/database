@@ -56,13 +56,13 @@ The parser rejects:
 When GNATprove is available:
 
 ```sh
-gnatprove -P spark_page_parser.gpr --level=2
+alr exec -- gnatprove -P spark_page_parser.gpr --level=2
 ```
 
 For a deeper run:
 
 ```sh
-gnatprove -P spark_page_parser.gpr --level=4
+alr exec -- gnatprove -P spark_page_parser.gpr --level=4
 ```
 
 ## Integration Policy

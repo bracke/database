@@ -2,6 +2,7 @@
 --  All data access is performed through transaction-scoped package APIs.
 with Ada.Strings.Wide_Wide_Unbounded;
 with Ada.Streams.Stream_IO;
+with Interfaces.C;
 
 package Database is
    use Ada.Strings.Wide_Wide_Unbounded;
@@ -175,6 +176,7 @@ private
       File      : Ada.Streams.Stream_IO.File_Type;
       Opened    : Boolean := False;
       Name      : Unbounded_Wide_Wide_String := Null_Unbounded_Wide_Wide_String;
+      Lock_FD   : Interfaces.C.int := Interfaces.C.int'First;
       Encrypted : Boolean := False;
       Key       : Encryption_Key := (Valid => False, Id => 0, Data => (others => 0));
    end record;

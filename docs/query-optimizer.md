@@ -18,8 +18,7 @@ Implemented rules:
 - range predicate on an indexed column uses `Index_Range_Scan`;
 - `and` predicates are inspected for a usable indexed conjunct and keep a residual `Filter` when required;
 - unindexed predicates use `Heap_Scan` plus `Filter`;
-- ascending order on an indexed column eliminates a materialized sort;
-- descending order falls back to `Sort` unless reverse scan support is added later;
+- ascending or descending order on an indexed column eliminates a materialized sort;
 - projection emits a pruning boundary so unused columns do not have to be carried through materialized pipelines;
 - joins default to safe nested-loop execution and may use an index nested-loop plan when the declared inner join column is indexed;
 - aggregates use the normal aggregate node unless an exact shortcut is available through metadata.
@@ -44,7 +43,7 @@ Unoptimized heap scan remains the fallback path.
 
 ## Limitations
 
-The optimizer is deliberately conservative. It does not implement SQL-style text explain, parser-driven rewrites, arbitrary outer join reordering, reverse index scans, histogram selectivity, or adaptive runtime optimization. Unsupported optimizations are not unsupported queries; the engine falls back to correct heap/materialized execution.
+The optimizer is deliberately conservative. It does not implement SQL-style text explain, parser-driven rewrites, arbitrary outer join reordering, histogram selectivity, or adaptive runtime optimization. Unsupported optimizations are not unsupported queries; the engine falls back to correct heap/materialized execution.
 
 ## MVCC
 

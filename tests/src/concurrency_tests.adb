@@ -1,5 +1,7 @@
 with AUnit.Assertions;
 
+with Ada.Characters.Conversions;
+with Ada.Directories;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Database;
 with Database.Locking;
@@ -12,11 +14,13 @@ with Database.Tables;
 with Database.Transactions;
 with Database.Types;
 with Database.Values;
+with GNAT.OS_Lib;
 
 package body Concurrency_Tests is
    use AUnit.Assertions;
    use type Database.Status.Status_Code;
    use type Database.Transactions.Transaction_Mode;
+   use type GNAT.OS_Lib.Process_Id;
 
    overriding
    function Name (T : Case_Type) return AUnit.Message_String is
@@ -49,6 +53,15 @@ package body Concurrency_Tests is
    is (X.Id);
    function Key_Value (K : Integer) return Database.Values.Value
    is (Database.Values.From_Integer (K));
+
+   procedure Remove_File_If_Present (Path : String) is
+   begin
+      if Ada.Directories.Exists (Path) then
+         Ada.Directories.Delete_File (Path);
+      end if;
+   exception
+      when others => null;
+   end Remove_File_If_Present;
 
    package Items is new
      Database.Tables.Typed
@@ -279,6 +292,71 @@ package body Concurrency_Tests is
          "close after commit failed");
    end Close_Rejects_Active_Transaction;
 
+   procedure Process_Lock_Blocks_Second_Process
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Path       : constant String := "process_lock_test.database";
+      Ready_Path : constant String := "process_lock_test.ready";
+      DB         : Database.Handle;
+      Other      : Database.Handle;
+      Args       : GNAT.OS_Lib.Argument_List (1 .. 2);
+      Pid        : GNAT.OS_Lib.Process_Id;
+      Done       : GNAT.OS_Lib.Process_Id;
+      Success    : Boolean := False;
+      Ready      : Boolean := False;
+   begin
+      Remove_File_If_Present (Path);
+      Remove_File_If_Present (Path & ".fts");
+      Remove_File_If_Present (Ready_Path);
+
+      Database.Create
+        (DB, Ada.Characters.Conversions.To_Wide_Wide_String (Path));
+      Assert
+        (Database.Last_Operation_Succeeded (DB),
+         "process lock fixture create failed");
+      Database.Close (DB);
+      Assert
+        (Database.Last_Operation_Succeeded (DB),
+         "process lock fixture close failed");
+
+      Args (1) := new String'(Path);
+      Args (2) := new String'(Ready_Path);
+      Pid := GNAT.OS_Lib.Non_Blocking_Spawn ("./bin/lock_holder", Args);
+      GNAT.OS_Lib.Free (Args (1));
+      GNAT.OS_Lib.Free (Args (2));
+      Assert
+        (Pid /= GNAT.OS_Lib.Invalid_Pid,
+         "could not spawn process lock helper");
+
+      for I in 1 .. 50 loop
+         exit when Ada.Directories.Exists (Ready_Path);
+         delay 0.05;
+      end loop;
+      Ready := Ada.Directories.Exists (Ready_Path);
+      Assert (Ready, "process lock helper did not become ready");
+
+      Database.Open
+        (Other, Ada.Characters.Conversions.To_Wide_Wide_String (Path));
+      Assert
+        (Database.Last_Result (Other).Code = Database.Status.Lock_Error,
+         "second process open was not rejected by process lock");
+
+      GNAT.OS_Lib.Wait_Process (Done, Success);
+      Assert (Done = Pid, "unexpected process completed");
+      Assert (Success, "process lock helper failed");
+
+      Remove_File_If_Present (Ready_Path);
+      Remove_File_If_Present (Path);
+      Remove_File_If_Present (Path & ".fts");
+   exception
+      when others =>
+         Remove_File_If_Present (Ready_Path);
+         Remove_File_If_Present (Path);
+         Remove_File_If_Present (Path & ".fts");
+         raise;
+   end Process_Lock_Blocks_Second_Process;
+
    overriding
    procedure Register_Tests (T : in out Case_Type) is
       use AUnit.Test_Cases.Registration;
@@ -303,6 +381,10 @@ package body Concurrency_Tests is
         (T,
          Close_Rejects_Active_Transaction'Access,
          "close rejects active transactions");
+      Register_Routine
+        (T,
+         Process_Lock_Blocks_Second_Process'Access,
+         "process lock blocks second process");
       Register_Routine
         (T,
          Read_And_Write_Visibility'Access,

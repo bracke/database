@@ -8,9 +8,14 @@
 /tests/obj/
 /tests/alire/
 /tests/config/
+/database_inspect/alire/
+/database_inspect/bin/
+/database_inspect/obj/
+/database_inspect/config/
 /tests/*.db
 /tests/*.db.*
 /tests/*.database
 /tests/*.database.*
 /tests/*.dbenc
 /tests/*.fts
+/tests/*.ready

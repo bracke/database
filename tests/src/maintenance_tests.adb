@@ -167,6 +167,74 @@ package body Maintenance_Tests is
       end if;
    end Vacuum_Requires_Write_And_Preserves_Data;
 
+   procedure Vacuum_Reclaims_Index_Candidates
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      DB       : Database.Handle;
+      Tx       : Database.Transactions.Transaction;
+      S        : Database.Schema.Table_Schema;
+      R        : Database.Status.Result;
+      Out_Item : Item;
+      Path     : constant Wide_Wide_String := "maintenance_vacuum_indexes.database";
+   begin
+      if Ada.Directories.Exists ("maintenance_vacuum_indexes.database") then
+         Ada.Directories.Delete_File ("maintenance_vacuum_indexes.database");
+      end if;
+
+      Database.Create (DB, Path);
+      Build_Schema (S);
+      R := Items.Register (DB, S);
+      Assert (Database.Status.Is_Ok (R), "register failed");
+
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Items.Create_Index (Tx, DB, S, "value_unique", 1, True);
+      Assert (Database.Status.Is_Ok (R), "create unique secondary index failed");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "index commit failed");
+
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Items.Insert (Tx, DB, S, (Id => 1, Value => 100));
+      Assert (Database.Status.Is_Ok (R), "insert failed");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "insert commit failed");
+
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Items.Delete (Tx, DB, S, 1);
+      Assert (Database.Status.Is_Ok (R), "delete failed");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "delete commit failed");
+
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Database.Vacuum.Vacuum (Tx);
+      Assert (Database.Status.Is_Ok (R), "vacuum failed");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "vacuum commit failed");
+
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Items.Insert (Tx, DB, S, (Id => 1, Value => 100));
+      Assert
+        (Database.Status.Is_Ok (R),
+         "reinsert after vacuum should not see reclaimed index candidates");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "reinsert commit failed");
+      Database.Close (DB);
+
+      Database.Open (DB, Path);
+      R := Database.Catalog.Find_By_Name ("items", S);
+      Assert (Database.Status.Is_Ok (R), "catalog not preserved");
+      Database.Transactions.Begin_Read (DB, Tx);
+      R := Items.Find (Tx, DB, S, 1, Out_Item);
+      Assert (Database.Status.Is_Ok (R), "reinserted row missing after reopen");
+      Assert (Out_Item.Value = 100, "wrong reinserted row after reopen");
+      Database.Transactions.Commit (Tx);
+      Database.Close (DB);
+
+      if Ada.Directories.Exists ("maintenance_vacuum_indexes.database") then
+         Ada.Directories.Delete_File ("maintenance_vacuum_indexes.database");
+      end if;
+   end Vacuum_Reclaims_Index_Candidates;
+
    procedure Corrupt_Heap_Page_Is_Detected
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
@@ -232,6 +300,10 @@ package body Maintenance_Tests is
         (T,
          Vacuum_Requires_Write_And_Preserves_Data'Access,
          "vacuum requires write and preserves rows");
+      Register_Routine
+        (T,
+         Vacuum_Reclaims_Index_Candidates'Access,
+         "vacuum reclaims obsolete index candidates");
       Register_Routine
         (T,
          Corrupt_Heap_Page_Is_Detected'Access,

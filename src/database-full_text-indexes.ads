@@ -191,4 +191,11 @@ package Database.Full_Text.Indexes is
    --  @param Index zero-based or package-defined index used by the operation.
    procedure Recompute_Document_Statistics_From_Postings
      (Index : in out Full_Text_Index);
+
+   --  Remove MVCC-reclaim-safe deleted postings and compact empty term entries.
+   --  Document statistics are rebuilt from the surviving live postings.
+   --  @param Index zero-based or package-defined index used by the operation.
+   --  @return Number of postings removed by compaction.
+   function Compact_Reclaimable_Postings
+     (Index : in out Full_Text_Index) return Natural;
 end Database.Full_Text.Indexes;

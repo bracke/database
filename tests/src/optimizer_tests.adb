@@ -198,7 +198,7 @@ package body Optimizer_Tests is
          "range predicate did not use index range scan");
    end Range_Predicate_Uses_Index_Range_Scan;
 
-   procedure Sort_Elimination_For_Ascending_Index
+   procedure Sort_Elimination_For_Indexed_Order
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
@@ -222,10 +222,10 @@ package body Optimizer_Tests is
            Database.Ordering.Descending);
       R := Database.Optimizer.Optimize (Tx, P);
       Assert
-        (Database.Execution_Plans.Contains
-           (R.Plan, Database.Execution_Plans.Sort_Node),
-         "descending order should sort without reverse scan support");
-   end Sort_Elimination_For_Ascending_Index;
+        (not Database.Execution_Plans.Contains
+               (R.Plan, Database.Execution_Plans.Sort_Node),
+         "descending indexed order was sorted unnecessarily");
+   end Sort_Elimination_For_Indexed_Order;
 
    procedure Force_Heap_Scan_Control
      (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -330,8 +330,8 @@ package body Optimizer_Tests is
          "range predicate uses index range scan");
       Register_Routine
         (T,
-         Sort_Elimination_For_Ascending_Index'Access,
-         "sort elimination for indexed ascending order");
+         Sort_Elimination_For_Indexed_Order'Access,
+         "sort elimination for indexed order");
       Register_Routine
         (T, Force_Heap_Scan_Control'Access, "force heap scan control");
       Register_Routine (T, Explain_Is_Stable'Access, "plan explain is stable");

@@ -49,8 +49,10 @@ Unknown or inappropriate page kinds are corruption indicators.
 ## Heap layout
 
 A table heap is a linked chain of heap pages. Rows are stored as serialized row
-payloads with slot metadata. Deletions mark row locations unavailable; vacuum can
-rewrite reachable rows into compacted heap pages.
+payloads with slot metadata. Deletions mark row locations unavailable.
+Version-aware vacuum tombstones safely reclaimable deleted payloads while
+preserving slot boundaries, and removes matching obsolete index candidates for
+those reclaimed row references.
 
 Integrity checks validate slot bounds, payload boundaries, deserialization, page
 chain shape, and orphan pages.

@@ -111,14 +111,15 @@ package body Whole_Project_Behavioral_Tests is
       Data        : Database.WAL.Frame_Parser.Byte_Array (0 .. 33) :=
         [others => 0];
       Header      : Database.WAL.Frame_Parser.Frame_Header;
+      Status      : Database.WAL.Frame_Parser.Parse_Status;
       Payload_Sum : Database.WAL.Frame_Parser.Word_32;
       Header_Sum  : Database.WAL.Frame_Parser.Word_32;
       Payload     : constant Database.WAL.Frame_Parser.Byte_Array (32 .. 33) :=
         [32 => 10, 33 => 20];
    begin
+      Database.WAL.Frame_Parser.Validate_Frame (Data, 0, Header, Status);
       Assert
-        (Database.WAL.Frame_Parser.Validate_Frame (Data, 0, Header)
-         = Database.WAL.Frame_Parser.Invalid_Magic,
+        (Status = Database.WAL.Frame_Parser.Invalid_Magic,
          "zero-filled WAL frame must reject invalid magic");
 
       Data (0) := Database.WAL.Frame_Parser.Magic_0;
@@ -138,15 +139,15 @@ package body Whole_Project_Behavioral_Tests is
       Header_Sum := Database.WAL.Frame_Parser.Build_Header_Checksum (Data, 9);
       Put_U32_WAL (Data, 28, Header_Sum);
 
+      Database.WAL.Frame_Parser.Validate_Frame (Data, 8, Header, Status);
       Assert
-        (Database.WAL.Frame_Parser.Validate_Frame (Data, 8, Header)
-         = Database.WAL.Frame_Parser.Parse_OK,
+        (Status = Database.WAL.Frame_Parser.Parse_OK,
          "well-formed WAL frame must validate");
 
       Data (33) := Data (33) + 1;
+      Database.WAL.Frame_Parser.Validate_Frame (Data, 8, Header, Status);
       Assert
-        (Database.WAL.Frame_Parser.Validate_Frame (Data, 8, Header)
-         = Database.WAL.Frame_Parser.Payload_Checksum_Mismatch,
+        (Status = Database.WAL.Frame_Parser.Payload_Checksum_Mismatch,
          "payload tamper must be rejected");
    end Test_WAL_Frame_Parser_Behavior;
 
@@ -178,15 +179,16 @@ package body Whole_Project_Behavioral_Tests is
       Data        : Database.Storage.Page_Parser.Byte_Array (0 .. 37) :=
         [others => 0];
       Header      : Database.Storage.Page_Parser.Page_Header;
+      Status      : Database.Storage.Page_Parser.Parse_Status;
       Payload     :
         constant Database.Storage.Page_Parser.Byte_Array (36 .. 37) :=
           [36 => 1, 37 => 2];
       Payload_Sum : Database.Storage.Page_Parser.Word_32;
       Header_Sum  : Database.Storage.Page_Parser.Word_32;
    begin
+      Database.Storage.Page_Parser.Validate_Page (Data, 0, Header, Status);
       Assert
-        (Database.Storage.Page_Parser.Validate_Page (Data, 0, Header)
-         = Database.Storage.Page_Parser.Invalid_Magic,
+        (Status = Database.Storage.Page_Parser.Invalid_Magic,
          "zero-filled page must reject invalid magic");
 
       Data (0) := Database.Storage.Page_Parser.Magic_0;
@@ -209,15 +211,15 @@ package body Whole_Project_Behavioral_Tests is
         Database.Storage.Page_Parser.Build_Header_Checksum (Data, 5);
       Put_U32_Page (Data, 32, Header_Sum);
 
+      Database.Storage.Page_Parser.Validate_Page (Data, 10, Header, Status);
       Assert
-        (Database.Storage.Page_Parser.Validate_Page (Data, 10, Header)
-         = Database.Storage.Page_Parser.Parse_OK,
+        (Status = Database.Storage.Page_Parser.Parse_OK,
          "well-formed page must validate");
 
       Data (12) := 5;
+      Database.Storage.Page_Parser.Validate_Page (Data, 10, Header, Status);
       Assert
-        (Database.Storage.Page_Parser.Validate_Page (Data, 10, Header)
-         = Database.Storage.Page_Parser.Invalid_Linkage,
+        (Status = Database.Storage.Page_Parser.Invalid_Linkage,
          "self-linking page must be rejected before acceptance");
    end Test_Page_Parser_Behavior;
 
@@ -240,22 +242,23 @@ package body Whole_Project_Behavioral_Tests is
       Output      : Database.Storage.Record_Serializer.Byte_Array (0 .. 64) :=
         [others => 0];
       Header      : Database.Storage.Record_Serializer.Record_Header;
+      Status      : Database.Storage.Record_Serializer.Parse_Status;
    begin
+      Database.Storage.Record_Serializer.Build_Record
+        (Payload, Good_Fields, Output, Status);
       Assert
-        (Database.Storage.Record_Serializer.Build_Record
-           (Payload, Good_Fields, Output)
-         = Database.Storage.Record_Serializer.Parse_OK,
+        (Status = Database.Storage.Record_Serializer.Parse_OK,
          "valid field spans must build");
 
+      Database.Storage.Record_Serializer.Validate_Record (Output, Header, Status);
       Assert
-        (Database.Storage.Record_Serializer.Validate_Record (Output, Header)
-         = Database.Storage.Record_Serializer.Parse_OK,
+        (Status = Database.Storage.Record_Serializer.Parse_OK,
          "built record must validate");
 
+      Database.Storage.Record_Serializer.Build_Record
+        (Payload, Bad_Fields, Output, Status);
       Assert
-        (Database.Storage.Record_Serializer.Build_Record
-           (Payload, Bad_Fields, Output)
-         = Database.Storage.Record_Serializer.Field_Order_Violation,
+        (Status = Database.Storage.Record_Serializer.Field_Order_Violation,
          "out-of-order field spans must reject");
    end Test_Record_Serializer_Behavior;
 

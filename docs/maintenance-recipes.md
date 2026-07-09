@@ -13,7 +13,7 @@ This document gives repeatable recipes for common repository changes.
 7. Update docs/examples if the function is user-facing.
 8. Run:
    ```sh
-   gprbuild -P tools/tools.gpr
+   alr exec -- gprbuild -P tools/tools.gpr
    tools/bin/check_all
    ```
 
@@ -63,15 +63,15 @@ This document gives repeatable recipes for common repository changes.
 ## Recipe: Run Final Local Validation
 
 ```sh
-gprbuild -P tools/tools.gpr
+alr exec -- gprbuild -P tools/tools.gpr
 tools/bin/check_all
-gnatdoc -P database.gpr
-gnatprove -P spark_checksums.gpr --level=2
-gnatprove -P spark_wal_frame_parser.gpr --level=2
-gnatprove -P spark_page_parser.gpr --level=2
-gnatprove -P spark_record_serializer.gpr --level=2
-gnatprove -P spark_free_list_manager.gpr --level=2
-gnatprove -P spark_btree_invariants.gpr --level=2
+alr exec -- gnatdoc -P database.gpr
+alr exec -- gnatprove -P spark_checksums.gpr --level=2
+alr exec -- gnatprove -P spark_wal_frame_parser.gpr --level=2
+alr exec -- gnatprove -P spark_page_parser.gpr --level=2
+alr exec -- gnatprove -P spark_record_serializer.gpr --level=2
+alr exec -- gnatprove -P spark_free_list_manager.gpr --level=2
+alr exec -- gnatprove -P spark_btree_invariants.gpr --level=2
 ```
 
 Record any failures directly and do not claim completion until they are resolved.

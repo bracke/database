@@ -56,13 +56,13 @@ The parser/builder rejects:
 When GNATprove is available:
 
 ```sh
-gnatprove -P spark_record_serializer.gpr --level=2
+alr exec -- gnatprove -P spark_record_serializer.gpr --level=2
 ```
 
 For deeper proof attempts:
 
 ```sh
-gnatprove -P spark_record_serializer.gpr --level=4
+alr exec -- gnatprove -P spark_record_serializer.gpr --level=4
 ```
 
 ## Integration Policy

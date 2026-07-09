@@ -46,11 +46,12 @@ package body Record_Serializer_Tests is
       Span   : Database.Storage.Record_Serializer.Field_Span;
       Status : Database.Storage.Record_Serializer.Parse_Status;
    begin
-      Status := Database.Storage.Record_Serializer.Build_Record (Payload, Fields, Output);
+      Database.Storage.Record_Serializer.Build_Record
+        (Payload, Fields, Output, Status);
       Assert (Status = Database.Storage.Record_Serializer.Parse_OK,
               "record build should succeed");
 
-      Status := Database.Storage.Record_Serializer.Validate_Record (Output, Header);
+      Database.Storage.Record_Serializer.Validate_Record (Output, Header, Status);
       Assert (Status = Database.Storage.Record_Serializer.Parse_OK,
               "record parse should succeed");
       Assert (Header.Field_Count = 2,
@@ -58,8 +59,8 @@ package body Record_Serializer_Tests is
       Assert (Header.Payload_Length = 6,
               "payload length should round trip");
 
-      Status := Database.Storage.Record_Serializer.Read_Field_Span
-        (Output, Header, 1, Span);
+      Database.Storage.Record_Serializer.Read_Field_Span
+        (Output, Header, 1, Span, Status);
       Assert (Status = Database.Storage.Record_Serializer.Parse_OK,
               "field span should be readable");
       Assert (Span.Offset = 2 and then Span.Length = 4,
@@ -70,10 +71,11 @@ package body Record_Serializer_Tests is
       pragma Unreferenced (T);
       Data   : Database.Storage.Record_Serializer.Byte_Array (0 .. 11) := (others => 0);
       Header : Database.Storage.Record_Serializer.Record_Header;
+      Status : Database.Storage.Record_Serializer.Parse_Status;
    begin
+      Database.Storage.Record_Serializer.Validate_Record (Data, Header, Status);
       Assert
-        (Database.Storage.Record_Serializer.Validate_Record (Data, Header) =
-         Database.Storage.Record_Serializer.Invalid_Magic,
+        (Status = Database.Storage.Record_Serializer.Invalid_Magic,
          "bad magic must be rejected");
    end Test_Rejects_Bad_Magic;
 
@@ -86,15 +88,17 @@ package body Record_Serializer_Tests is
         (0 .. Database.Storage.Record_Serializer.Encoded_Length (1, 1) - 1) :=
         (others => 0);
       Header  : Database.Storage.Record_Serializer.Record_Header;
+      Status  : Database.Storage.Record_Serializer.Parse_Status;
    begin
+      Database.Storage.Record_Serializer.Build_Record
+        (Payload, Fields, Output, Status);
       Assert
-        (Database.Storage.Record_Serializer.Build_Record (Payload, Fields, Output) =
-         Database.Storage.Record_Serializer.Parse_OK,
+        (Status = Database.Storage.Record_Serializer.Parse_OK,
          "build should succeed");
       Output (6) := 1;
+      Database.Storage.Record_Serializer.Validate_Record (Output, Header, Status);
       Assert
-        (Database.Storage.Record_Serializer.Validate_Record (Output, Header) =
-         Database.Storage.Record_Serializer.Invalid_Reserved_Bytes,
+        (Status = Database.Storage.Record_Serializer.Invalid_Reserved_Bytes,
          "reserved bytes must be zero");
    end Test_Rejects_Reserved_Bytes;
 
@@ -102,6 +106,7 @@ package body Record_Serializer_Tests is
       pragma Unreferenced (T);
       Data   : Database.Storage.Record_Serializer.Byte_Array (0 .. 13) := (others => 0);
       Header : Database.Storage.Record_Serializer.Record_Header;
+      Status : Database.Storage.Record_Serializer.Parse_Status;
    begin
       Data (0) := Database.Storage.Record_Serializer.Magic_0;
       Data (1) := Database.Storage.Record_Serializer.Magic_1;
@@ -109,9 +114,9 @@ package body Record_Serializer_Tests is
       Data (3) := Database.Storage.Record_Serializer.Magic_3;
       Data (4) := Database.Storage.Record_Serializer.Current_Format_Version;
       Data (5) := 1;
+      Database.Storage.Record_Serializer.Validate_Record (Data, Header, Status);
       Assert
-        (Database.Storage.Record_Serializer.Validate_Record (Data, Header) =
-         Database.Storage.Record_Serializer.Directory_Out_Of_Bounds,
+        (Status = Database.Storage.Record_Serializer.Directory_Out_Of_Bounds,
          "truncated directory must be rejected");
    end Test_Rejects_Truncated_Directory;
 
@@ -121,10 +126,12 @@ package body Record_Serializer_Tests is
       Fields  : constant Database.Storage.Record_Serializer.Field_Span_Array (0 .. 0) :=
         (0 => (Offset => 2, Length => 2));
       Output  : Database.Storage.Record_Serializer.Byte_Array (0 .. 31) := (others => 0);
+      Status  : Database.Storage.Record_Serializer.Parse_Status;
    begin
+      Database.Storage.Record_Serializer.Build_Record
+        (Payload, Fields, Output, Status);
       Assert
-        (Database.Storage.Record_Serializer.Build_Record (Payload, Fields, Output) =
-         Database.Storage.Record_Serializer.Field_Out_Of_Bounds,
+        (Status = Database.Storage.Record_Serializer.Field_Out_Of_Bounds,
          "field beyond payload must be rejected");
    end Test_Rejects_Field_Out_Of_Bounds;
 
@@ -136,10 +143,12 @@ package body Record_Serializer_Tests is
         ((Offset => 3, Length => 2),
          (Offset => 2, Length => 2));
       Output  : Database.Storage.Record_Serializer.Byte_Array (0 .. 64) := (others => 0);
+      Status  : Database.Storage.Record_Serializer.Parse_Status;
    begin
+      Database.Storage.Record_Serializer.Build_Record
+        (Payload, Fields, Output, Status);
       Assert
-        (Database.Storage.Record_Serializer.Build_Record (Payload, Fields, Output) =
-         Database.Storage.Record_Serializer.Field_Order_Violation,
+        (Status = Database.Storage.Record_Serializer.Field_Order_Violation,
          "overlapping/out-of-order fields must be rejected");
    end Test_Rejects_Field_Order_Violation;
 
@@ -150,10 +159,12 @@ package body Record_Serializer_Tests is
       Fields  : constant Database.Storage.Record_Serializer.Field_Span_Array (0 .. 0) :=
         (0 => (Offset => 0, Length => 6));
       Output  : Database.Storage.Record_Serializer.Byte_Array (0 .. 5) := (others => 0);
+      Status  : Database.Storage.Record_Serializer.Parse_Status;
    begin
+      Database.Storage.Record_Serializer.Build_Record
+        (Payload, Fields, Output, Status);
       Assert
-        (Database.Storage.Record_Serializer.Build_Record (Payload, Fields, Output) =
-         Database.Storage.Record_Serializer.Output_Buffer_Too_Small,
+        (Status = Database.Storage.Record_Serializer.Output_Buffer_Too_Small,
          "undersized output buffer must be rejected");
    end Test_Rejects_Small_Output_Buffer;
 

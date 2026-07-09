@@ -10,6 +10,14 @@ package Database.Full_Text.Tokenizers is
 
    --  Tokenizer_Kind enumerates the supported values for this database abstraction.
    type Tokenizer_Kind is (Unicode_Whitespace, Custom_Tokenizer);
+   --  Built-in stop-word profiles used when Drop_Builtin_Stop_Words is True.
+   --  These lists are intentionally small and deterministic. Applications that
+   --  need deeper language analysis should register a custom tokenizer.
+   type Stop_Word_Profile is
+     (English_Stop_Words,
+      Danish_Stop_Words,
+      German_Stop_Words,
+      French_Stop_Words);
 
    --  Token stores the public fields for this database abstraction.
    type Token is record
@@ -27,9 +35,10 @@ package Database.Full_Text.Tokenizers is
    type Tokenizer_Config is record
       Kind                   : Tokenizer_Kind := Unicode_Whitespace;
       Treat_Punctuation_As_Separator : Boolean := True;
-      --  Optional built-in English stop-word filtering. Disabled by default so
+      --  Optional built-in stop-word filtering. Disabled by default so
       --  Phrase/position behavior remains exact unless callers opt in.
       Drop_Builtin_Stop_Words : Boolean := False;
+      Builtin_Stop_Words      : Stop_Word_Profile := English_Stop_Words;
       --  Optional minimum token length. A value of 1 preserves every token.
       Minimum_Token_Length    : Positive := 1;
       Custom_Name             : Unbounded_Wide_Wide_String;
@@ -40,6 +49,10 @@ package Database.Full_Text.Tokenizers is
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
    function Is_Builtin_Stop_Word (Text : Wide_Wide_String) return Boolean;
+   --  Return whether Text is a built-in stop word for Profile.
+   function Is_Builtin_Stop_Word
+     (Text    : Wide_Wide_String;
+      Profile : Stop_Word_Profile) return Boolean;
 
    --  Return default config for the supplied database state or arguments.
    --  @return Result produced by the function.

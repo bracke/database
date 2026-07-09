@@ -13,12 +13,18 @@ This guide explains how an AI coding agent should work with this repository.
 7. `docs/testing.md`
 8. `docs/build-and-verification.md`
 
+## Environment Assumptions
+
+The repository expects sibling crates at `../project_tools` for release tooling
+and `../cryptolib` for cryptographic primitives. Verify those paths before
+changing build, test, release, or encryption code.
+
 ## First Commands to Run
 
 ```sh
-gprbuild -P tools/tools.gpr
+alr exec -- gprbuild -P tools/tools.gpr
 tools/bin/check_all
-gprbuild -P examples/typed_table/typed_table.gpr
+alr exec -- gprbuild -P examples/typed_table/typed_table.gpr
 examples/typed_table/bin/main
 ```
 

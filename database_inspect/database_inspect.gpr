@@ -1,0 +1,21 @@
+with "../database.gpr";
+with "../config/database_config.gpr";
+
+project Database_Inspect is
+   for Source_Dirs use ("src");
+   for Object_Dir use "obj";
+   for Exec_Dir use "bin";
+   for Main use
+     ("database_inspect.adb",
+      "database_inspect_make_encrypted_fixture.adb");
+
+   package Compiler is
+      for Default_Switches ("Ada") use
+        Database_Config.Ada_Compiler_Switches
+        & ("-gnat2022", "-gnatyM120", "-gnatX", "-gnata");
+   end Compiler;
+
+   package Binder is
+      for Switches ("Ada") use ("-Es");
+   end Binder;
+end Database_Inspect;

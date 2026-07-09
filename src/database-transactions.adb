@@ -1,20 +1,28 @@
 with Database.Status;
 with Database.Catalog;
 with Database.Storage.File_IO;
+with Database.Storage.Table_Heap;
 with Database.Storage.Pages;
 with Database.MVCC;
 with Database.Versioning;
 with Database.WAL;
 with Database.Log_Sequence;
+with Database.Schema;
+with Database.Rows;
+with Database.Foreign_Keys;
+with Database.Check_Constraints;
 with Database.Full_Text;
 with Database.Migrations;
 with Database.Events;
 with Database.Metrics;
 with Database.Tracing;
+with Database.Transactions.State_Rules;
+with Ada.Containers;
 with Ada.Strings.Wide_Wide_Unbounded;
 use Ada.Strings.Wide_Wide_Unbounded;
 
 package body Database.Transactions is
+   use type Ada.Containers.Count_Type;
    use type Database.Log_Sequence.Log_Sequence_Number;
    Next_Transaction_Id : Natural := 1;
 
@@ -249,6 +257,93 @@ package body Database.Transactions is
       return Tx.Last;
    end Write_Page;
 
+   function Visible_Rows_For_Table
+     (Tx       : in out Transaction;
+      Table_Id : Natural) return Database.Foreign_Keys.Row_Vectors.Vector is
+      DB   : constant Handle_Access := Tx.DB;
+      Rows : Database.Foreign_Keys.Row_Vectors.Vector;
+      S    : Database.Schema.Table_Schema;
+      C    : Database.Storage.Table_Heap.Heap_Cursor;
+      R    : Database.Status.Result;
+   begin
+      if DB = null then
+         return Rows;
+      end if;
+      if Database.Backend (DB.all) /= Database.Persistent_Backend then
+         return Database.Catalog.Rows_For_Table (Table_Id);
+      end if;
+
+      R := Database.Catalog.Find_By_Id (Table_Id, S);
+      if not Database.Status.Is_Ok (R) or else S.Heap_First_Page = 0 then
+         return Rows;
+      end if;
+
+      R := Database.Storage.Table_Heap.Scan_First
+        (Tx,
+         DB.File,
+         Database.Storage.Pages.Page_Id (S.Heap_First_Page),
+         S,
+         C);
+      while Database.Status.Is_Ok (R) and then C.Has_Row loop
+         Rows.Append (C.Row);
+         R := Database.Storage.Table_Heap.Scan_Next (Tx, DB.File, S, C);
+      end loop;
+      return Rows;
+   end Visible_Rows_For_Table;
+
+   function Validate_Deferred_Constraints (Tx : in out Transaction) return Database.Status.Result is
+      S             : Database.Schema.Table_Schema;
+      Referenced_S  : Database.Schema.Table_Schema;
+      Rows          : Database.Foreign_Keys.Row_Vectors.Vector;
+      Referenced    : Database.Foreign_Keys.Row_Vectors.Vector;
+      Checks        : Database.Check_Constraints.Check_Constraint_Vectors.Vector;
+      FKs           : Database.Foreign_Keys.Foreign_Key_Vectors.Vector;
+      R             : Database.Status.Result;
+   begin
+      if Tx.DB = null or else Tx.Current_Mode /= Read_Write then
+         return Database.Status.Success;
+      end if;
+
+      Database.Catalog.Select_Database (Database.Catalog_State_Key (Tx.DB.all));
+      if Database.Catalog.Table_Count = 0 then
+         return Database.Status.Success;
+      end if;
+
+      for I in 0 .. Database.Catalog.Table_Count - 1 loop
+         S := Database.Catalog.Table_At (I);
+         Rows := Visible_Rows_For_Table (Tx, S.Table_Id);
+         Checks := Database.Catalog.Check_Constraints_For_Table (S.Table_Id);
+         if Checks.Length > 0 then
+            for Row of Rows loop
+               R := Database.Check_Constraints.Validate_All
+                 (Checks, S, Row, Include_Deferred => True);
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
+            end loop;
+         end if;
+
+         FKs := Database.Catalog.Foreign_Keys_For_Referencing_Table (S.Table_Id);
+         for FK of FKs loop
+            if FK.Deferred then
+               R := Database.Catalog.Find_By_Id (FK.Referenced_Table, Referenced_S);
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
+               Referenced := Visible_Rows_For_Table (Tx, FK.Referenced_Table);
+               for Row of Rows loop
+                  R := Database.Foreign_Keys.Validate_Insert_Or_Update
+                    (FK, S, Referenced_S, Row, Referenced);
+                  if not Database.Status.Is_Ok (R) then
+                     return R;
+                  end if;
+               end loop;
+            end if;
+         end loop;
+      end loop;
+      return Database.Status.Success;
+   end Validate_Deferred_Constraints;
+
    function Commit (Tx : in out Transaction) return Database.Status.Result is
       R : Database.Status.Result;
    begin
@@ -264,6 +359,12 @@ package body Database.Transactions is
          return Tx.Last;
       end if;
       Tx.Current_State := Committing;
+      R := Validate_Deferred_Constraints (Tx);
+      if not Database.Status.Is_Ok (R) then
+         Tx.Current_State := Failed;
+         Tx.Last := R;
+         return R;
+      end if;
       if Tx.Current_Mode = Read_Write and then Database.Backend (Tx.DB.all) = Database.Persistent_Backend then
          R := Database.Catalog.Save (Tx.DB.all);
          if not Database.Status.Is_Ok (R) then
@@ -439,10 +540,12 @@ package body Database.Transactions is
       null;
    end Rollback;
 
-   function Is_Active (Tx : Transaction) return Boolean is (Tx.Current_State = Active);
-   function Can_Read (Tx : Transaction) return Boolean is (Tx.Current_State = Active);
+   function Is_Active (Tx : Transaction) return Boolean is
+     (Database.Transactions.State_Rules.Is_Active_State (Tx.Current_State));
+   function Can_Read (Tx : Transaction) return Boolean is
+     (Database.Transactions.State_Rules.Can_Read_State (Tx.Current_State));
    function Can_Write (Tx : Transaction) return Boolean is
-     (Tx.Current_State = Active and then Tx.Current_Mode = Read_Write);
+     (Database.Transactions.State_Rules.Can_Write_State (Tx.Current_State, Tx.Current_Mode));
    function Result (Tx : Transaction) return Database.Status.Result is (Tx.Last);
    function State (Tx : Transaction) return Transaction_State is (Tx.Current_State);
    function Mode (Tx : Transaction) return Transaction_Mode is (Tx.Current_Mode);

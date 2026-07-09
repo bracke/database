@@ -1,7 +1,9 @@
 with Ada.Containers.Indefinite_Vectors;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Queries;
+with Database.Rows;
 with Database.Status;
+with Database.Values;
 
 --  View metadata and durable view query bodies.
 package Database.Views is
@@ -32,4 +34,27 @@ package Database.Views is
    --  @param Query query argument supplied to the operation.
    --  @return Result produced by the function.
    function Expand (View : View_Definition; Query : out Database.Queries.Query) return Database.Status.Result;
+
+   --  Return true when the view can be mutated through the Ada-native row-set
+   --  helpers. Updatable views are stored row-query views; callers remain
+   --  responsible for applying equivalent mutations to any base table when
+   --  they use views as projections over durable tables.
+   function Is_Updatable (View : View_Definition) return Boolean;
+
+   --  Insert a row into the stored view query body.
+   function Insert_Row
+     (View : in out View_Definition;
+      Row  : Database.Rows.Row) return Database.Status.Result;
+
+   --  Replace the row whose key column equals the new row's key-column value.
+   function Update_Row
+     (View       : in out View_Definition;
+      Key_Column : Natural;
+      Row        : Database.Rows.Row) return Database.Status.Result;
+
+   --  Delete the row whose key column equals Key.
+   function Delete_Row
+     (View       : in out View_Definition;
+      Key_Column : Natural;
+      Key        : Database.Values.Value) return Database.Status.Result;
 end Database.Views;

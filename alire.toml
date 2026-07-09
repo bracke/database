@@ -6,3 +6,7 @@ authors = ["Bent Bracke"]
 maintainers = ["Bent Bracke <bent@bracke.dk>"]
 maintainers-logins = ["bracke"]
 project-files = ["database.gpr"]
+website = "https://github.com/bracke/database"
+
+[[depends-on]]
+gnat_native = "=15.2.1"

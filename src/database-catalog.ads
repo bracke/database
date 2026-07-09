@@ -147,6 +147,13 @@ package Database.Catalog is
    --  @param Index zero-based or package-defined index used by the operation.
    --  @return Result produced by the function.
    function View_At (Index : Natural) return Database.Views.View_Definition;
+   --  Return update view for the supplied database state or arguments.
+   --  @param DB database handle used by the operation.
+   --  @param View view argument supplied to the operation.
+   --  @return Status result describing whether the operation succeeded.
+   function Update_View
+     (DB   : in out Database.Handle;
+      View : Database.Views.View_Definition) return Database.Status.Result;
 
    --  Return add materialized view for the supplied database state or arguments.
    --  @param DB database handle used by the operation.

@@ -1,5 +1,5 @@
 project Spark_BTree_Invariants is
-   for Source_Dirs use ("src");
+   for Source_Dirs use ("spark_stubs", "src");
    for Source_Files use
      ("database.ads",
       "database-indexes.ads",

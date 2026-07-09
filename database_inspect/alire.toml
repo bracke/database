@@ -1,0 +1,15 @@
+name = "database_inspect"
+description = "Command-line inspector for database files"
+version = "0.14.0"
+licenses = "MIT"
+authors = ["Bent Bracke"]
+maintainers = ["Bent Bracke <bent@bracke.dk>"]
+maintainers-logins = ["bracke"]
+project-files = ["database_inspect.gpr"]
+
+[[depends-on]]
+database = "*"
+gnat_native = "=15.2.1"
+
+[[pins]]
+database = { path = ".." }

@@ -24,6 +24,7 @@ package body Relational_Features_Tests is
    use AUnit.Assertions;
    use type Database.Status.Status_Code;
    use type Database.Indexes.Ordering;
+   use type Ada.Strings.Wide_Wide_Unbounded.Unbounded_Wide_Wide_String;
 
    type Person_Row is record
       Id         : Integer;
@@ -278,6 +279,45 @@ package body Relational_Features_Tests is
       Database.Close (DB);
    end Table_Check_Constraint_Is_Enforced_On_Insert;
 
+   procedure Deferred_Check_Constraint_Is_Enforced_On_Commit
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      DB  : Database.Handle;
+      Tx  : Database.Transactions.Transaction;
+      S   : Database.Schema.Table_Schema := Person_Schema;
+      C   : Database.Check_Constraints.Check_Constraint;
+      Res : Database.Status.Result;
+   begin
+      Database.Open_In_Memory (DB);
+      S.Name :=
+        Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String
+          ("people_deferred_checks");
+      Res := People.Register (DB, S);
+      Assert (Database.Status.Is_Ok (Res), "register deferred table failed");
+      C :=
+        Database.Check_Constraints.Create
+          ("age_non_negative_deferred",
+           Database.Expressions.Binary
+             (Database.Expressions.Greater_Or_Equal_Expr,
+              Database.Expressions.Column (1),
+              Database.Expressions.Literal
+                (Database.Values.From_Integer (0))),
+           Deferred => True);
+      Res := Database.Catalog.Add_Check_Constraint (DB, S.Table_Id, C);
+      Assert (Database.Status.Is_Ok (Res), "add deferred check failed");
+      Database.Transactions.Begin_Write (DB, Tx);
+      Res := People.Insert (Tx, DB, S, (Id => 1, Age => -5, Double_Age => 0));
+      Assert (Database.Status.Is_Ok (Res), "deferred check fired before commit");
+      Res := Database.Transactions.Commit (Tx);
+      Assert
+        (Res.Code = Database.Status.Constraint_Error,
+         "deferred check was not enforced at commit");
+      Res := Database.Transactions.Rollback (Tx);
+      Assert (Database.Status.Is_Ok (Res), "rollback after deferred failure failed");
+      Database.Close (DB);
+   end Deferred_Check_Constraint_Is_Enforced_On_Commit;
+
    procedure Generated_Column_Is_Automatic_On_Insert
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
@@ -518,6 +558,107 @@ package body Relational_Features_Tests is
       end if;
    end Relational_Metadata_Survives_Reopen;
 
+   procedure Updatable_View_Row_Operations_Persist
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      DB       : Database.Handle;
+      Rows     : Database.Queries.Row_Vectors.Vector;
+      Rw       : Database.Rows.Row;
+      Q        : Database.Queries.Query;
+      V        : Database.Views.View_Definition;
+      Expanded : Database.Queries.Query;
+      Res      : Database.Status.Result;
+   begin
+      Database.Open_In_Memory (DB);
+      Database.Rows.Append (Rw, Database.Values.From_Integer (1));
+      Database.Rows.Append (Rw, Database.Values.From_Text ("one"));
+      Rows.Append (Rw);
+      Q := Database.Queries.From_Rows (Rows);
+      V := Database.Views.Create ("updatable_people_view", Q);
+      Res := Database.Catalog.Add_View (DB, V);
+      Assert (Database.Status.Is_Ok (Res), "add updatable view failed");
+      Assert (Database.Views.Is_Updatable (V), "view should be updatable");
+
+      Rw.Values.Clear;
+      Database.Rows.Append (Rw, Database.Values.From_Integer (2));
+      Database.Rows.Append (Rw, Database.Values.From_Text ("two"));
+      Res := Database.Views.Insert_Row (V, Rw);
+      Assert (Database.Status.Is_Ok (Res), "view insert failed");
+
+      Rw.Values.Clear;
+      Database.Rows.Append (Rw, Database.Values.From_Integer (2));
+      Database.Rows.Append (Rw, Database.Values.From_Text ("deux"));
+      Res := Database.Views.Update_Row (V, 0, Rw);
+      Assert (Database.Status.Is_Ok (Res), "view update failed");
+
+      Res := Database.Views.Delete_Row (V, 0, Database.Values.From_Integer (1));
+      Assert (Database.Status.Is_Ok (Res), "view delete failed");
+      Res := Database.Catalog.Update_View (DB, V);
+      Assert (Database.Status.Is_Ok (Res), "catalog view update failed");
+      Res := Database.Catalog.Find_View ("updatable_people_view", V);
+      Assert (Database.Status.Is_Ok (Res), "updated view missing");
+      Res := Database.Views.Expand (V, Expanded);
+      Assert (Database.Status.Is_Ok (Res), "updated view expand failed");
+      Assert (Database.Queries.Row_Count (Expanded) = 1, "view row count wrong");
+      Rows := Database.Queries.Rows (Expanded);
+      Assert
+        (Database.Rows.Get (Rows.Element (0), 0).Int = 2,
+         "view retained wrong key");
+      Assert
+        (Database.Rows.Get (Rows.Element (0), 1).Text =
+         Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("deux"),
+         "view update did not persist");
+      Database.Close (DB);
+   end Updatable_View_Row_Operations_Persist;
+
+   procedure Materialized_View_Incremental_Refresh_Merges_Rows
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      DB      : Database.Handle;
+      Tx      : Database.Transactions.Transaction;
+      MV      : Database.Materialized_Views.Materialized_View_Definition;
+      Current : Database.Materialized_Views.Row_Vectors.Vector;
+      Inserted, Updated, Deleted, Result : Database.Materialized_Views.Row_Vectors.Vector;
+      Rw      : Database.Rows.Row;
+      Res     : Database.Status.Result;
+   begin
+      Database.Open_In_Memory (DB);
+      MV :=
+        Database.Materialized_Views.Create
+          ("mv_incremental", Database.Queries.Empty, Storage_Table => 1);
+      Database.Rows.Append (Rw, Database.Values.From_Integer (1));
+      Database.Rows.Append (Rw, Database.Values.From_Text ("one"));
+      Current.Append (Rw);
+      Rw.Values.Clear;
+      Database.Rows.Append (Rw, Database.Values.From_Integer (2));
+      Database.Rows.Append (Rw, Database.Values.From_Text ("two"));
+      Current.Append (Rw);
+      Rw.Values.Clear;
+      Database.Rows.Append (Rw, Database.Values.From_Integer (2));
+      Database.Rows.Append (Rw, Database.Values.From_Text ("deux"));
+      Updated.Append (Rw);
+      Rw.Values.Clear;
+      Database.Rows.Append (Rw, Database.Values.From_Integer (3));
+      Database.Rows.Append (Rw, Database.Values.From_Text ("three"));
+      Inserted.Append (Rw);
+      Rw.Values.Clear;
+      Database.Rows.Append (Rw, Database.Values.From_Integer (1));
+      Deleted.Append (Rw);
+
+      Database.Transactions.Begin_Write (DB, Tx);
+      Res :=
+        Database.Materialized_Views.Refresh_Incremental
+          (Tx, MV, Current, Inserted, Updated, Deleted, 0, Result);
+      Assert (Database.Status.Is_Ok (Res), "incremental refresh failed");
+      Assert (Natural (Result.Length) = 2, "incremental result row count wrong");
+      Assert (MV.Last_Refresh_Commit = Database.Commit_Version (DB), "refresh version not recorded");
+      Res := Database.Transactions.Rollback (Tx);
+      Assert (Database.Status.Is_Ok (Res), "rollback refresh tx failed");
+      Database.Close (DB);
+   end Materialized_View_Incremental_Refresh_Merges_Rows;
+
    overriding
    procedure Register_Tests (T : in out Case_Type) is
       use AUnit.Test_Cases.Registration;
@@ -544,6 +685,10 @@ package body Relational_Features_Tests is
          "table insert enforces registered check constraints");
       Register_Routine
         (T,
+         Deferred_Check_Constraint_Is_Enforced_On_Commit'Access,
+         "deferred check constraints are enforced on commit");
+      Register_Routine
+        (T,
          Generated_Column_Is_Automatic_On_Insert'Access,
          "table insert recomputes registered generated columns");
       Register_Routine
@@ -554,5 +699,13 @@ package body Relational_Features_Tests is
         (T,
          Relational_Metadata_Survives_Reopen'Access,
          "relational metadata survives persistent reopen");
+      Register_Routine
+        (T,
+         Updatable_View_Row_Operations_Persist'Access,
+         "updatable view row operations persist in catalog");
+      Register_Routine
+        (T,
+         Materialized_View_Incremental_Refresh_Merges_Rows'Access,
+         "incremental materialized view refresh merges row deltas");
    end Register_Tests;
 end Relational_Features_Tests;

@@ -6,7 +6,7 @@ WAL is the persistence mode for durable transactions. Persistent write paths app
 
 For a database file named `app.db`, the WAL file is `app.db.wal`.
 
-The WAL is append-only. Records are assigned monotonically increasing log sequence numbers (LSNs). A committed transaction is durable only after its commit record has been appended and flushed. Main database pages may lag behind the WAL until checkpointing applies committed frames back to the database file.
+The WAL is append-only. Records are assigned monotonically increasing log sequence numbers (LSNs). A committed transaction is durable only after its commit record has been appended, stream-flushed, and `fsync`ed. Main database pages may lag behind the WAL until checkpointing applies committed frames back to the database file.
 
 ## Record model
 
@@ -29,8 +29,10 @@ Record kinds:
 - page frame
 - commit record
 - checkpoint record
+- full-text redo record
+- full-text undo record
 
-Page-frame payloads contain the serialized database page. Commit-record payloads contain the assigned commit version. Checkpoint records are reserved for explicit checkpoint boundaries.
+Page-frame payloads contain the serialized database page. Commit-record payloads contain the assigned commit version. Checkpoint records are reserved for explicit checkpoint boundaries. Full-text redo and undo records contain serialized full-text dictionary or posting pages only. Recovery applies committed full-text redo images and uncommitted full-text undo images, and rejects full-text WAL records whose payload is not a full-text page.
 
 ## Commit sequence
 
@@ -38,7 +40,7 @@ A read-write transaction follows this durability sequence:
 
 1. write physical page frames to the WAL before the corresponding page is considered durable
 2. append the commit record
-3. flush the WAL
+3. flush the WAL stream and `fsync` the WAL file
 4. mark the transaction committed in memory
 5. checkpoint later merges committed page frames into the main database file
 
@@ -52,7 +54,7 @@ Replay updates page LSN metadata before writing the page to the database file. I
 
 ## Checkpoint algorithm
 
-Checkpointing replays committed WAL frames into the main database file, flushes the database file, and removes the WAL only when no active readers require the old snapshot horizon. If readers are active, the WAL is preserved and can be replayed again later.
+Checkpointing replays committed WAL frames into the main database file, flushes and `fsync`s the database file, and removes the WAL only when no active readers require the old snapshot horizon. File creation, WAL deletion, and rewrite/rename operations sync the parent directory so directory entries reach the filesystem durability boundary too. If readers are active, the WAL is preserved and can be replayed again later.
 
 Supported checkpoint modes are:
 
@@ -74,12 +76,14 @@ WAL replay restores durable physical pages, including row version metadata store
 - LSN ordering violations are detected
 - a crash after commit but before checkpoint is recovered by replay
 - a crash during checkpoint is recovered by replaying the remaining WAL again
+- successful commit, checkpoint, create/delete, and rewrite/rename paths issue file or directory `fsync` calls before acknowledging completion
 
 ## Limitations
 
-- SQL is not implemented
-- there is no parser
+- The engine API is the supported query interface.
+- SQL text parsing is outside the WAL layer scope.
 - there is no replication
 - there is no distributed WAL or consensus
 - only one active writer is still enforced
-- logical WAL records and compressed WAL frames are future work
+- compressed WAL frames are future work
+- real power-loss behavior still depends on the local filesystem, mount options, storage controller, and hardware honoring `fsync` and directory `fsync`

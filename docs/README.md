@@ -2,6 +2,9 @@
 
 Current user and maintainer documentation lives in this directory.
 
+Sibling dependencies for local builds are `../project_tools` for release
+tooling and `../cryptolib` for cryptographic primitives.
+
 ## Start Here
 
 - `getting-started.md`
@@ -29,6 +32,7 @@ Current user and maintainer documentation lives in this directory.
 - `export-import.md`
 - `extensions.md`
 - `full-text-search.md`
+- `database-inspect.md`
 - `observability.md`
 - `callable_registry_ownership.md`
 - `per_handle_registry_ownership.md`

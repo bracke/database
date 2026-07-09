@@ -1,4 +1,6 @@
-package body Database.Versioning is
+package body Database.Versioning
+  with SPARK_Mode => On
+is
    function New_Committed
      (Version : Commit_Version) return Row_Version_Metadata is
    begin

@@ -33,8 +33,8 @@ is
      (Initial : Word_32;
       Data    : Byte_Array) return Word_32
    is
-      A : Word_32 := Low_16 (Initial);
-      B : Word_32 := High_16 (Initial);
+      A : Word_32 := Low_16 (Initial) mod Adler_Modulus;
+      B : Word_32 := High_16 (Initial) mod Adler_Modulus;
    begin
       for Index in Data'Range loop
          pragma Loop_Invariant (A < Adler_Modulus);

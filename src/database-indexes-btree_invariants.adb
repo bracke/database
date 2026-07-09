@@ -203,6 +203,10 @@ is
             Node : constant Node_Descriptor := Tree.Nodes (Index);
          begin
             if Node.Kind = Internal_Node then
+               if Node.Key_Count = 0 then
+                  return Invalid_Key_Count;
+               end if;
+
                for Slot in 1 .. Node.Child_Count loop
                   pragma Loop_Invariant (Slot in 1 .. Node.Child_Count);
 
@@ -326,6 +330,7 @@ is
       Changed   : Boolean := True;
       Root_Index : Natural;
       Child_Index : Natural;
+      Remaining : Natural := Max_Nodes;
    begin
       Root_Index := Find_Node_Index (Tree, Tree.Root_Page_Id);
       if Root_Index = 0 then
@@ -334,10 +339,12 @@ is
 
       Reachable (Root_Index) := True;
 
-      while Changed loop
+      while Changed and then Remaining > 0 loop
          pragma Loop_Invariant (Root_Index in 1 .. Max_Nodes);
+         pragma Loop_Variant (Decreases => Remaining);
 
          Changed := False;
+         Remaining := Remaining - 1;
 
          for Index in 1 .. Tree.Node_Count loop
             pragma Loop_Invariant (Index in 1 .. Tree.Node_Count);
@@ -363,6 +370,10 @@ is
             end if;
          end loop;
       end loop;
+
+      if Changed then
+         return Unreachable_Node;
+      end if;
 
       for Index in 1 .. Tree.Node_Count loop
          pragma Loop_Invariant (Index in 1 .. Tree.Node_Count);

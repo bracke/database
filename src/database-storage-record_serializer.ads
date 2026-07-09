@@ -1,7 +1,7 @@
 with Interfaces;
 
 package Database.Storage.Record_Serializer
-  with SPARK_Mode => Off
+  with SPARK_Mode => On
 is
    use type Interfaces.Unsigned_8;
    --  Byte defines a public database type used by this package.
@@ -91,7 +91,10 @@ is
      (Header.Version = Current_Format_Version
       and then Header.Field_Count <= Max_Field_Count
       and then Header.Payload_Length <= Max_Payload_Length
-      and then Header.Payload_First >= Header_Length);
+      and then Header.Payload_First >= Header_Length
+      and then Header.Directory_First <= Natural'Last
+        - Header.Field_Count * Directory_Entry_Length
+      and then Header.Payload_First <= Natural'Last - Header.Payload_Length);
 
    --  Return read u32 le for the supplied database state or arguments.
    --  @param Data byte data processed by the operation.
@@ -102,7 +105,8 @@ is
       First : Natural) return Word_32
      with
        Global => null,
-       Pre => First <= Data'Last
+       Pre => First in Data'Range
+         and then First <= Natural'Last - 3
          and then Data'Last - First >= 3,
        Depends => (Read_U32_LE'Result => (Data, First));
 
@@ -116,7 +120,8 @@ is
       Value : Word_32)
      with
        Global => null,
-       Pre => First <= Data'Last
+       Pre => First in Data'Range
+         and then First <= Natural'Last - 3
          and then Data'Last - First >= 3,
        Depends => (Data => (Data, First, Value));
 
@@ -131,23 +136,45 @@ is
        Global => null,
        Pre => Field_Count <= Max_Field_Count
          and then Payload_Length <= Max_Payload_Length,
-       Depends => (Encoded_Length'Result => (Field_Count, Payload_Length));
+       Depends => (Encoded_Length'Result => (Field_Count, Payload_Length)),
+       Post =>
+         Encoded_Length'Result =
+           Header_Length + Field_Count * Directory_Entry_Length + Payload_Length
+         and then Encoded_Length'Result >= Header_Length
+         and then Encoded_Length'Result >=
+           Header_Length + Field_Count * Directory_Entry_Length;
 
    --  Validate a deterministic serialized record envelope.
    --  @param Data byte data processed by the operation.
    --  @param Header header argument supplied to the operation.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
-   function Validate_Record
+   procedure Validate_Record
      (Data   : Byte_Array;
-      Header : out Record_Header) return Parse_Status
+      Header : out Record_Header;
+      Status : out Parse_Status)
      with
        Global => null,
        Depends =>
-         (Validate_Record'Result => Data,
+         (Status => Data,
           Header => Data),
        Post =>
-         (if Validate_Record'Result = Parse_OK then Header_Is_Well_Formed (Header));
+         (if Status = Parse_OK then
+            Header_Is_Well_Formed (Header)
+            and then Data'First <= Natural'Last - Header_Length
+            and then
+              Header.Directory_First <= Natural'Last
+                - Header.Field_Count * Directory_Entry_Length
+                - Header.Payload_Length
+            and then Header.Payload_First <= Natural'Last - Header.Payload_Length
+            and then
+              (if Header.Payload_Length = 0 then
+                 Header.Payload_First > Data'First
+                 and then Header.Payload_First - 1 <= Data'Last
+               else
+                 Header.Payload_First <= Data'Last
+                 and then
+                   Data'Last - Header.Payload_First >= Header.Payload_Length - 1));
 
    --  Return read field span for the supplied database state or arguments.
    --  @param Data byte data processed by the operation.
@@ -155,17 +182,25 @@ is
    --  @param Index zero-based or package-defined index used by the operation.
    --  @param Span span argument supplied to the operation.
    --  @return Result produced by the function.
-   function Read_Field_Span
+   procedure Read_Field_Span
      (Data   : Byte_Array;
       Header : Record_Header;
       Index  : Natural;
-      Span   : out Field_Span) return Parse_Status
+      Span   : out Field_Span;
+      Status : out Parse_Status)
      with
        Global => null,
-       Pre => Header_Is_Well_Formed (Header),
+       Pre => Header_Is_Well_Formed (Header)
+         and then Header.Directory_First <= Natural'Last
+           - Header.Field_Count * Directory_Entry_Length,
        Depends =>
-         (Read_Field_Span'Result => (Data, Header, Index),
-          Span => (Data, Header, Index));
+         (Status => (Data, Header, Index),
+          Span => (Data, Header, Index)),
+       Post =>
+         (if Status = Parse_OK then
+            Span.Offset <= Header.Payload_Length
+            and then Span.Length <= Header.Payload_Length - Span.Offset
+            and then Span.Offset <= Natural'Last - Span.Length);
 
    --  Return validate field directory for the supplied database state or arguments.
    --  @param Data byte data processed by the operation.
@@ -185,16 +220,24 @@ is
    --  @param Fields fields argument supplied to the operation.
    --  @param Output output argument supplied to the operation.
    --  @return Result produced by the function.
-   function Build_Record
+   procedure Build_Record
      (Payload : Byte_Array;
       Fields  : Field_Span_Array;
-      Output  : in out Byte_Array) return Parse_Status
+      Output  : in out Byte_Array;
+      Status  : out Parse_Status)
      with
        Global => null,
-       Pre => Fields'Length <= Max_Field_Count
-         and then Payload'Length <= Max_Payload_Length,
+       Pre =>
+         (Fields'First > Fields'Last
+          or else Fields'Last - Fields'First < Max_Field_Count)
+         and then
+           (Payload'First > Payload'Last
+            or else
+              (Payload'First <= Natural'Last - Max_Payload_Length
+               and then Payload'Last - Payload'First < Max_Payload_Length))
+         and then Output'First <= Natural'Last - Header_Length,
        Depends =>
-         (Build_Record'Result => (Payload, Fields, Output),
+         (Status => (Payload, Fields, Output),
           Output => (Payload, Fields, Output));
 
 end Database.Storage.Record_Serializer;

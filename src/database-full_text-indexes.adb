@@ -1,4 +1,5 @@
 with Ada.Containers;
+with Database.MVCC;
 with Database.Rows;
 with Database.Types;
 with Database.Values;
@@ -490,4 +491,64 @@ package body Database.Full_Text.Indexes is
          end loop;
       end loop;
    end Recompute_Document_Statistics_From_Postings;
+
+   function Compact_Reclaimable_Postings
+     (Index : in out Full_Text_Index) return Natural is
+      use type Database.MVCC.Transaction_Lifecycle;
+      Removed : Natural := 0;
+   begin
+      if Index.Terms.Length > 0 then
+         for TI in reverse 0 .. Natural (Index.Terms.Length) - 1 loop
+            declare
+               TE : Term_Entry := Index.Terms.Element (TI);
+            begin
+               if TE.Postings.Length > 0 then
+                  for PI in reverse 0 .. Natural (TE.Postings.Length) - 1 loop
+                     declare
+                        P : constant Database.Full_Text.Postings.Posting :=
+                          TE.Postings.Element (PI);
+                        Delete_Version : Database.Versioning.Commit_Version :=
+                          P.Deleted_At;
+                     begin
+                        if P.Deleted_By /= Database.Versioning.No_Transaction
+                          and then Database.MVCC.Lifecycle (P.Deleted_By) =
+                            Database.MVCC.Committed
+                        then
+                           if Delete_Version = Database.Versioning.No_Version then
+                              Delete_Version :=
+                                Database.MVCC.Transaction_Commit_Version
+                                  (P.Deleted_By);
+                           end if;
+
+                           if Database.MVCC.Safe_Reclaim_Version
+                             (Delete_Version)
+                           then
+                              TE.Postings.Delete (PI);
+                              Removed := Removed + 1;
+                           end if;
+                        end if;
+                     end;
+                  end loop;
+               end if;
+
+               if TE.Postings.Is_Empty then
+                  Index.Terms.Delete (TI);
+               else
+                  Index.Terms.Replace_Element (TI, TE);
+               end if;
+            end;
+         end loop;
+      end if;
+
+      Index.Deleted_Posting_Count := 0;
+      for TE of Index.Terms loop
+         for P of TE.Postings loop
+            if P.Deleted_By /= Database.Versioning.No_Transaction then
+               Index.Deleted_Posting_Count := Index.Deleted_Posting_Count + 1;
+            end if;
+         end loop;
+      end loop;
+      Recompute_Document_Statistics_From_Postings (Index);
+      return Removed;
+   end Compact_Reclaimable_Postings;
 end Database.Full_Text.Indexes;

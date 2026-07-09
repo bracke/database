@@ -1,0 +1,12 @@
+project Spark_Table_Heap_Layout is
+   for Source_Dirs use ("spark_stubs", "src");
+   for Source_Files use
+     ("database.ads",
+      "database-storage.ads",
+      "database-storage-table_heap_layout.ads",
+      "database-storage-table_heap_layout.adb");
+   for Main use ();
+   package Builder is
+      for Global_Configuration_Pragmas use "gnat.adc";
+   end Builder;
+end Spark_Table_Heap_Layout;

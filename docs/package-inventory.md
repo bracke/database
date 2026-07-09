@@ -37,7 +37,16 @@ Current source packages grouped by subsystem.
 - `Database.Vacuum` — `src/database-vacuum.ads`
 - `Database.Validation_Hooks` — `src/database-validation_hooks.ads`
 
+## Command-Line Subcrates
+
+- `Database.Inspect` — `database_inspect/src/database-inspect.ads`
+- `database_inspect` — `database_inspect/src/database_inspect.adb`
+- `database_inspect_make_encrypted_fixture` — `database_inspect/src/database_inspect_make_encrypted_fixture.adb`
+
 ## Encryption
+
+Encryption primitives are provided by the sibling `../cryptolib` crate; the
+database packages below own the storage-facing contracts and artifact metadata.
 
 - `Database.Crypto` — `src/database-crypto.ads`
 - `Database.Crypto_Checks` — `src/database-crypto_checks.ads`

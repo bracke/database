@@ -35,8 +35,8 @@ artifacts using the database/WAL/page/backup/encryption validation paths.
 ## Build
 
 ```sh
-gprbuild -P tests/tests.gpr
-gprbuild -P tests/database_tests.gpr
+alr exec -- gprbuild -P tests/tests.gpr
+alr exec -- gprbuild -P tests/database_tests.gpr
 ```
 
 The normal AUnit binary may call

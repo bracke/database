@@ -6,12 +6,18 @@ This guide shows the intended user-facing workflow for `database`.
 to typed database rows explicitly, and perform all reads and writes through
 transaction objects.
 
+## Prerequisites
+
+Local builds expect the sibling `../cryptolib` crate because `database.gpr`
+depends on `../cryptolib/cryptolib.gpr`. Release checks also expect the sibling
+`../project_tools` crate.
+
 ## Quickstart
 
 Build and run the verified typed-table example:
 
 ```sh
-gprbuild -P examples/typed_table/typed_table.gpr
+alr exec -- gprbuild -P examples/typed_table/typed_table.gpr
 examples/typed_table/bin/main
 ```
 
@@ -26,7 +32,7 @@ typed table example complete
 For the smallest handle lifecycle smoke test, build and run:
 
 ```sh
-gprbuild -P examples/minimal/minimal.gpr
+alr exec -- gprbuild -P examples/minimal/minimal.gpr
 examples/minimal/bin/main
 ```
 

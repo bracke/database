@@ -7,7 +7,7 @@ stress, crash, and SPARK-oriented validation suites.
 
 The project_tools-backed release check currently runs the full AUnit suite:
 
-- tests run: 213
+- tests run: 229
 - failed assertions: 0
 - unexpected errors: 0
 - packages with missing direct source-level test coverage: 0
@@ -46,10 +46,12 @@ The source tree includes behavioral AUnit tests for the SPARK-oriented subsets:
 
 ## Required Validation
 
-The normal test and release entrypoint is the project_tools-backed checker:
+The normal test and release entrypoint is the project_tools-backed checker. It
+expects the sibling `../project_tools` tooling crate and the sibling
+`../cryptolib` crypto dependency to be present:
 
 ```sh
-gprbuild -P tools/tools.gpr
+alr exec -- gprbuild -P tools/tools.gpr
 tools/bin/check_all
 ```
 

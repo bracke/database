@@ -21,6 +21,6 @@ source of truth for typed table workflows.
 Build and run:
 
 ```sh
-gprbuild -P examples/typed_table/typed_table.gpr
+alr exec -- gprbuild -P examples/typed_table/typed_table.gpr
 examples/typed_table/bin/main
 ```

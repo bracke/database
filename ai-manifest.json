@@ -38,15 +38,15 @@
     "server mode"
   ],
   "counts": {
-    "source_specs": 96,
-    "source_bodies": 96,
-    "packages": 96,
+    "source_specs": 102,
+    "source_bodies": 102,
+    "packages": 102,
     "test_specs": 33,
     "test_bodies": 35,
-    "test_assertions_detected": 1161,
-    "registered_aunit_routines_detected": 214,
+    "test_assertions_detected": 1176,
+    "registered_aunit_routines_detected": 229,
     "examples": 16,
-    "spark_projects": 6
+    "spark_projects": 13
   },
   "packages": [
     {
@@ -73,6 +73,11 @@
       "name": "Database.Catalog",
       "spec": "src/database-catalog.ads",
       "body": "src/database-catalog.adb"
+    },
+    {
+      "name": "Database.Catalog.Rules",
+      "spec": "src/database-catalog-rules.ads",
+      "body": "src/database-catalog-rules.adb"
     },
     {
       "name": "Database.Check",
@@ -310,6 +315,11 @@
       "body": "src/database-log_sequence.adb"
     },
     {
+      "name": "Database.Log_Sequence.Rules",
+      "spec": "src/database-log_sequence-rules.ads",
+      "body": "src/database-log_sequence-rules.adb"
+    },
+    {
       "name": "Database.Materialized_Views",
       "spec": "src/database-materialized_views.ads",
       "body": "src/database-materialized_views.adb"
@@ -440,6 +450,11 @@
       "body": "src/database-storage-table_heap.adb"
     },
     {
+      "name": "Database.Storage.Table_Heap_Layout",
+      "spec": "src/database-storage-table_heap_layout.ads",
+      "body": "src/database-storage-table_heap_layout.adb"
+    },
+    {
       "name": "Database.Storage",
       "spec": "src/database-storage.ads",
       "body": "src/database-storage.adb"
@@ -468,6 +483,11 @@
       "name": "Database.Transactions",
       "spec": "src/database-transactions.ads",
       "body": "src/database-transactions.adb"
+    },
+    {
+      "name": "Database.Transactions.State_Rules",
+      "spec": "src/database-transactions-state_rules.ads",
+      "body": "src/database-transactions-state_rules.adb"
     },
     {
       "name": "Database.Type_Metadata",
@@ -518,6 +538,16 @@
       "name": "Database.WAL.Frame_Parser",
       "spec": "src/database-wal-frame_parser.ads",
       "body": "src/database-wal-frame_parser.adb"
+    },
+    {
+      "name": "Database.WAL.Payload_Rules",
+      "spec": "src/database-wal-payload_rules.ads",
+      "body": "src/database-wal-payload_rules.adb"
+    },
+    {
+      "name": "Database.Visibility.Rules",
+      "spec": "src/database-visibility-rules.ads",
+      "body": "src/database-visibility-rules.adb"
     },
     {
       "name": "Database.WAL",
@@ -676,11 +706,29 @@
   ],
   "spark_projects": [
     "spark_btree_invariants.gpr",
+    "spark_catalog_rules.gpr",
     "spark_checksums.gpr",
     "spark_free_list_manager.gpr",
+    "spark_log_sequence.gpr",
     "spark_page_parser.gpr",
     "spark_record_serializer.gpr",
+    "spark_table_heap_layout.gpr",
+    "spark_transaction_state_rules.gpr",
+    "spark_versioning.gpr",
+    "spark_visibility_rules.gpr",
+    "spark_wal_payload_rules.gpr",
     "spark_wal_frame_parser.gpr"
+  ],
+  "spark_stub_sources": [
+    "spark_stubs/database.ads",
+    "spark_stubs/database-catalog.ads",
+    "spark_stubs/database-indexes.ads",
+    "spark_stubs/database-log_sequence.ads",
+    "spark_stubs/database-mvcc.ads",
+    "spark_stubs/database-storage.ads",
+    "spark_stubs/database-transactions.ads",
+    "spark_stubs/database-visibility.ads",
+    "spark_stubs/database-wal.ads"
   ],
   "important_docs": [
     "README.md",
@@ -703,12 +751,20 @@
     "generate_gnatdoc": "gnatdoc -P database.gpr",
     "gnatprove": [
       "gnatprove -P spark_checksums.gpr --level=2",
+      "gnatprove -P spark_log_sequence.gpr --level=2",
       "gnatprove -P spark_wal_frame_parser.gpr --level=2",
+      "gnatprove -P spark_wal_payload_rules.gpr --level=2",
       "gnatprove -P spark_page_parser.gpr --level=2",
       "gnatprove -P spark_record_serializer.gpr --level=2",
+      "gnatprove -P spark_catalog_rules.gpr --level=2",
+      "gnatprove -P spark_versioning.gpr --level=2",
+      "gnatprove -P spark_transaction_state_rules.gpr --level=2",
+      "gnatprove -P spark_visibility_rules.gpr --level=2",
       "gnatprove -P spark_free_list_manager.gpr --level=2",
-      "gnatprove -P spark_btree_invariants.gpr --level=2"
+      "gnatprove -P spark_table_heap_layout.gpr --level=2",
+      "gnatprove -P spark_btree_invariants.gpr --level=2",
+      "tools/bin/check_all --proof-strict"
     ]
   },
-  "environment_note": "Use the project_tools-backed tools/bin/check_all entrypoint for normal build and test validation."
+  "environment_note": "Use the project_tools-backed tools/bin/check_all entrypoint for normal build and test validation. Local builds also require the sibling ../cryptolib project."
 }

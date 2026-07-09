@@ -13,17 +13,183 @@ with Ada.Directories;
 with Ada.Streams;
 with Ada.Streams.Stream_IO;
 with Ada.Strings.Wide_Wide_Unbounded;
+with Interfaces.C;
 
 package body Database.Storage.File_IO is
    use Ada.Streams;
    use Ada.Streams.Stream_IO;
    use Database.Storage.Pages;
    use Ada.Strings.Wide_Wide_Unbounded;
+   use type Interfaces.C.int;
+
+   Invalid_Lock_FD : constant Interfaces.C.int := Interfaces.C.int'First;
+   O_RDONLY : constant Interfaces.C.int := 0;
+   O_RDWR  : constant Interfaces.C.int := 2;
+   O_CREAT : constant Interfaces.C.int := 64;
+   O_DIRECTORY : constant Interfaces.C.int := 16#10000#;
+   Mode_RW : constant Interfaces.C.int := 8#666#;
+   LOCK_EX : constant Interfaces.C.int := 2;
+   LOCK_NB : constant Interfaces.C.int := 4;
+   LOCK_UN : constant Interfaces.C.int := 8;
+
+   function C_Open
+     (Path  : Interfaces.C.char_array;
+      Flags : Interfaces.C.int;
+      Mode  : Interfaces.C.int) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "open";
+
+   function C_Close (FD : Interfaces.C.int) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "close";
+
+   function C_Flock
+     (FD        : Interfaces.C.int;
+      Operation : Interfaces.C.int) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "flock";
+
+   function C_Fsync (FD : Interfaces.C.int) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "fsync";
 
    function Native (Path : Wide_Wide_String) return String is
    begin
       return Ada.Characters.Conversions.To_String (Path);
    end Native;
+
+   function Parent_Directory (Path : Wide_Wide_String) return String is
+      Native_Path : constant String := Native (Path);
+      Dir         : constant String := Ada.Directories.Containing_Directory (Native_Path);
+   begin
+      if Dir'Length = 0 then
+         return ".";
+      end if;
+      return Dir;
+   exception
+      when others =>
+         return ".";
+   end Parent_Directory;
+
+   function Sync_FD (FD : Interfaces.C.int) return Database.Status.Result is
+   begin
+      if FD = Invalid_Lock_FD then
+         return Database.Status.Success;
+      end if;
+      if C_Fsync (FD) /= 0 then
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not fsync database file");
+      end if;
+      return Database.Status.Success;
+   exception
+      when others =>
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not fsync database file");
+   end Sync_FD;
+
+   function Sync_File_Path (Path : Wide_Wide_String) return Database.Status.Result is
+      FD : Interfaces.C.int;
+      R  : Database.Status.Result;
+   begin
+      if not Ada.Directories.Exists (Native (Path)) then
+         return Database.Status.Success;
+      end if;
+      FD := C_Open (Interfaces.C.To_C (Native (Path)), O_RDWR, Mode_RW);
+      if FD < 0 then
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not open database file for fsync");
+      end if;
+      R := Sync_FD (FD);
+      declare
+         Close_Result : constant Interfaces.C.int := C_Close (FD);
+         pragma Unreferenced (Close_Result);
+      begin
+         return R;
+      end;
+   exception
+      when others =>
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not fsync database file");
+   end Sync_File_Path;
+
+   function Sync_Parent_Directory (Path : Wide_Wide_String) return Database.Status.Result is
+      Dir : constant String := Parent_Directory (Path);
+      FD  : Interfaces.C.int;
+   begin
+      FD := C_Open (Interfaces.C.To_C (Dir), O_RDONLY + O_DIRECTORY, Mode_RW);
+      if FD < 0 then
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not open database directory for fsync");
+      end if;
+      declare
+         Fsync_Result : constant Interfaces.C.int := C_Fsync (FD);
+         Close_Result : constant Interfaces.C.int := C_Close (FD);
+         pragma Unreferenced (Close_Result);
+      begin
+         if Fsync_Result /= 0 then
+            return Database.Status.Failure
+              (Database.Status.IOError, "could not fsync database directory");
+         end if;
+      end;
+      return Database.Status.Success;
+   exception
+      when others =>
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not fsync database directory");
+   end Sync_Parent_Directory;
+
+   function Acquire_Process_Lock
+     (F              : in out File_Handle;
+      Path           : Wide_Wide_String;
+      Create_If_Need : Boolean) return Database.Status.Result is
+      Flags : Interfaces.C.int := O_RDWR;
+      FD    : Interfaces.C.int;
+   begin
+      if F.Lock_FD /= Invalid_Lock_FD then
+         return Database.Status.Failure
+           (Database.Status.Already_Open, "database file lock already held");
+      end if;
+
+      if Create_If_Need then
+         Flags := Flags + O_CREAT;
+      end if;
+
+      FD := C_Open (Interfaces.C.To_C (Native (Path)), Flags, Mode_RW);
+      if FD < 0 then
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not open database file for process lock");
+      end if;
+
+      if C_Flock (FD, LOCK_EX + LOCK_NB) /= 0 then
+         declare
+            Ignored : constant Interfaces.C.int := C_Close (FD);
+            pragma Unreferenced (Ignored);
+         begin
+            return Database.Status.Failure
+              (Database.Status.Lock_Error,
+               "database file is locked by another process");
+         end;
+      end if;
+
+      F.Lock_FD := FD;
+      return Database.Status.Success;
+   exception
+      when others =>
+         return Database.Status.Failure
+           (Database.Status.Lock_Error, "could not acquire database process lock");
+   end Acquire_Process_Lock;
+
+   procedure Release_Process_Lock (F : in out File_Handle) is
+   begin
+      if F.Lock_FD /= Invalid_Lock_FD then
+         declare
+            Unlock_Result : constant Interfaces.C.int := C_Flock (F.Lock_FD, LOCK_UN);
+            Close_Result  : constant Interfaces.C.int := C_Close (F.Lock_FD);
+            pragma Unreferenced (Unlock_Result, Close_Result);
+         begin
+            F.Lock_FD := Invalid_Lock_FD;
+         end;
+      end if;
+   exception
+      when others =>
+         F.Lock_FD := Invalid_Lock_FD;
+   end Release_Process_Lock;
 
    function Natural_Image (Value : Natural) return Wide_Wide_String is
       Raw : constant Wide_Wide_String := Natural'Wide_Wide_Image (Value);
@@ -385,13 +551,14 @@ package body Database.Storage.File_IO is
       if Ada.Directories.Exists (Native (Path)) then
          Ada.Directories.Delete_File (Native (Path));
       end if;
-      return Database.Status.Success;
+      return Sync_Parent_Directory (Path);
    exception
       when others => return Database.Status.Failure (Database.Status.IOError, "delete file failed");
    end Delete_File;
 
    function Create (F : in out File_Handle; Path : Wide_Wide_String) return Database.Status.Result is
       P : Page;
+      Lock_Result : Database.Status.Result;
    begin
       if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Allocation_Failure) then
          return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Allocation_Failure);
@@ -401,6 +568,10 @@ package body Database.Storage.File_IO is
       end if;
       if F.Opened then
          return Database.Status.Failure (Database.Status.Already_Open, "file already open");
+      end if;
+      Lock_Result := Acquire_Process_Lock (F, Path, Create_If_Need => True);
+      if not Database.Status.Is_Ok (Lock_Result) then
+         return Lock_Result;
       end if;
       Delete_Encrypted_Page_Sidecars (Path);
       Ada.Streams.Stream_IO.Create (F.File, Out_File, Native (Path));
@@ -425,8 +596,28 @@ package body Database.Storage.File_IO is
       end;
       Initialize (P, 1, Catalog_Page);
       declare
-         R : constant Database.Status.Result := Write_Page (F, P);
+         R : Database.Status.Result := Write_Page (F, P);
       begin
+         if not Database.Status.Is_Ok (R) then
+            declare
+               Close_Result  : constant Database.Status.Result := Close (F);
+               Delete_Result : constant Database.Status.Result := Delete_File (Path);
+               pragma Unreferenced (Close_Result, Delete_Result);
+            begin
+               return R;
+            end;
+         end if;
+         R := Flush (F);
+         if not Database.Status.Is_Ok (R) then
+            declare
+               Close_Result  : constant Database.Status.Result := Close (F);
+               Delete_Result : constant Database.Status.Result := Delete_File (Path);
+               pragma Unreferenced (Close_Result, Delete_Result);
+            begin
+               return R;
+            end;
+         end if;
+         R := Sync_Parent_Directory (Path);
          if not Database.Status.Is_Ok (R) then
             declare
                Close_Result  : constant Database.Status.Result := Close (F);
@@ -447,6 +638,7 @@ package body Database.Storage.File_IO is
          exception
             when others => null;
          end;
+         Release_Process_Lock (F);
          F.Opened := False;
          Delete_Encrypted_Page_Sidecars (Path);
          if Ada.Directories.Exists (Native (Path)) then
@@ -465,6 +657,10 @@ package body Database.Storage.File_IO is
    begin
       if F.Opened then
          return Database.Status.Failure (Database.Status.Already_Open, "file already open");
+      end if;
+      R := Acquire_Process_Lock (F, Path, Create_If_Need => False);
+      if not Database.Status.Is_Ok (R) then
+         return R;
       end if;
       Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Path));
       F.Opened := True;
@@ -498,6 +694,7 @@ package body Database.Storage.File_IO is
       return Database.Status.Success;
    exception
       when others =>
+         Release_Process_Lock (F);
          F.Opened := False;
          return Database.Status.Failure (Database.Status.IOError, "could not open database file");
    end Open;
@@ -508,9 +705,12 @@ package body Database.Storage.File_IO is
          Ada.Streams.Stream_IO.Close (F.File);
          F.Opened := False;
       end if;
+      Release_Process_Lock (F);
       return Database.Status.Success;
    exception
-      when others => return Database.Status.Failure (Database.Status.IOError, "close failed");
+      when others =>
+         Release_Process_Lock (F);
+         return Database.Status.Failure (Database.Status.IOError, "close failed");
    end Close;
 
    function Flush (F : in out File_Handle) return Database.Status.Result is
@@ -524,7 +724,7 @@ package body Database.Storage.File_IO is
       if Ada.Streams.Stream_IO.Mode (F.File) /= In_File then
          Ada.Streams.Stream_IO.Flush (F.File);
       end if;
-      return Database.Status.Success;
+      return Sync_FD (F.Lock_FD);
    exception
       when others => return Database.Status.Failure (Database.Status.IOError, "flush failed");
    end Flush;
@@ -581,11 +781,27 @@ package body Database.Storage.File_IO is
          end loop;
       end if;
       Close (Inp);
+      Ada.Streams.Stream_IO.Flush (Outp);
       Close (Outp);
+      R := Sync_File_Path (Tmp_Path);
+      if not Database.Status.Is_Ok (R) then
+         if Ada.Directories.Exists (Native (Tmp_Path)) then
+            Ada.Directories.Delete_File (Native (Tmp_Path));
+         end if;
+         Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Old_Path));
+         F.Opened := True;
+         return R;
+      end if;
       if Ada.Directories.Exists (Native (Old_Path)) then
          Ada.Directories.Delete_File (Native (Old_Path));
       end if;
       Ada.Directories.Rename (Native (Tmp_Path), Native (Old_Path));
+      R := Sync_Parent_Directory (Old_Path);
+      if not Database.Status.Is_Ok (R) then
+         Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Old_Path));
+         F.Opened := True;
+         return R;
+      end if;
       if F.Encrypted then
          Delete_Encrypted_Page_Sidecars_From (Old_Path, Count);
       end if;

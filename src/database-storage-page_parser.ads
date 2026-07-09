@@ -2,7 +2,7 @@ with Interfaces;
 with Database.Checksums;
 
 package Database.Storage.Page_Parser
-  with SPARK_Mode => Off
+  with SPARK_Mode => On
 is
    use type Interfaces.Unsigned_8;
    use type Interfaces.Unsigned_32;
@@ -121,7 +121,8 @@ is
       First : Natural) return Word_32
      with
        Global => null,
-       Pre => First <= Data'Last
+       Pre => First in Data'Range
+         and then First <= Natural'Last - 3
          and then Data'Last - First >= 3,
        Depends => (Read_U32_LE'Result => (Data, First));
 
@@ -139,15 +140,25 @@ is
    --  @param Header header argument supplied to the operation.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
-   function Validate_Header_Only
+   procedure Validate_Header_Only
      (Data         : Byte_Array;
       Minimum_LSN  : Word_32;
-      Header       : out Page_Header) return Parse_Status
+      Header       : out Page_Header;
+      Status       : out Parse_Status)
      with
        Global => null,
        Depends =>
-         (Validate_Header_Only'Result => (Data, Minimum_LSN),
-          Header => Data);
+         (Status => (Data, Minimum_LSN),
+          Header => (Data, Minimum_LSN)),
+       Post =>
+         (if Status = Parse_OK then
+            Header_Is_Well_Formed (Header)
+            and then Data'First <= Natural'Last - Header_Length
+            and then
+              Data'First <= Natural'Last - Header_Length - Header.Used_Length
+            and then Data'First <= Data'Last
+            and then
+              Data'Last - Data'First >= Header_Length + Header.Used_Length - 1);
 
    --  Validate a complete durable page, including header and payload checksums.
    --  @param Data byte data processed by the operation.
@@ -155,17 +166,18 @@ is
    --  @param Header header argument supplied to the operation.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
-   function Validate_Page
+   procedure Validate_Page
      (Data         : Byte_Array;
       Minimum_LSN  : Word_32;
-      Header       : out Page_Header) return Parse_Status
+      Header       : out Page_Header;
+      Status       : out Parse_Status)
      with
        Global => null,
        Depends =>
-         (Validate_Page'Result => (Data, Minimum_LSN),
-          Header => Data),
+         (Status => (Data, Minimum_LSN),
+          Header => (Data, Minimum_LSN)),
        Post =>
-         (if Validate_Page'Result = Parse_OK then Header_Is_Well_Formed (Header));
+         (if Status = Parse_OK then Header_Is_Well_Formed (Header));
 
    --  Return build header checksum for the supplied database state or arguments.
    --  @param Data byte data processed by the operation.
@@ -176,7 +188,8 @@ is
       Page_Id : Page_Id_Type) return Word_32
      with
        Global => null,
-       Pre => Data'Length >= 32,
+       Pre => Data'Length >= 32
+         and then Data'First <= Natural'Last - 31,
        Depends => (Build_Header_Checksum'Result => (Data, Page_Id));
 
    --  Compute the checksum expected for a durable page payload.

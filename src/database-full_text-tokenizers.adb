@@ -154,6 +154,7 @@ package body Database.Full_Text.Tokenizers is
         (Kind => Unicode_Whitespace,
          Treat_Punctuation_As_Separator => True,
          Drop_Builtin_Stop_Words => False,
+         Builtin_Stop_Words => English_Stop_Words,
          Minimum_Token_Length => 1,
          Custom_Name => Null_Unbounded_Wide_Wide_String);
    end Default_Config;
@@ -170,17 +171,44 @@ package body Database.Full_Text.Tokenizers is
       return R;
    end To_Basic_Lower;
 
-   function Is_Builtin_Stop_Word (Text : Wide_Wide_String) return Boolean is
+   function Is_Builtin_Stop_Word
+     (Text    : Wide_Wide_String;
+      Profile : Stop_Word_Profile) return Boolean is
       T : constant Wide_Wide_String := To_Basic_Lower (Text);
    begin
-      --  Deliberately tiny and documented. This is not a language analyzer and
-      --  should not be mistaken for locale-aware stop-word processing.
-      return T = "a" or else T = "an" or else T = "and" or else T = "are"
-        or else T = "as" or else T = "at" or else T = "be" or else T = "by"
-        or else T = "for" or else T = "from" or else T = "in"
-        or else T = "is" or else T = "it" or else T = "of"
-        or else T = "on" or else T = "or" or else T = "the"
-        or else T = "to" or else T = "with";
+      case Profile is
+         when English_Stop_Words =>
+            return T = "a" or else T = "an" or else T = "and" or else T = "are"
+              or else T = "as" or else T = "at" or else T = "be" or else T = "by"
+              or else T = "for" or else T = "from" or else T = "in"
+              or else T = "is" or else T = "it" or else T = "of"
+              or else T = "on" or else T = "or" or else T = "the"
+              or else T = "to" or else T = "with";
+         when Danish_Stop_Words =>
+            return T = "af" or else T = "at" or else T = "de" or else T = "den"
+              or else T = "der" or else T = "det" or else T = "en"
+              or else T = "er" or else T = "et" or else T = "for"
+              or else T = "fra" or else T = "i" or else T = "med"
+              or else T = "og" or else T = "på" or else T = "som"
+              or else T = "til";
+         when German_Stop_Words =>
+            return T = "am" or else T = "auf" or else T = "der" or else T = "die"
+              or else T = "das" or else T = "dem" or else T = "den"
+              or else T = "des" or else T = "ein" or else T = "eine"
+              or else T = "ist" or else T = "mit" or else T = "und"
+              or else T = "von" or else T = "zu";
+         when French_Stop_Words =>
+            return T = "au" or else T = "aux" or else T = "avec" or else T = "ce"
+              or else T = "de" or else T = "des" or else T = "du"
+              or else T = "en" or else T = "et" or else T = "la"
+              or else T = "le" or else T = "les" or else T = "un"
+              or else T = "une";
+      end case;
+   end Is_Builtin_Stop_Word;
+
+   function Is_Builtin_Stop_Word (Text : Wide_Wide_String) return Boolean is
+   begin
+      return Is_Builtin_Stop_Word (Text, English_Stop_Words);
    end Is_Builtin_Stop_Word;
 
    function Is_Whitespace (C : Wide_Wide_Character) return Boolean is
@@ -216,7 +244,9 @@ package body Database.Full_Text.Tokenizers is
       if Token_Text'Length < Config.Minimum_Token_Length then
          return;
       end if;
-      if Config.Drop_Builtin_Stop_Words and then Is_Builtin_Stop_Word (Token_Text) then
+      if Config.Drop_Builtin_Stop_Words
+        and then Is_Builtin_Stop_Word (Token_Text, Config.Builtin_Stop_Words)
+      then
          return;
       end if;
       Result.Append

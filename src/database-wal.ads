@@ -12,7 +12,12 @@ package Database.WAL is
    type WAL_Handle is limited private;
 
    --  Record_Kind enumerates the supported values for this database abstraction.
-   type Record_Kind is (Page_Frame, Commit_Record, Checkpoint_Record);
+   type Record_Kind is
+     (Page_Frame,
+      Commit_Record,
+      Checkpoint_Record,
+      Full_Text_Redo_Record,
+      Full_Text_Undo_Record);
 
    --  Return wal path for the supplied database state or arguments.
    --  @param Database_Path database path argument supplied to the operation.
@@ -62,6 +67,32 @@ package Database.WAL is
    --  @param LSN lsn argument supplied to the operation.
    --  @return Result produced by the function.
    function Append_Page_Frame
+     (W              : in out WAL_Handle;
+      Transaction_Id : Natural;
+      Page           : Database.Storage.Pages.Page;
+      LSN            : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result;
+
+   --  Append a full-text page after-image. Recovery replays this image only
+   --  for transactions that have a durable commit marker.
+   --  @param W w argument supplied to the operation.
+   --  @param Transaction_Id transaction id argument supplied to the operation.
+   --  @param Page full-text dictionary or posting page after image.
+   --  @param LSN lsn argument supplied to the operation.
+   --  @return Status result describing whether the operation succeeded.
+   function Append_Full_Text_Redo
+     (W              : in out WAL_Handle;
+      Transaction_Id : Natural;
+      Page           : Database.Storage.Pages.Page;
+      LSN            : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result;
+
+   --  Append a full-text page before-image. Recovery replays this image only
+   --  for transactions without a durable commit marker.
+   --  @param W w argument supplied to the operation.
+   --  @param Transaction_Id transaction id argument supplied to the operation.
+   --  @param Page full-text dictionary or posting page before image.
+   --  @param LSN lsn argument supplied to the operation.
+   --  @return Status result describing whether the operation succeeded.
+   function Append_Full_Text_Undo
      (W              : in out WAL_Handle;
       Transaction_Id : Natural;
       Page           : Database.Storage.Pages.Page;

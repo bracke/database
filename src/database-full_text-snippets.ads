@@ -19,7 +19,8 @@ package Database.Full_Text.Snippets is
 
    --  Return a snippet around the first exact term from Query found in Text.
    --  The function operates on Wide_Wide_String indexes, so it never splits an
-   --  Ada Wide_Wide_Character. It does not claim grapheme-cluster awareness.
+   --  Ada Wide_Wide_Character. It also avoids splitting adjacent Unicode
+   --  combining-mark sequences at snippet and marker boundaries.
    --  @param Text text argument supplied to the operation.
    --  @param Query query argument supplied to the operation.
    --  @param Config configuration values controlling the operation.

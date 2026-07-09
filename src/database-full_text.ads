@@ -39,6 +39,15 @@ package Database.Full_Text is
       Table_Name : Wide_Wide_String;
       Column     : Natural) return Database.Status.Result;
 
+   --  Create a full-text index with optional simple English stemming.
+   --  Stemming is disabled by default in the basic overload.
+   function Create_Full_Text_Index
+     (Tx                      : in out Database.Transactions.Transaction;
+      Name                    : Wide_Wide_String;
+      Table_Name              : Wide_Wide_String;
+      Column                  : Natural;
+      Simple_English_Stemming : Boolean) return Database.Status.Result;
+
    --  Return drop full text index for the supplied database state or arguments.
    --  @param Tx transaction object that scopes the operation.
    --  @param Name logical name of the object.

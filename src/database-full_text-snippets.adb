@@ -50,6 +50,38 @@ package body Database.Full_Text.Snippets is
       return Text (Start_Pos .. Start_Pos + Pattern'Length - 1) = Pattern;
    end Contains_At;
 
+   function Is_Combining_Mark (C : Wide_Wide_Character) return Boolean is
+      P : constant Natural := Wide_Wide_Character'Pos (C);
+   begin
+      return P in 16#0300# .. 16#036F#
+        or else P in 16#1AB0# .. 16#1AFF#
+        or else P in 16#1DC0# .. 16#1DFF#
+        or else P in 16#20D0# .. 16#20FF#
+        or else P in 16#FE20# .. 16#FE2F#;
+   end Is_Combining_Mark;
+
+   function Extend_Left_To_Cluster
+     (Text : Wide_Wide_String;
+      Pos  : Natural) return Natural is
+      R : Natural := Pos;
+   begin
+      while R > Text'First and then Is_Combining_Mark (Text (R)) loop
+         R := R - 1;
+      end loop;
+      return R;
+   end Extend_Left_To_Cluster;
+
+   function Extend_Right_To_Cluster
+     (Text : Wide_Wide_String;
+      Pos  : Natural) return Natural is
+      R : Natural := Pos;
+   begin
+      while R < Text'Last and then Is_Combining_Mark (Text (R + 1)) loop
+         R := R + 1;
+      end loop;
+      return R;
+   end Extend_Right_To_Cluster;
+
    function Generate
      (Text   : Wide_Wide_String;
       Query  : Database.Full_Text.Queries.Query;
@@ -60,6 +92,7 @@ package body Database.Full_Text.Snippets is
       Match_Start : Natural := 0;
       Left_Edge   : Natural;
       Right_Edge  : Natural;
+      Match_End   : Natural;
       R           : Unbounded_Wide_Wide_String;
    begin
       if Text'Length = 0 or else Term'Length = 0 then
@@ -86,17 +119,22 @@ package body Database.Full_Text.Snippets is
       else
          Left_Edge := Text'First;
       end if;
-      Right_Edge := Natural'Min (Text'Last, Match_Start + Term'Length + Config.Context_Code_Points - 1);
+      Match_Start := Extend_Left_To_Cluster (Text, Match_Start);
+      Match_End := Extend_Right_To_Cluster (Text, Match_Start + Term'Length - 1);
+      Left_Edge := Extend_Left_To_Cluster (Text, Left_Edge);
+      Right_Edge := Extend_Right_To_Cluster
+        (Text,
+         Natural'Min (Text'Last, Match_End + Config.Context_Code_Points));
 
       if Left_Edge > Text'First then
          Append (R, "...");
       end if;
       Append (R, Text (Left_Edge .. Match_Start - 1));
       Append (R, To_Wide_Wide_String (Config.Marker_Start));
-      Append (R, Text (Match_Start .. Match_Start + Term'Length - 1));
+      Append (R, Text (Match_Start .. Match_End));
       Append (R, To_Wide_Wide_String (Config.Marker_End));
-      if Match_Start + Term'Length <= Right_Edge then
-         Append (R, Text (Match_Start + Term'Length .. Right_Edge));
+      if Match_End < Right_Edge then
+         Append (R, Text (Match_End + 1 .. Right_Edge));
       end if;
       if Right_Edge < Text'Last then
          Append (R, "...");

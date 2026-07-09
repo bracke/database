@@ -3,65 +3,65 @@ with Database.Schema;
 with Database.Storage.File_IO;
 with Database.Storage.Free_List;
 with Database.Storage.Pages;
+with Database.Storage.Table_Heap_Layout;
 with Database.Status;
 with Database.Storage.Record_Format;
 with Database.Transactions;
 with Database.Indexes;
 with Database.Visibility;
 with Database.Versioning;
+with Database.MVCC;
 
 package body Database.Storage.Table_Heap is
    use Database.Storage.Pages;
 
-   Slot_Header : constant Natural := 21;
+   Slot_Header : constant Natural := Database.Storage.Table_Heap_Layout.Slot_Header;
    --  Flags + created tx/version + deleted tx/version + u32 length.
 
    procedure Put_U32 (B : in out Page_Buffer; Offset : Natural; V : Natural) is
    begin
-      B (Offset) := Byte ((V / 16#1000000#) mod 256);
-      B (Offset + 1) := Byte ((V / 16#10000#) mod 256);
-      B (Offset + 2) := Byte ((V / 16#100#) mod 256);
-      B (Offset + 3) := Byte (V mod 256);
+      Database.Storage.Table_Heap_Layout.Put_U32 (B, Offset, V);
    end Put_U32;
    function Get_U32 (B : Page_Buffer; Offset : Natural) return Natural is
    begin
-      return Natural (B (Offset))*16#1000000#+Natural (B (Offset + 1))*16#10000#+Natural (B (Offset
-        + 2))*16#100#+Natural (B (Offset + 3));
+      return Database.Storage.Table_Heap_Layout.Read_U32 (B, Offset);
    end Get_U32;
 
    function Metadata_At
      (P : Page; Offset : Natural) return Database.Versioning.Row_Version_Metadata is
-      Base : constant Natural := Header_Size + Offset;
-      Flags_Byte : constant Byte := P.Buffer (Base);
+      Image : constant Database.Storage.Table_Heap_Layout.Slot_Metadata_Image :=
+        Database.Storage.Table_Heap_Layout.Metadata_At (P.Buffer, Offset);
    begin
       return
-        (Created_By_Tx    => Get_U32 (P.Buffer, Base + 1),
-         Created_Version  => Get_U32 (P.Buffer, Base + 5),
-         Deleted_By_Tx    => Get_U32 (P.Buffer, Base + 9),
-         Deleted_Version  => Get_U32 (P.Buffer, Base + 13),
+        (Created_By_Tx    => Image.Created_By_Tx,
+         Created_Version  => Image.Created_Version,
+         Deleted_By_Tx    => Image.Deleted_By_Tx,
+         Deleted_Version  => Image.Deleted_Version,
          Previous_Version => Database.Indexes.Invalid_Row_Reference,
          Flags            =>
            (Committed => True,
-            Deleted   => (Flags_Byte and Byte (1)) /= Byte (0),
-            Tombstone => False));
+            Deleted   => Image.Deleted,
+            Tombstone => Image.Tombstone));
    end Metadata_At;
 
    procedure Put_Metadata
      (P        : in out Page;
       Offset   : Natural;
       Metadata : Database.Versioning.Row_Version_Metadata) is
-      Base : constant Natural := Header_Size + Offset;
    begin
-      P.Buffer (Base) := (if Metadata.Flags.Deleted then Byte (1) else Byte (0));
-      Put_U32 (P.Buffer, Base + 1, Metadata.Created_By_Tx);
-      Put_U32 (P.Buffer, Base + 5, Metadata.Created_Version);
-      Put_U32 (P.Buffer, Base + 9, Metadata.Deleted_By_Tx);
-      Put_U32 (P.Buffer, Base + 13, Metadata.Deleted_Version);
+      Database.Storage.Table_Heap_Layout.Put_Metadata
+        (P.Buffer, Offset,
+         (Created_By_Tx   => Metadata.Created_By_Tx,
+          Created_Version => Metadata.Created_Version,
+          Deleted_By_Tx   => Metadata.Deleted_By_Tx,
+          Deleted_Version => Metadata.Deleted_Version,
+          Deleted         => Metadata.Flags.Deleted,
+          Tombstone       => Metadata.Flags.Tombstone));
    end Put_Metadata;
 
    function Slot_Length (P : Page; Offset : Natural) return Natural is
    begin
-      return Get_U32 (P.Buffer, Header_Size + Offset + 17);
+      return Database.Storage.Table_Heap_Layout.Slot_Length (P.Buffer, Offset);
    end Slot_Length;
 
    function Create_Heap
@@ -194,7 +194,7 @@ package body Database.Storage.Table_Heap is
       M : Database.Versioning.Row_Version_Metadata;
    begin
       M := Metadata_At (P, Offset);
-      if M.Flags.Deleted then
+      if M.Flags.Deleted or else M.Flags.Tombstone then
          C.Has_Row := False;
          return Database.Status.Success;
       end if;
@@ -441,6 +441,115 @@ package body Database.Storage.Table_Heap is
       return Database.Transactions.Write_Page (Tx, P);
    end Delete_At;
 
+   function Vacuum_Deleted
+     (Tx         : in out Database.Transactions.Transaction;
+      F          : in out Database.Storage.File_IO.File_Handle;
+      First_Page : Database.Storage.Pages.Page_Id;
+      Reclaimed  : out Natural) return Database.Status.Result
+   is
+      Rows : Reclaimed_Row_Vectors.Vector;
+      Schema : Database.Schema.Table_Schema;
+   begin
+      return Vacuum_Deleted (Tx, F, First_Page, Schema, Reclaimed, Rows);
+   end Vacuum_Deleted;
+
+   function Vacuum_Deleted
+     (Tx             : in out Database.Transactions.Transaction;
+      F              : in out Database.Storage.File_IO.File_Handle;
+      First_Page     : Database.Storage.Pages.Page_Id;
+      Schema         : Database.Schema.Table_Schema;
+      Reclaimed      : out Natural;
+      Reclaimed_Rows : out Reclaimed_Row_Vectors.Vector) return Database.Status.Result
+   is
+      use type Database.MVCC.Transaction_Lifecycle;
+      Current : Page_Id := First_Page;
+      P       : Page;
+      R       : Database.Status.Result;
+      Off     : Natural;
+      Len     : Natural;
+      Changed : Boolean;
+
+      function Reclaimable
+        (M : Database.Versioning.Row_Version_Metadata) return Boolean
+      is
+      begin
+         return M.Flags.Deleted
+           and then not M.Flags.Tombstone
+           and then M.Deleted_By_Tx /= Database.Versioning.No_Transaction
+           and then Database.MVCC.Lifecycle (M.Deleted_By_Tx) = Database.MVCC.Committed
+           and then M.Deleted_Version /= Database.Versioning.No_Version
+           and then Database.MVCC.Safe_Reclaim_Version (M.Deleted_Version);
+      end Reclaimable;
+   begin
+      Reclaimed := 0;
+      Reclaimed_Rows.Clear;
+      if First_Page = Invalid_Page_Id then
+         return Database.Status.Success;
+      end if;
+
+      while Current /= Invalid_Page_Id loop
+         R := Database.Storage.File_IO.Read_Page (F, Current, Table_Heap_Page, P);
+         if not Database.Status.Is_Ok (R) then
+            return R;
+         end if;
+         Changed := False;
+         Off := 0;
+         while Off < Used (P) loop
+            if Off + Slot_Header > Used (P) then
+               return Database.Status.Failure
+                 (Database.Status.Corrupt_File, "truncated row slot header");
+            end if;
+            Len := Slot_Length (P, Off);
+            if Len > Payload_Capacity or else Off + Slot_Header + Len > Used (P) then
+               return Database.Status.Failure
+                 (Database.Status.Corrupt_File, "row slot payload out of bounds");
+            end if;
+
+            declare
+               M : Database.Versioning.Row_Version_Metadata := Metadata_At (P, Off);
+               Base : constant Natural := Header_Size + Off + Slot_Header;
+            begin
+               if Reclaimable (M) then
+                  declare
+                     C  : Heap_Cursor :=
+                       (Current_Page => Get_Id (P),
+                        Slot_Offset  => Off,
+                        Has_Row      => False,
+                        Row          => <>);
+                     DR : constant Database.Status.Result :=
+                       Decode_Row_At (P, Off, Schema, C);
+                  begin
+                     if Database.Status.Is_Ok (DR) then
+                        Reclaimed_Rows.Append
+                          (Reclaimed_Row'
+                             (Ref => (Page => Get_Id (P), Slot_Offset => Off),
+                              Row => C.Row));
+                     end if;
+                  end;
+                  M.Flags.Tombstone := True;
+                  Put_Metadata (P, Off, M);
+                  for I in 0 .. Len - 1 loop
+                     P.Buffer (Base + I) := 0;
+                  end loop;
+                  Reclaimed := Reclaimed + 1;
+                  Changed := True;
+               end if;
+            end;
+            Off := Off + Slot_Header + Len;
+         end loop;
+
+         if Changed then
+            Set_Used (P, Used (P));
+            R := Database.Transactions.Write_Page (Tx, P);
+            if not Database.Status.Is_Ok (R) then
+               return R;
+            end if;
+         end if;
+         Current := Get_Next (P);
+      end loop;
+      return Database.Status.Success;
+   end Vacuum_Deleted;
+
    function Max_Commit_Version
      (F          : in out Database.Storage.File_IO.File_Handle;
       First_Page : Database.Storage.Pages.Page_Id) return Natural is
@@ -486,7 +595,7 @@ package body Database.Storage.Table_Heap is
          if Off + Slot_Header > Used (Page) then
             return Database.Status.Failure (Database.Status.Corrupt_File, "truncated row slot header");
          end if;
-         if Page.Buffer (Header_Size + Off) > 1 then
+         if Page.Buffer (Header_Size + Off) > 3 then
             return Database.Status.Failure (Database.Status.Corrupt_File, "invalid MVCC row flags");
          end if;
          Len := Slot_Length (Page, Off);

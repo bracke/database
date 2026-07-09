@@ -1,8 +1,12 @@
-with Interfaces;
+with Ada.Streams;
+with CryptoLib.Macs;
+with CryptoLib.Secure_Wipe;
 
 package body Database.Keys is
+   use type Ada.Streams.Stream_Element_Offset;
    use Database.Storage.Pages;
-   use type Interfaces.Unsigned_32;
+
+   subtype Stream_Array is Ada.Streams.Stream_Element_Array;
 
    function Empty_Key return Encryption_Key is
    begin
@@ -21,43 +25,49 @@ package body Database.Keys is
       return S;
    end Default_Salt;
 
-   procedure Mix (State : in out Interfaces.Unsigned_32; B : Byte) is
+   function Salt_To_Stream (Salt : Salt_Type) return Stream_Array is
+      Result : Stream_Array (1 .. Ada.Streams.Stream_Element_Offset (Salt'Length));
+      Pos    : Ada.Streams.Stream_Element_Offset := Result'First;
    begin
-      State := State xor Interfaces.Unsigned_32 (B);
-      State := State * 16#0100_0193#;
-      State := State xor Interfaces.Shift_Right (State, 13);
-      State := State * 16#85EB_CA6B#;
-   end Mix;
+      for I in Salt'Range loop
+         Result (Pos) := Ada.Streams.Stream_Element (Salt (I));
+         Pos := Pos + 1;
+      end loop;
+      return Result;
+   end Salt_To_Stream;
+
+   function Passphrase_To_Stream (Passphrase : Wide_Wide_String) return Stream_Array is
+      Result : Stream_Array (1 .. Ada.Streams.Stream_Element_Offset (Passphrase'Length * 4));
+      Pos    : Ada.Streams.Stream_Element_Offset := Result'First;
+      V      : Natural;
+   begin
+      for C of Passphrase loop
+         V := Wide_Wide_Character'Pos (C);
+         Result (Pos + 0) := Ada.Streams.Stream_Element (V mod 256);
+         Result (Pos + 1) := Ada.Streams.Stream_Element ((V / 256) mod 256);
+         Result (Pos + 2) := Ada.Streams.Stream_Element ((V / 65536) mod 256);
+         Result (Pos + 3) := Ada.Streams.Stream_Element ((V / 16777216) mod 256);
+         Pos := Pos + 4;
+      end loop;
+      return Result;
+   end Passphrase_To_Stream;
 
    function Derive_Key
      (Passphrase : Wide_Wide_String;
       Salt       : Salt_Type) return Encryption_Key
    is
-      State : Interfaces.Unsigned_32 := 16#811C_9DC5#;
-      Data  : Binary_Key := (others => 0);
-      C     : Wide_Wide_Character;
-      V     : Natural;
+      Password_Data : Stream_Array := Passphrase_To_Stream (Passphrase);
+      Salt_Data     : Stream_Array := Salt_To_Stream (Salt);
+      Derived       : Stream_Array := CryptoLib.Macs.PBKDF2_HMAC_SHA256
+        (Password_Data, Salt_Data, 100_000, 32);
+      Data          : Binary_Key := (others => 0);
    begin
-      for I in Salt'Range loop
-         Mix (State, Salt (I));
-      end loop;
-      for Round in 1 .. 4096 loop
-         for I in Passphrase'Range loop
-            C := Passphrase (I);
-            V := Wide_Wide_Character'Pos (C);
-            Mix (State, Byte (V mod 256));
-            Mix (State, Byte ((V / 256) mod 256));
-            Mix (State, Byte ((V / 65536) mod 256));
-            Mix (State, Byte (Round mod 256));
-         end loop;
-         for I in Salt'Range loop
-            Mix (State, Byte ((Natural (Salt (I)) + Round + I) mod 256));
-         end loop;
-      end loop;
       for I in Data'Range loop
-         Mix (State, Byte ((I * 17 + 91) mod 256));
-         Data (I) := Byte (Natural (State and 16#FF#));
+         Data (I) := Byte (Derived (Derived'First + Ada.Streams.Stream_Element_Offset (I)));
       end loop;
+      CryptoLib.Secure_Wipe.Wipe (Password_Data'Address, Password_Data'Length);
+      CryptoLib.Secure_Wipe.Wipe (Salt_Data'Address, Salt_Data'Length);
+      CryptoLib.Secure_Wipe.Wipe (Derived'Address, Derived'Length);
       return (Valid => True, Id => 1, Data => Data);
    end Derive_Key;
 
@@ -70,6 +80,7 @@ package body Database.Keys is
 
    procedure Clear (Key : in out Encryption_Key) is
    begin
+      CryptoLib.Secure_Wipe.Wipe (Key.Data'Address, Key.Data'Length);
       Key.Data := (others => 0);
       Key.Id := 0;
       Key.Valid := False;

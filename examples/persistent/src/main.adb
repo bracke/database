@@ -24,7 +24,10 @@ procedure Main is
    function Key_Of (U : User) return Integer is (U.Id);
    function Key_Value (K : Integer) return Database.Values.Value is (Database.Values.From_Integer (K));
    package Users is new Database.Tables.Typed (User, Integer, To_Row, From_Row, Key_Of, Key_Value);
-   DB : Database.Handle; Tx : Database.Transactions.Transaction; S : Database.Schema.Table_Schema; R : Database.Status.Result; U : User;
+   DB : Database.Handle; 
+   Tx : Database.Transactions.Transaction; 
+   S : Database.Schema.Table_Schema; 
+   R : Database.Status.Result; U : User;
    Path : constant Wide_Wide_String := "example_persistent.database";
 begin
    if Ada.Directories.Exists ("example_persistent.database") then Ada.Directories.Delete_File ("example_persistent.database"); end if;

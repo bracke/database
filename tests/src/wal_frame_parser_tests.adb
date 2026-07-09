@@ -116,7 +116,7 @@ package body WAL_Frame_Parser_Tests is
       Data (35) := 40;
       Build_Frame (Data, 1, 5, 4, 9, 32);
 
-      Status := Database.WAL.Frame_Parser.Validate_Frame (Data, 4, Header);
+      Database.WAL.Frame_Parser.Validate_Frame (Data, 4, Header, Status);
 
       Assert
         (Status = Database.WAL.Frame_Parser.Parse_OK,
@@ -134,10 +134,11 @@ package body WAL_Frame_Parser_Tests is
       pragma Unreferenced (T);
       Data   : Database.WAL.Frame_Parser.Byte_Array (0 .. 4) := [others => 0];
       Header : Database.WAL.Frame_Parser.Frame_Header;
+      Status : Database.WAL.Frame_Parser.Parse_Status;
    begin
+      Database.WAL.Frame_Parser.Validate_Frame (Data, 0, Header, Status);
       Assert
-        (Database.WAL.Frame_Parser.Validate_Frame (Data, 0, Header)
-         = Database.WAL.Frame_Parser.Frame_Too_Short,
+        (Status = Database.WAL.Frame_Parser.Frame_Too_Short,
          "short frame must be rejected");
    end Test_Rejects_Short_Frame;
 
@@ -147,14 +148,15 @@ package body WAL_Frame_Parser_Tests is
       pragma Unreferenced (T);
       Data   : Database.WAL.Frame_Parser.Byte_Array (0 .. 35) := [others => 0];
       Header : Database.WAL.Frame_Parser.Frame_Header;
+      Status : Database.WAL.Frame_Parser.Parse_Status;
    begin
       Data (32) := 1;
       Build_Frame (Data, 1, 1, 0, 1, 32);
       Data (0) := 0;
 
+      Database.WAL.Frame_Parser.Validate_Frame (Data, 0, Header, Status);
       Assert
-        (Database.WAL.Frame_Parser.Validate_Frame (Data, 0, Header)
-         = Database.WAL.Frame_Parser.Invalid_Magic,
+        (Status = Database.WAL.Frame_Parser.Invalid_Magic,
          "bad magic must be rejected");
    end Test_Rejects_Bad_Magic;
 
@@ -164,13 +166,14 @@ package body WAL_Frame_Parser_Tests is
       pragma Unreferenced (T);
       Data   : Database.WAL.Frame_Parser.Byte_Array (0 .. 35) := [others => 0];
       Header : Database.WAL.Frame_Parser.Frame_Header;
+      Status : Database.WAL.Frame_Parser.Parse_Status;
    begin
       Data (32) := 1;
       Build_Frame (Data, 1, 3, 2, 1, 32);
 
+      Database.WAL.Frame_Parser.Validate_Frame (Data, 99, Header, Status);
       Assert
-        (Database.WAL.Frame_Parser.Validate_Frame (Data, 99, Header)
-         = Database.WAL.Frame_Parser.LSN_Order_Violation,
+        (Status = Database.WAL.Frame_Parser.LSN_Order_Violation,
          "unexpected previous LSN must be rejected");
    end Test_Rejects_LSN_Order_Violation;
 
@@ -180,14 +183,15 @@ package body WAL_Frame_Parser_Tests is
       pragma Unreferenced (T);
       Data   : Database.WAL.Frame_Parser.Byte_Array (0 .. 35) := [others => 0];
       Header : Database.WAL.Frame_Parser.Frame_Header;
+      Status : Database.WAL.Frame_Parser.Parse_Status;
    begin
       Data (32) := 1;
       Build_Frame (Data, 1, 3, 2, 1, 32);
       Data (16) := Data (16) + 1;
 
+      Database.WAL.Frame_Parser.Validate_Frame (Data, 2, Header, Status);
       Assert
-        (Database.WAL.Frame_Parser.Validate_Frame (Data, 2, Header)
-         = Database.WAL.Frame_Parser.Header_Checksum_Mismatch,
+        (Status = Database.WAL.Frame_Parser.Header_Checksum_Mismatch,
          "header mutation must be rejected");
    end Test_Rejects_Header_Tamper;
 
@@ -197,14 +201,15 @@ package body WAL_Frame_Parser_Tests is
       pragma Unreferenced (T);
       Data   : Database.WAL.Frame_Parser.Byte_Array (0 .. 35) := [others => 0];
       Header : Database.WAL.Frame_Parser.Frame_Header;
+      Status : Database.WAL.Frame_Parser.Parse_Status;
    begin
       Data (32) := 1;
       Build_Frame (Data, 1, 3, 2, 1, 32);
       Data (32) := Data (32) + Database.WAL.Frame_Parser.Byte (1);
 
+      Database.WAL.Frame_Parser.Validate_Frame (Data, 2, Header, Status);
       Assert
-        (Database.WAL.Frame_Parser.Validate_Frame (Data, 2, Header)
-         = Database.WAL.Frame_Parser.Payload_Checksum_Mismatch,
+        (Status = Database.WAL.Frame_Parser.Payload_Checksum_Mismatch,
          "payload mutation must be rejected");
    end Test_Rejects_Payload_Tamper;
 

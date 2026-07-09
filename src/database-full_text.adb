@@ -2,6 +2,8 @@ with Database.Full_Text.Indexes;
 with Database.Full_Text.Postings;
 with Database.Full_Text.Queries;
 with Database.Full_Text.Ranking;
+with Database.Full_Text.Normalization;
+with Database.Full_Text.Tokenizers;
 with Ada.Characters.Conversions;
 with Ada.Wide_Wide_Text_IO;
 with Ada.Directories;
@@ -458,7 +460,53 @@ package body Database.Full_Text is
      (Tx         : in out Database.Transactions.Transaction;
       Name       : Wide_Wide_String;
       Table_Name : Wide_Wide_String;
+      Column     : Natural;
+      Tokenizer  : Database.Full_Text.Tokenizers.Tokenizer_Config;
+      Normalizer : Database.Full_Text.Normalization.Normalization_Config)
+      return Database.Status.Result;
+
+   function Create_Full_Text_Index
+     (Tx         : in out Database.Transactions.Transaction;
+      Name       : Wide_Wide_String;
+      Table_Name : Wide_Wide_String;
       Column     : Natural) return Database.Status.Result is
+   begin
+      return Create_Full_Text_Index
+        (Tx,
+         Name,
+         Table_Name,
+         Column,
+         Database.Full_Text.Tokenizers.Default_Config,
+         Database.Full_Text.Normalization.Default_Config);
+   end Create_Full_Text_Index;
+
+   function Create_Full_Text_Index
+     (Tx                      : in out Database.Transactions.Transaction;
+      Name                    : Wide_Wide_String;
+      Table_Name              : Wide_Wide_String;
+      Column                  : Natural;
+      Simple_English_Stemming : Boolean) return Database.Status.Result is
+      Tokenizer  : constant Database.Full_Text.Tokenizers.Tokenizer_Config :=
+        Database.Full_Text.Tokenizers.Default_Config;
+      Normalizer : Database.Full_Text.Normalization.Normalization_Config :=
+        Database.Full_Text.Normalization.Default_Config;
+   begin
+      if Simple_English_Stemming then
+         Normalizer.Stemming := Database.Full_Text.Normalization.Simple_English_Stemming;
+      end if;
+
+      return Create_Full_Text_Index
+        (Tx, Name, Table_Name, Column, Tokenizer, Normalizer);
+   end Create_Full_Text_Index;
+
+   function Create_Full_Text_Index
+     (Tx         : in out Database.Transactions.Transaction;
+      Name       : Wide_Wide_String;
+      Table_Name : Wide_Wide_String;
+      Column     : Natural;
+      Tokenizer  : Database.Full_Text.Tokenizers.Tokenizer_Config;
+      Normalizer : Database.Full_Text.Normalization.Normalization_Config)
+      return Database.Status.Result is
       DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
       Schema : Database.Schema.Table_Schema;
       R : Database.Status.Result;
@@ -485,6 +533,8 @@ package body Database.Full_Text is
          return R;
       end if;
       IX := Database.Full_Text.Indexes.Create (Name, Schema, Column);
+      IX.Metadata.Tokenizer := Tokenizer;
+      IX.Metadata.Normalizer := Normalizer;
       IX.Metadata.Owner_Key := Current_State_Key;
       IX.Metadata.Id := Database.Full_Text.Indexes.Full_Text_Index_Id (Natural (FT_Indexes.Length) + 1);
       IX.Metadata.Created_By := Database.Transactions.Id (Tx);
@@ -1459,49 +1509,10 @@ package body Database.Full_Text is
       end if;
       declare
          IX : Database.Full_Text.Indexes.Full_Text_Index := FT_Indexes.Element (Pos);
+         Removed : Natural;
       begin
-         if IX.Terms.Length > 0 then
-         for TI in reverse 0 .. Natural (IX.Terms.Length) - 1 loop
-            declare
-               TE : Database.Full_Text.Indexes.Term_Entry := IX.Terms.Element (TI);
-            begin
-               if TE.Postings.Length > 0 then
-               for PI in reverse 0 .. Natural (TE.Postings.Length) - 1 loop
-                  declare
-                     P : constant Database.Full_Text.Postings.Posting := TE.Postings.Element (PI);
-                  begin
-                     if P.Deleted_By /= Database.Versioning.No_Transaction
-                       and then Database.MVCC.Lifecycle (P.Deleted_By) = Database.MVCC.Committed
-                       and then Database.MVCC.Safe_Reclaim_Version
-                         ((if P.Deleted_At
-
-                           /= Database.Versioning.No_Version then
-                                 P.Deleted_At
-                               else
-                                 Database.MVCC.Transaction_Commit_Version
-                                   (P.Deleted_By)))
-                     then
-                        TE.Postings.Delete (PI);
-                     end if;
-                  end;
-               end loop;
-               end if;
-               if TE.Postings.Is_Empty then
-                  IX.Terms.Delete (TI);
-               else
-                  IX.Terms.Replace_Element (TI, TE);
-               end if;
-            end;
-         end loop;
-         end if;
-         IX.Deleted_Posting_Count := 0;
-         for TE of IX.Terms loop
-            for P of TE.Postings loop
-               if P.Deleted_By /= Database.Versioning.No_Transaction then
-                  IX.Deleted_Posting_Count := IX.Deleted_Posting_Count + 1;
-               end if;
-            end loop;
-         end loop;
+         Removed := Database.Full_Text.Indexes.Compact_Reclaimable_Postings (IX);
+         pragma Unreferenced (Removed);
          FT_Indexes.Replace_Element (Pos, IX);
       end;
    end Vacuum_Index;

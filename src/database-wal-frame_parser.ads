@@ -2,7 +2,7 @@ with Interfaces;
 with Database.Checksums;
 
 package Database.WAL.Frame_Parser
-  with SPARK_Mode => Off
+  with SPARK_Mode => On
 is
    use type Interfaces.Unsigned_8;
    --  Byte defines a public database type used by this package.
@@ -110,7 +110,8 @@ is
       First : Natural) return Word_32
      with
        Global => null,
-       Pre => First <= Data'Last
+       Pre => First in Data'Range
+         and then First <= Natural'Last - 3
          and then Data'Last - First >= 3,
        Depends => (Read_U32_LE'Result => (Data, First));
 
@@ -128,15 +129,25 @@ is
    --  @param Header header argument supplied to the operation.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
-   function Validate_Header_Only
+   procedure Validate_Header_Only
      (Data              : Byte_Array;
       Expected_Previous : LSN;
-      Header            : out Frame_Header) return Parse_Status
+      Header            : out Frame_Header;
+      Status            : out Parse_Status)
      with
        Global => null,
        Depends =>
-         (Validate_Header_Only'Result => (Data, Expected_Previous),
-          Header => Data);
+         (Status => (Data, Expected_Previous),
+          Header => Data),
+       Post =>
+         (if Status = Parse_OK then
+            Header_Is_Well_Formed (Header)
+            and then Data'First <= Natural'Last - Header_Length
+            and then
+              Data'First <= Natural'Last - Header_Length - Header.Payload_Length
+            and then Data'First <= Data'Last
+            and then
+              Data'Last - Data'First >= Header_Length + Header.Payload_Length - 1);
 
    --  Validate a complete WAL frame, including payload checksum.
    --  @param Data byte data processed by the operation.
@@ -144,17 +155,18 @@ is
    --  @param Header header argument supplied to the operation.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
-   function Validate_Frame
+   procedure Validate_Frame
      (Data              : Byte_Array;
       Expected_Previous : LSN;
-      Header            : out Frame_Header) return Parse_Status
+      Header            : out Frame_Header;
+      Status            : out Parse_Status)
      with
        Global => null,
        Depends =>
-         (Validate_Frame'Result => (Data, Expected_Previous),
+         (Status => (Data, Expected_Previous),
           Header => Data),
        Post =>
-         (if Validate_Frame'Result = Parse_OK then Header_Is_Well_Formed (Header));
+         (if Status = Parse_OK then Header_Is_Well_Formed (Header));
 
    --  Compute the checksum expected for the WAL frame header prefix.
    --  @param Data byte data processed by the operation.
@@ -165,7 +177,8 @@ is
       Seq  : LSN) return Word_32
      with
        Global => null,
-       Pre => Data'Length >= 28,
+       Pre => Data'Length >= 28
+         and then Data'First <= Natural'Last - 27,
        Depends => (Build_Header_Checksum'Result => (Data, Seq));
 
    --  Compute the checksum expected for a WAL frame payload.

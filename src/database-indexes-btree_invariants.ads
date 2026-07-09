@@ -1,4 +1,5 @@
 with Interfaces;
+use type Interfaces.Unsigned_32;
 
 package Database.Indexes.BTree_Invariants
   with SPARK_Mode => On
@@ -95,7 +96,12 @@ is
       Page_Id : Page_Id_Type) return Natural
      with
        Global => null,
-       Depends => (Find_Node_Index'Result => (Tree, Page_Id));
+       Depends => (Find_Node_Index'Result => (Tree, Page_Id)),
+       Post =>
+         Find_Node_Index'Result = 0
+         or else
+           (Find_Node_Index'Result in 1 .. Tree.Node_Count
+            and then Tree.Nodes (Find_Node_Index'Result).Page_Id = Page_Id);
 
    --  Return contains page for the supplied database state or arguments.
    --  @param Tree tree argument supplied to the operation.

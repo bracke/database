@@ -17,6 +17,17 @@ Result := Database.Full_Text.Create_Full_Text_Index
    Column     => 1);
 ```
 
+Opt-in simple English stemming uses the Boolean overload:
+
+```ada
+Result := Database.Full_Text.Create_Full_Text_Index
+  (Tx                      => Tx,
+   Name                    => "docs_body_ft_stemmed",
+   Table_Name              => "docs",
+   Column                  => 1,
+   Simple_English_Stemming => True);
+```
+
 The indexed column must exist and must be `Database.Types.Text_Value`. Duplicate full-text index names are rejected with `Already_Exists`; invalid columns are rejected through status results, not ordinary exceptions.
 
 ## Query object API
@@ -37,11 +48,11 @@ Supported query forms are term, Boolean AND/OR/NOT, phrase, prefix, NEAR, fuzzy 
 
 `Database.Full_Text.Tokenizers` provides the initial `Unicode_Whitespace` tokenizer. It treats Unicode whitespace as separators and, by default, treats punctuation as separators. Tokens preserve their zero-based token position and character offsets. Future tokenizers can be added without changing the query API.
 
-The tokenizer also exposes two opt-in filtering controls: `Minimum_Token_Length` and `Drop_Builtin_Stop_Words`. The built-in stop-word list is deliberately tiny, English-only, and disabled by default. When filtering is enabled, emitted tokens keep their original token positions rather than being renumbered, so positional queries remain tied to the source text. This is not a locale-aware language analyzer.
+The tokenizer also exposes opt-in filtering controls: `Minimum_Token_Length`, `Drop_Builtin_Stop_Words`, and `Builtin_Stop_Words`. Built-in stop-word profiles are deliberately small and deterministic; currently English, Danish, German, and French profiles are available. Filtering is disabled by default. When filtering is enabled, emitted tokens keep their original token positions rather than being renumbered, so positional queries remain tied to the source text. Applications that need deeper linguistic analysis should register a custom tokenizer.
 
 ## Normalization
 
-`Database.Full_Text.Normalization` performs conservative matching normalization. By default it lowercases ASCII plus basic Latin-1 uppercase code points where this is safe in the Ada runtime and preserves accents. Optional basic Latin accent stripping is exposed, but no stemming or full Unicode collation is claimed.
+`Database.Full_Text.Normalization` performs conservative matching normalization. By default it lowercases ASCII, Latin-1, and common Latin Extended uppercase code points where one-code-point lowercase mappings keep offsets stable, and it preserves accents. Optional basic Latin and Latin Extended accent stripping is exposed for deterministic matching. A simple English stemmer is also available when the index is created through the stemming-enabled `Create_Full_Text_Index` overload; it handles common suffixes such as `s`, `ies`, `ing`, and `ed`, and is deliberately not a locale-aware morphology engine or full Unicode collation.
 
 ## Ranking
 
@@ -58,14 +69,14 @@ For relational query pipelines, `Database.Queries.Full_Text_Search_With_Score` a
 
 ## MVCC, WAL, recovery, vacuum, and check
 
-Full-text postings carry transaction/version metadata so search cursors can avoid exposing obsolete entries. Table insert/update/delete hooks update full-text indexes through the same transaction-scoped API as other table mutations. Posting references are based on stable row identity keys, so deleting one row does not shift posting references for later rows. Persistent full-text definitions are stored in the main database catalog extension. Posting lists are stored in a `<database>.fts` cache, but persistent open treats the cache as rebuildable and regenerates postings from catalog definitions plus current table rows when definitions are present. Integrity and diagnostics expose full-text term/posting counts so check and vacuum tooling can validate and compact obsolete postings.
+Full-text postings carry transaction/version metadata so search cursors can avoid exposing obsolete entries. Table insert/update/delete hooks update full-text indexes through the same transaction-scoped API as other table mutations. Posting references are based on stable row identity keys, so deleting one row does not shift posting references for later rows. Persistent full-text definitions are stored in the main database catalog extension. Posting lists are stored in a `<database>.fts` cache, but persistent open treats the cache as rebuildable and regenerates postings from catalog definitions plus current table rows when definitions are present. Integrity and diagnostics expose full-text term/posting counts so check and vacuum tooling can validate and compact obsolete postings. `Database.Full_Text.Segments` exposes an explicit segment compaction policy for deterministic merge decisions based on active segment count and obsolete posting pressure.
 
 ## Limitations
 
 - No SQL full-text syntax.
 - No parser.
 - No external search engine.
-- No stemming unless a future tokenizer/normalizer implements it explicitly.
+- Stemming is optional and intentionally simple; it is not locale-aware and does not replace custom tokenizer/normalizer extensions for language-specific analysis.
 - Fuzzy search is implemented as bounded Levenshtein edit distance over normalized terms; it is intentionally not phonetic or language-aware.
 - Unicode behavior is documented conservatively; the implementation does not claim full Unicode collation.
 
@@ -77,6 +88,8 @@ Full-text postings carry creation and deletion transaction metadata. Search filt
 Table `Insert`, `Update`, and `Delete` operations maintain full-text indexes through the transaction object. `Update` is modeled as delete plus insert, so old terms are obsoleted and new terms receive fresh posting metadata. Phrase queries require adjacent token positions; a row containing both terms in a different order does not satisfy a phrase query.
 
 Current persistence boundary: full-text postings use the in-crate inverted index representation and a `<database>.fts` sidecar. Definitions are persisted in the main catalog; postings are cached in `<database>.fts`. On persistent open, definitions are treated as authoritative and postings are rebuilt from the catalog and current table rows, then the posting cache is refreshed. This makes the posting sidecar rebuildable after a stale/missing cache and avoids trusting postings that may have diverged from the main database/WAL state. Hardening checks treat catalog definitions as authoritative and validate or rebuild posting structures during open/check paths, so stale or corrupted sidecar state is not trusted as durable truth.
+
+`Database.Full_Text.Vacuum_Index` compacts reclaim-safe deleted postings and rebuilds document statistics from the surviving live postings. Segment-level callers can use `Needs_Compaction` and `Compact_With_Policy` to merge sealed segments once active segment count or obsolete-posting ratio crosses a configured threshold.
 
 ## Persistent row resolution
 
@@ -100,9 +113,9 @@ These variants report missing indexes and row-resolution failures through `Datab
 
 `Database.Full_Text.Queries.Near (Left, Right, Max_Distance)` matches rows where both terms occur within the requested token distance. It is positional and uses the same posting positions as phrase search. `Database.Full_Text.Queries.Fuzzy (Text, Max_Edit_Distance)` scans normalized dictionary terms and unions posting lists whose edit distance is within the requested bound. This is correct for small dictionaries and tests, but it is not optimized for very large dictionaries.
 
-`Database.Full_Text.Snippets.Generate` can produce a bounded Wide_Wide_String snippet around the first matched term. It operates on Ada `Wide_Wide_Character` boundaries and does not split code points; it does not claim full grapheme-cluster segmentation.
+`Database.Full_Text.Snippets.Generate` can produce a bounded Wide_Wide_String snippet around the first matched term. It operates on Ada `Wide_Wide_Character` boundaries and does not split code points. It also avoids cutting adjacent Unicode combining-mark sequences at snippet and marker boundaries.
 
-Remaining performance-oriented work includes immutable segment merging and page-granular WAL redo/undo for each posting mutation. Posting positions already use gap/varint encoding, and `Database.Full_Text.Postings` exposes skip-table helpers for sorted posting-list intersections.
+Full-text WAL records support page-granular redo and undo images for native dictionary and posting pages. Recovery applies committed full-text redo images, applies uncommitted full-text undo images, and rejects full-text WAL images whose payload is not a full-text page. Posting positions already use gap/varint encoding, and `Database.Full_Text.Postings` exposes skip-table helpers for sorted posting-list intersections.
 
 
 ## Native full-text page encoding

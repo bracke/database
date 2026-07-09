@@ -8,6 +8,7 @@ with Database.Extensions;
 with Database.Functions;
 with Database.Aggregate_Functions;
 with Database.Collations;
+with Database.Expressions;
 with Database.Full_Text;
 with Database.Full_Text.Tokenizers;
 with Database.Full_Text.Ranking;

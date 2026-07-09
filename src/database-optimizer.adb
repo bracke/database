@@ -235,7 +235,7 @@ package body Database.Optimizer is
                   S.Details := To_Unbounded_Wide_Wide_String ("projection pruning boundary");
                   Append (Result.Plan, S);
                when Database.Plans.Order =>
-                  if not (Settings.Enabled and then L.Direction = Database.Ordering.Ascending
+                  if not (Settings.Enabled
                     and then Has_Index_For (Scan.Indexes, L.Order_Column))
                   then
                      S.Node_Kind := Sort_Node;

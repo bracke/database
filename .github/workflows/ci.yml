@@ -46,6 +46,13 @@ jobs:
         # projects with.
         working-directory: database
         run: alr --non-interactive build
+      - name: Build project_tools sibling
+        # tools/tools.gpr withs ../../project_tools/project_tools.gpr, which withs its
+        # gitignored config/project_tools_config.gpr. database does not pin project_tools,
+        # so "Build database" never generates it; build project_tools here so the raw
+        # gprbuild of tools.gpr below can resolve the with.
+        working-directory: project_tools
+        run: alr --non-interactive build
       - name: Build the check_all validator
         working-directory: database
         run: alr exec -- gprbuild -P tools/tools.gpr

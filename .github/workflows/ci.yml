@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux build, tests, and SPARK proofs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out database
+        uses: actions/checkout@v4
+        with:
+          path: database
+      - name: Check out cryptolib sibling
+        # database.gpr withs ../cryptolib/cryptolib.gpr (database-crypto/-keys use it).
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/cryptolib
+          path: cryptolib
+      - name: Check out project_tools sibling
+        # tools/tools.gpr (the check_all validator) withs ../../project_tools.
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/project_tools
+          path: project_tools
+      - name: Set up Alire
+        uses: alire-project/setup-alire@v5
+        with:
+          toolchain: gnat_native=15.2.1 gprbuild
+      - name: Install GNATprove and GNATdoc
+        # gnatprove (SPARK proofs) and gnatdoc (check_all runs it) are regular Alire
+        # crates, not toolchain components; apt has no reliable packages.
+        run: |
+          alr install gnatprove
+          alr install gnatdoc
+          echo "$HOME/.alire/bin" >> "$GITHUB_PATH"
+      - name: Build cryptolib sibling
+        # Generates cryptolib's gitignored config so database.gpr's with resolves.
+        working-directory: cryptolib
+        run: alr --non-interactive build
+      - name: Build database
+        # Generates config/database_config.gpr, which database.gpr and the SPARK
+        # projects with.
+        working-directory: database
+        run: alr --non-interactive build
+      - name: Build the check_all validator
+        working-directory: database
+        run: alr exec -- gprbuild -P tools/tools.gpr
+      - name: Run check_all
+        # Build, AUnit tests, database_inspect smokes, examples, GNATdoc, and the
+        # 13 SPARK proofs (a real gate: --checks-as-errors=on).
+        working-directory: database
+        run: ./tools/bin/check_all

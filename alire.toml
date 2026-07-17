@@ -10,3 +10,9 @@ website = "https://github.com/bracke/database"
 
 [[depends-on]]
 gnat_native = "=15.2.1"
+
+[[depends-on]]
+cryptolib = "*"
+
+[[pins]]
+cryptolib = { path = "../cryptolib" }

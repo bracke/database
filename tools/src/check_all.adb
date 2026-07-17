@@ -534,67 +534,67 @@ begin
      ("SPARK checksums proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_checksums.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK log sequence proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_log_sequence.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK WAL frame parser proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_wal_frame_parser.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK WAL payload rules proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_wal_payload_rules.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK page parser proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_page_parser.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK record serializer proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_record_serializer.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK catalog rules proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_catalog_rules.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK versioning proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_versioning.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK transaction state rules proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_transaction_state_rules.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK visibility rules proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_visibility_rules.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK free-list proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_free_list_manager.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK table heap layout proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_table_heap_layout.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
    Run
      ("SPARK B+ tree invariant proof", Root, Alr,
       [new String'("exec"), new String'("--"), new String'("gnatprove"),
        new String'("-P"), new String'("spark_btree_invariants.gpr"),
-       new String'("--level=2")]);
+       new String'("--level=2"), new String'("--checks-as-errors=on")]);
 
    Clean_Generated_Artifacts;
 

@@ -56,6 +56,12 @@ jobs:
       - name: Build the check_all validator
         working-directory: database
         run: alr exec -- gprbuild -P tools/tools.gpr
+      - name: Generate tests config
+        # tests/ is its own Alire root. check_all builds it with a raw
+        # `alr exec -- gprbuild -P tests.gpr`, which does not generate the gitignored
+        # tests/config/tests_config.gpr that tests.gpr withs; alr build here does.
+        working-directory: database/tests
+        run: alr --non-interactive build
       - name: Run check_all
         # Build, AUnit tests, database_inspect smokes, examples, GNATdoc, and the
         # 13 SPARK proofs (a real gate: --checks-as-errors=on).

@@ -7,7 +7,7 @@ project Tests is
    for Exec_Dir use "bin";
    for Main use
      ("tests.adb", "lock_holder.adb", "wal_reuse_child.adb",
-      "concurrency_soak.adb");
+      "concurrency_soak.adb", "trace_event_soak.adb");
 
    --  ThreadSanitizer build: `gprbuild -P tests.gpr -XSANITIZE=thread` (or
    --  `alr build -- -XSANITIZE=thread`). Used to run concurrency_soak under

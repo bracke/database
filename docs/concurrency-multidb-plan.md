@@ -203,7 +203,23 @@ prebuilt GNAT runtime, so some reports have runtime frames; the app-side frames
         0 across the phase).
       - CI `concurrency-baseline` flipped from informational to a gate (the
         functional soak blocks; the TSan step tolerates runner ASLR quirks).
-- [ ] Phase 3: residual shared state (Tracing buffer/sink/flags; Events handler
-      registration vs concurrent emit). Not on the operation hot path and off by
-      default, so lower priority.
+- [x] **Phase 3: done and verified.** `Tracing.Emit_Trace` and `Events.Emit`
+      *are* on the operation hot path (transactions, WAL, storage, checkpoint,
+      encryption), so with tracing enabled or a handler subscribed, concurrent
+      multi-database tasks raced on the shared buffer / clock / handler list.
+      - `Tracing`: the operation-path mutable state (the ring buffer + logical
+        clock) is now a protected `Log`; console / file / user-sink I/O stays
+        *outside* the lock (no blocking or user code under a lock). Scalar
+        config toggles are `pragma Atomic` (+ `Atomic_Components` on the
+        category flags). File / console text sinks are documented as not
+        internally serialized for concurrent multi-writer use — install a
+        serializing custom sink instead.
+      - `Events`: handlers live in a fixed-array protected `Registry`;
+        `Emit_Event` snapshots the handler set under the lock and dispatches
+        *outside* it (a hung/re-entrant handler cannot stall the registry).
+      - New `tests/src/trace_event_soak.adb` stressor (8 tasks × 1000 emits,
+        tracing on, handler subscribed, subscription churned): buffer stays
+        capped at 256, and under ThreadSanitizer **0 races / 0 warnings**.
+        `concurrency_soak` still TSan-clean (no regression); full stack
+        (`check_all`, incl. all 13 SPARK proofs) green.
 - [ ] Phase 4 (optional): Model B (handle-anchored state) cleanup.

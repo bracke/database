@@ -1,23 +1,72 @@
 with Ada.Containers.Indefinite_Vectors;
 with Ada.Wide_Wide_Text_IO;
-with Ada.Strings.Wide_Wide_Unbounded;
 
 package body Database.Tracing is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    package Event_Vectors is new Ada.Containers.Indefinite_Vectors
      (Index_Type => Natural, Element_Type => Trace_Event);
 
-   Enabled : Boolean := False;
-   Sensitive_Enabled : Boolean := False;
-   Category_Flags : array (Trace_Category) of Boolean := (others => True);
-   Buffer : Event_Vectors.Vector;
    Max_Buffered : constant Natural := 256;
+
+   --  Configuration flags. These are meant to be set at setup time (before
+   --  concurrent operation); the scalar toggles are atomic so a stray runtime
+   --  Enable/Disable is at least well-defined, and Category_Flags uses atomic
+   --  components for the same reason. The File / Console text sinks are not
+   --  internally serialized across tasks -- for concurrent multi-database load,
+   --  install a Custom_Sink that serializes rather than the built-in file sink.
+   Enabled : Boolean := False;
+   pragma Atomic (Enabled);
+   Sensitive_Enabled : Boolean := False;
+   pragma Atomic (Sensitive_Enabled);
+   Category_Flags : array (Trace_Category) of Boolean := [others => True];
+   pragma Atomic_Components (Category_Flags);
    Current_Sink : Sink_Access := null;
+   pragma Atomic (Current_Sink);
    Console_Enabled : Boolean := False;
+   pragma Atomic (Console_Enabled);
    File_Enabled : Boolean := False;
+   pragma Atomic (File_Enabled);
    File : Ada.Wide_Wide_Text_IO.File_Type;
-   Clock : Timestamp_Type := 0;
+
+   --  Operation-path mutable state. Emit_Trace is called from many subsystems
+   --  on the hot path, so the ring buffer and the logical clock are serialized
+   --  here; concurrent multi-database tasks would otherwise corrupt the shared
+   --  Buffer. No I/O and no user sink runs under this lock -- Emit_Trace does
+   --  those outside it.
+   protected Log is
+      procedure Record_Event (Event : in out Trace_Event);
+      procedure Clear;
+      procedure Reset;
+      function Count return Natural;
+      function Element (Index : Natural) return Trace_Event;
+   private
+      Buffer : Event_Vectors.Vector;
+      Clock  : Timestamp_Type := 0;
+   end Log;
+
+   protected body Log is
+      procedure Record_Event (Event : in out Trace_Event) is
+      begin
+         Clock := Clock + 1;
+         Event.Timestamp := Clock;
+         Buffer.Append (Event);
+         while Natural (Buffer.Length) > Max_Buffered loop
+            Buffer.Delete_First;
+         end loop;
+      end Record_Event;
+      procedure Clear is
+      begin
+         Buffer.Clear;
+      end Clear;
+      procedure Reset is
+      begin
+         Buffer.Clear;
+         Clock := 0;
+      end Reset;
+      function Count return Natural is (Natural (Buffer.Length));
+      function Element (Index : Natural) return Trace_Event is
+        (Buffer.Element (Index));
+   end Log;
 
    procedure Enable is
    begin
@@ -65,12 +114,7 @@ package body Database.Tracing is
       if not Enabled or else not Category_Flags (Event.Category) then
          return Database.Status.Success;
       end if;
-      Clock := Clock + 1;
-      Stored.Timestamp := Clock;
-      Buffer.Append (Stored);
-      while Natural (Buffer.Length) > Max_Buffered loop
-         Buffer.Delete_First;
-      end loop;
+      Log.Record_Event (Stored);  --  serialized: stamps, buffers, and trims
       if Console_Enabled then
          begin
             Ada.Wide_Wide_Text_IO.Put_Line (To_Wide_Wide_String (Stored.Message));
@@ -173,23 +217,22 @@ package body Database.Tracing is
    end Clear_Custom_Sink;
    procedure Clear_Buffer is
    begin
-      Buffer.Clear;
+      Log.Clear;
    end Clear_Buffer;
-   function Buffered_Count return Natural is (Natural (Buffer.Length));
+   function Buffered_Count return Natural is (Log.Count);
    function Buffered_Event (Index : Natural) return Trace_Event is
    begin
-      return Buffer.Element (Index);
+      return Log.Element (Index);
    end Buffered_Event;
 
    procedure Reset is
    begin
       Enabled := False;
       Sensitive_Enabled := False;
-      Category_Flags := (others => True);
-      Buffer.Clear;
+      Category_Flags := [others => True];
+      Log.Reset;
       Current_Sink := null;
       Console_Enabled := False;
       Disable_File_Sink;
-      Clock := 0;
    end Reset;
 end Database.Tracing;

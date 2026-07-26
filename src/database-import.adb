@@ -1,6 +1,3 @@
-with Ada.Containers;
-with Database.Transactions;
-with Database.Status;
 with Database.Catalog;
 with Database.Schema;
 with Database.Values;
@@ -11,14 +8,12 @@ with Database.Indexes;
 with Database.Indexes.BTree;
 with Database.Storage.Table_Heap;
 with Database.Storage.File_IO;
-with Database.Storage.Free_List;
 with Database.Storage.Pages;
 with Database.Check;
 with Database.Full_Text;
 with Ada.Streams;
 with Ada.Streams.Stream_IO;
 with Ada.Characters.Conversions;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Interfaces;
 with Database.Metrics;
 with Database.Fault_Hooks;
@@ -35,7 +30,6 @@ with Database.Queries;
 package body Database.Import is
    use type Database.Types.Value_Kind;
    use Ada.Streams;
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Interfaces.Unsigned_64;
 
    Magic_20 : constant Wide_Wide_String := "DATABASE_LOGICAL_EXPORT_20";
@@ -133,9 +127,8 @@ package body Database.Import is
             if not Read_U32 (F, Code) then
                return False;
             end if;
-            if Code > Wide_Wide_Character'Pos (Wide_Wide_Character'Last) then
-               return False;
-            end if;
+            --  Code is Natural, whose range is exactly Wide_Wide_Character's
+            --  (0 .. 2**31-1), so 'Val below can never be out of range.
             T (I) := Wide_Wide_Character'Val (Code);
          end loop;
          S := To_Unbounded_Wide_Wide_String (T);
@@ -201,7 +194,7 @@ package body Database.Import is
          when Database.Types.Decimal_Value =>
             declare
                C : Long_Long_Integer;
-            Scale : Natural;
+               Scale : Natural;
             begin
                if not Read_I64 (F, C) or else not Read_U32 (F, Scale) then
                   return False;
@@ -220,7 +213,7 @@ package body Database.Import is
          when Database.Types.Blob_Value =>
             declare
                Len, B : Natural;
-            Bytes : Database.Values.Byte_Vectors.Vector;
+               Bytes : Database.Values.Byte_Vectors.Vector;
             begin
                if not Read_U32 (F, Len) then
                   return False;
@@ -260,90 +253,97 @@ package body Database.Import is
          when Database.Types.Date_Value =>
             declare
                Y, Mo, D : Natural;
-         begin
-            if not Read_U32  (F,
-           Y) or else not Read_U32 (F,
-           Mo) or else not Read_U32 (F,
-           D) then
-              return False;
-           end if;
-           V := Database.Values.From_Date ((Year => Y,
-           Month => Mo,
-           Day => D));
-           end;
+            begin
+               if not Read_U32  (F,
+              Y) or else not Read_U32 (F,
+              Mo) or else not Read_U32 (F,
+              D)
+               then
+                  return False;
+               end if;
+               V := Database.Values.From_Date ((Year => Y,
+              Month => Mo,
+              Day => D));
+            end;
          when Database.Types.Time_Value =>
             declare
                H, Mi, S2, N : Natural;
-         begin
-            if not Read_U32  (F,
-           H) or else not Read_U32 (F,
-           Mi) or else not Read_U32 (F,
-           S2) or else not Read_U32 (F,
-           N) then
-              return False;
-           end if;
-           V := Database.Values.From_Time ((Hour => H,
-           Minute => Mi,
-           Second => S2,
-           Nanosecond => N));
-           end;
+            begin
+               if not Read_U32  (F,
+              H) or else not Read_U32 (F,
+              Mi) or else not Read_U32 (F,
+              S2) or else not Read_U32 (F,
+              N)
+               then
+                  return False;
+               end if;
+               V := Database.Values.From_Time ((Hour => H,
+              Minute => Mi,
+              Second => S2,
+              Nanosecond => N));
+            end;
          when Database.Types.Date_Time_Value =>
             declare
                Y, Mo, D, H, Mi, S2, N : Natural;
-         begin
-            if not Read_U32  (F,
-           Y) or else not Read_U32 (F,
-           Mo) or else not Read_U32 (F,
-           D) or else not Read_U32 (F,
-           H) or else not Read_U32 (F,
-           Mi) or else not Read_U32 (F,
-           S2) or else not Read_U32 (F,
-           N) then
-              return False;
-           end if;
-           V := Database.Values.From_Date_Time ((Date_Part => (Year => Y,
-           Month => Mo,
-           Day => D),
-           Time_Part => (Hour => H,
-           Minute => Mi,
-           Second => S2,
-           Nanosecond => N)));
-           end;
+            begin
+               if not Read_U32  (F,
+              Y) or else not Read_U32 (F,
+              Mo) or else not Read_U32 (F,
+              D) or else not Read_U32 (F,
+              H) or else not Read_U32 (F,
+              Mi) or else not Read_U32 (F,
+              S2) or else not Read_U32 (F,
+              N)
+               then
+                  return False;
+               end if;
+               V := Database.Values.From_Date_Time ((Date_Part => (Year => Y,
+              Month => Mo,
+              Day => D),
+              Time_Part => (Hour => H,
+              Minute => Mi,
+              Second => S2,
+              Nanosecond => N)));
+            end;
          when Database.Types.Duration_Value =>
             declare
                S64 : Long_Long_Integer;
-         N : Natural;
-         begin
-            if not Read_I64  (F,
-           S64) or else not Read_U32 (F,
-           N) then
-              return False;
-           end if;
-           V := Database.Values.From_Duration ((Seconds => S64,
-           Nanoseconds => N));
-           end;
+               N : Natural;
+            begin
+               if not Read_I64  (F,
+              S64) or else not Read_U32 (F,
+              N)
+               then
+                  return False;
+               end if;
+               V := Database.Values.From_Duration ((Seconds => S64,
+              Nanoseconds => N));
+            end;
          when Database.Types.UUID_Value =>
             declare
                Uuid : Database.UUIDs.UUID;
-         B : Natural;
-         begin for J in Uuid'Range loop if not Read_Byte  (F,
-           B) then
-              return False;
-           end if;
-           Uuid (J) := Database.UUIDs.Byte (B);
-           end loop;
-           V := Database.Values.From_UUID (Uuid);
-           end;
+               B : Natural;
+            begin
+               for J in Uuid'Range loop
+                  if not Read_Byte (F, B)
+                  then
+                     return False;
+                  end if;
+                  Uuid (J) := Database.UUIDs.Byte (B);
+               end loop;
+               V := Database.Values.From_UUID (Uuid);
+            end;
          when Database.Types.Array_Value =>
             declare
                S : Unbounded_Wide_Wide_String;
-         begin
-            if not Read_Text  (F,
-           S) then
-              return False;
-           end if;
-           V := Database.Values.From_Array_Text (To_Wide_Wide_String (S));
-           end;
+            begin
+               if not Read_Text  (F,
+              S)
+               then
+                  return False;
+               end if;
+               V := Database.Values.From_Array_Text (To_Wide_Wide_String (S));
+            end;
       end case;
       return True;
    exception
@@ -392,9 +392,10 @@ package body Database.Import is
       end if;
       IX.Name := Name;
       if not Read_Byte  (F,
-        N) or else N > Database.Indexes.Index_Kind'Pos (Database.Indexes.Index_Kind'Last) then
-           return False;
-        end if;
+        N) or else N > Database.Indexes.Index_Kind'Pos (Database.Indexes.Index_Kind'Last)
+      then
+         return False;
+      end if;
       IX.Kind := Database.Indexes.Index_Kind'Val (N);
       if not Read_Boolean (F, IX.Unique) then
          return False;
@@ -403,9 +404,10 @@ package body Database.Import is
          return False;
       end if;
       if not Read_Byte  (F,
-        N) or else N > Database.Types.Value_Kind'Pos (Database.Types.Value_Kind'Last) then
-           return False;
-        end if;
+        N) or else N > Database.Types.Value_Kind'Pos (Database.Types.Value_Kind'Last)
+      then
+         return False;
+      end if;
       IX.Key_Kind := Database.Types.Value_Kind'Val (N);
       if not Read_U32 (F, Count) then
          return False;
@@ -465,9 +467,10 @@ package body Database.Import is
                return False;
             end if;
             if not Read_Byte  (F,
-              N) or else N > Database.Types.Value_Kind'Pos (Database.Types.Value_Kind'Last) then
-                 return False;
-              end if;
+              N) or else N > Database.Types.Value_Kind'Pos (Database.Types.Value_Kind'Last)
+            then
+               return False;
+            end if;
             C.Kind := Database.Types.Value_Kind'Val (N);
             if not Read_Boolean (F, B) then
                return False;
@@ -532,7 +535,8 @@ package body Database.Import is
               Name) or else not Read_U32 (F,
               FK.Referencing_Table) or else not Read_U32 (F,
               FK.Referenced_Table) or else not Read_U32 (F,
-              Col_Count) then
+              Col_Count)
+            then
                return Database.Status.Failure (Database.Status.Import_Error, "malformed foreign-key metadata");
             end if;
             FK.Name := Name;
@@ -557,7 +561,7 @@ package body Database.Import is
                          or else Action >
                           Database.Foreign_Keys.Foreign_Key_Action'Pos
                             (Database.Foreign_Keys.Foreign_Key_Action'Last)
-                     then
+            then
                return Database.Status.Failure (Database.Status.Import_Error, "malformed foreign-key delete action");
             end if;
             FK.On_Delete := Database.Foreign_Keys.Foreign_Key_Action'Val (Action);
@@ -566,7 +570,7 @@ package body Database.Import is
                          or else Action >
                           Database.Foreign_Keys.Foreign_Key_Action'Pos
                             (Database.Foreign_Keys.Foreign_Key_Action'Last)
-                     then
+            then
                return Database.Status.Failure (Database.Status.Import_Error, "malformed foreign-key update action");
             end if;
             FK.On_Update := Database.Foreign_Keys.Foreign_Key_Action'Val (Action);
@@ -590,24 +594,24 @@ package body Database.Import is
          for C in 1 .. N loop
             declare
                CC : Database.Check_Constraints.Check_Constraint;
-            Expr : Database.Expressions.Expression;
-            Deferred : Boolean;
+               Expr : Database.Expressions.Expression;
+               Deferred : Boolean;
             begin
                if not Read_Text (F, Name) or else not Read_Text (F, Image) or else not Read_Boolean (F, Deferred) then
                   return Database.Status.Failure (Database.Status.Import_Error, "malformed check metadata");
                end if;
                R := Database.Expressions.From_Persistent_Image  (To_Wide_Wide_String (Image),
                  Expr);
-                 if not Database.Status.Is_Ok (R) then
-                    return R;
-                 end if;
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
                CC := Database.Check_Constraints.Create (To_Wide_Wide_String (Name), Expr, Deferred);
                R := Database.Catalog.Add_Check_Constraint  (DB,
                  Table_Id,
                  CC);
-                 if not Database.Status.Is_Ok (R) then
-                    return R;
-                 end if;
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
             end;
          end loop;
          if not Read_U32 (F, N) then
@@ -616,8 +620,8 @@ package body Database.Import is
          for G in 1 .. N loop
             declare
                GC : Database.Generated_Columns.Generated_Column;
-            Expr : Database.Expressions.Expression;
-            Kind_N : Natural;
+               Expr : Database.Expressions.Expression;
+               Kind_N : Natural;
             begin
                if not Read_U32  (F,
                  GC.Column_Id) or else not Read_Text (F,
@@ -628,14 +632,14 @@ package body Database.Import is
                          or else Kind_N >
                           Database.Generated_Columns.Generated_Column_Kind'Pos
                             (Database.Generated_Columns.Generated_Column_Kind'Last)
-                     then
+               then
                   return Database.Status.Failure (Database.Status.Import_Error, "malformed generated metadata");
                end if;
                R := Database.Expressions.From_Persistent_Image  (To_Wide_Wide_String (Image),
                  Expr);
-                 if not Database.Status.Is_Ok (R) then
-                    return R;
-                 end if;
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
                GC := Database.Generated_Columns.Create  (GC.Column_Id,
                  To_Wide_Wide_String (Name),
                  Expr,
@@ -643,9 +647,9 @@ package body Database.Import is
                R := Database.Catalog.Add_Generated_Column  (DB,
                  Table_Id,
                  GC);
-                 if not Database.Status.Is_Ok (R) then
-                    return R;
-                 end if;
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
             end;
          end loop;
       end loop;
@@ -656,17 +660,17 @@ package body Database.Import is
       for VNum in 1 .. Count loop
          declare
             V : Database.Views.View_Definition;
-         Q : Database.Queries.Query;
-         Id_N : Natural;
+            Q : Database.Queries.Query;
+            Id_N : Natural;
          begin
             if not Read_U32 (F, Id_N) or else not Read_Text (F, Name) or else not Read_Text (F, Image) then
                return Database.Status.Failure (Database.Status.Import_Error, "malformed view metadata");
             end if;
             R := Database.Queries.From_Persistent_Image  (To_Wide_Wide_String (Image),
               Q);
-              if not Database.Status.Is_Ok (R) then
-                 return R;
-              end if;
+            if not Database.Status.Is_Ok (R) then
+               return R;
+            end if;
             V := Database.Views.Create (To_Wide_Wide_String (Name), Q);
             R := Database.Catalog.Add_View (DB, V);
             if not Database.Status.Is_Ok (R) then
@@ -681,25 +685,26 @@ package body Database.Import is
       for VNum in 1 .. Count loop
          declare
             MV : Database.Materialized_Views.Materialized_View_Definition;
-         Q : Database.Queries.Query;
-         Id_N, Storage_Table, Last_Commit : Natural;
+            Q : Database.Queries.Query;
+            Id_N, Storage_Table, Last_Commit : Natural;
          begin
             if not Read_U32 (F, Id_N) or else not Read_Text (F, Name) or else not Read_Text (F, Image)
-              or else not Read_U32 (F, Storage_Table) or else not Read_U32 (F, Last_Commit) then
+              or else not Read_U32 (F, Storage_Table) or else not Read_U32 (F, Last_Commit)
+            then
                return Database.Status.Failure (Database.Status.Import_Error, "malformed materialized-view metadata");
             end if;
             R := Database.Queries.From_Persistent_Image  (To_Wide_Wide_String (Image),
               Q);
-              if not Database.Status.Is_Ok (R) then
-                 return R;
-              end if;
+            if not Database.Status.Is_Ok (R) then
+               return R;
+            end if;
             MV := Database.Materialized_Views.Create (To_Wide_Wide_String (Name), Q, Storage_Table);
             MV.Last_Refresh_Commit := Last_Commit;
             R := Database.Catalog.Add_Materialized_View  (DB,
               MV);
-              if not Database.Status.Is_Ok (R) then
-                 return R;
-              end if;
+            if not Database.Status.Is_Ok (R) then
+               return R;
+            end if;
          end;
       end loop;
 
@@ -709,7 +714,7 @@ package body Database.Import is
       for DNum in 1 .. Count loop
          declare
             D : Database.Extension_Metadata.Dependency;
-         Kind_N : Natural;
+            Kind_N : Natural;
          begin
             if not Read_U32  (F,
               Kind_N)
@@ -720,7 +725,8 @@ package body Database.Import is
                        or else not Read_Text (F,
               Name) or else not Read_U32 (F,
               D.Required_Version) or else not Read_Text (F,
-              Compat) then
+              Compat)
+            then
                return Database.Status.Failure (Database.Status.Import_Error, "malformed extension dependency metadata");
             end if;
             D.Object_Kind := Database.Extension_Metadata.Extension_Object_Kind'Val (Kind_N);

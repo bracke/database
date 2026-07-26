@@ -7,7 +7,6 @@ with Database.Storage.Free_List;
 with Database.Storage.Pages;
 with Database.Transactions;
 with Database.Indexes;
-with Database.Versioning;
 with Ada.Containers.Indefinite_Vectors;
 
    --  Public nested package `Database.Storage.Table_Heap`.
@@ -197,6 +196,13 @@ package Database.Storage.Table_Heap is
 
    --  Return the highest committed row version recorded in a heap chain.
    function Max_Commit_Version
+     (F          : in out Database.Storage.File_IO.File_Handle;
+      First_Page : Database.Storage.Pages.Page_Id) return Natural;
+
+   --  Return the highest transaction id (creating or deleting) referenced by
+   --  any row in a heap chain. Used at open time to reserve fresh transaction
+   --  ids above every id still present in persisted rows.
+   function Max_Transaction_Id
      (F          : in out Database.Storage.File_IO.File_Handle;
       First_Page : Database.Storage.Pages.Page_Id) return Natural;
 end Database.Storage.Table_Heap;

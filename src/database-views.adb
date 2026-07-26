@@ -28,7 +28,7 @@ package body Database.Views is
    function Insert_Row
      (View : in out View_Definition;
       Row  : Database.Rows.Row) return Database.Status.Result is
-      R    : Database.Status.Result := Validate (View);
+      R : constant Database.Status.Result := Validate (View);
       Rows : Database.Queries.Row_Vectors.Vector;
    begin
       if not Database.Status.Is_Ok (R) then
@@ -44,7 +44,7 @@ package body Database.Views is
      (View       : in out View_Definition;
       Key_Column : Natural;
       Row        : Database.Rows.Row) return Database.Status.Result is
-      R        : Database.Status.Result := Validate (View);
+      R : constant Database.Status.Result := Validate (View);
       Rows     : Database.Queries.Row_Vectors.Vector;
       Existing : Database.Rows.Row;
       Key      : Database.Values.Value;
@@ -78,7 +78,7 @@ package body Database.Views is
      (View       : in out View_Definition;
       Key_Column : Natural;
       Key        : Database.Values.Value) return Database.Status.Result is
-      R        : Database.Status.Result := Validate (View);
+      R : constant Database.Status.Result := Validate (View);
       Rows     : Database.Queries.Row_Vectors.Vector;
       Existing : Database.Rows.Row;
    begin

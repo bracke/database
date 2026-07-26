@@ -2,29 +2,22 @@ with Ada.Characters.Conversions;
 with Ada.Directories;
 with Ada.Streams;
 with Ada.Streams.Stream_IO;
-with Database.Crypto;
-with Database.Crypto_Checks;
-with Database.Keys;
-with Database.Log_Sequence;
-with Database.Status;
 
 package body Database.Encrypted_Persistence is
    use Ada.Streams;
-   use type Database.Crypto.Byte;
    use type Database.Crypto_Checks.Encrypted_Artifact_Kind;
-   use type Database.Keys.Key_Id;
    use type Database.Log_Sequence.Log_Sequence_Number;
 
    Header_Size : constant Natural := 108;
    Magic       : constant Database.Crypto.Byte_Array (0 .. 7)  :=
-     (Database.Crypto.Byte (Character'Pos ('D')),
+     [Database.Crypto.Byte (Character'Pos ('D')),
       Database.Crypto.Byte (Character'Pos ('B')),
       Database.Crypto.Byte (Character'Pos ('E')),
       Database.Crypto.Byte (Character'Pos ('A')),
       Database.Crypto.Byte (Character'Pos ('R')),
       Database.Crypto.Byte (Character'Pos ('T')),
       Database.Crypto.Byte (Character'Pos ('1')),
-      0);
+      0];
 
    function Native (Path : Wide_Wide_String) return String is
    begin
@@ -139,7 +132,7 @@ package body Database.Encrypted_Persistence is
       Tag    : Database.Crypto.Authentication_Tag;
       Bytes  : out Database.Crypto.Byte_Array) is
    begin
-      Bytes := (others => 0);
+      Bytes := [others => 0];
       for I in Magic'Range loop
          Bytes (I) := Magic (I);
       end loop;
@@ -170,8 +163,8 @@ package body Database.Encrypted_Persistence is
       Kind_Pos : Natural;
    begin
       Header := (Kind => Expected, others => <>);
-      Nonce := (others => 0);
-      Tag := (others => 0);
+      Nonce := [others => 0];
+      Tag := [others => 0];
       if Bytes'Length < Header_Size then
          return Database.Status.Failure (Database.Status.Corruption_Detected,
            "encrypted artifact header is truncated");
@@ -544,15 +537,15 @@ package body Database.Encrypted_Persistence is
       declare
          Actual : constant Wide_Wide_String := Existing_Path;
       begin
-      if Actual'Length = 0 then
-         return Database.Status.Failure (Database.Status.Not_Found,
+         if Actual'Length = 0 then
+            return Database.Status.Failure (Database.Status.Not_Found,
            "encrypted artifact to tamper does not exist");
-      end if;
-      File_Size := Natural (Ada.Directories.Size (Native (Actual)));
-      if Offset >= File_Size then
-         return Database.Status.Failure (Database.Status.Invalid_Argument,
+         end if;
+         File_Size := Natural (Ada.Directories.Size (Native (Actual)));
+         if Offset >= File_Size then
+            return Database.Status.Failure (Database.Status.Invalid_Argument,
            "tamper offset is outside encrypted artifact");
-      end if;
+         end if;
          declare
             Data : Database.Crypto.Byte_Array (0 .. File_Size - 1);
          begin

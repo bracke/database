@@ -1,12 +1,10 @@
 --  Query profiling and optimizer/execution diagnostics.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Queries;
 with Database.Status;
 
 --  Query and operation profiling support.
 package Database.Profiling is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Operator_Profile stores the public fields for this database abstraction.
    type Operator_Profile is record

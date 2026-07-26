@@ -1,5 +1,6 @@
 with Ada.Containers;
 with Ada.Strings.Wide_Wide_Unbounded;
+with Database.Values;
 use Ada.Strings.Wide_Wide_Unbounded;
 with Database.Types;
 package body Database.Foreign_Keys is
@@ -37,11 +38,13 @@ package body Database.Foreign_Keys is
       if Length (Definition.Name) = 0 then
          return Database.Status.Failure (Database.Status.Invalid_Schema, "foreign key name must not be empty");
       elsif Definition.Referencing_Cols.Length = 0
-        or else Definition.Referencing_Cols.Length /= Definition.Referenced_Cols.Length then
+        or else Definition.Referencing_Cols.Length /= Definition.Referenced_Cols.Length
+      then
          return Database.Status.Failure (Database.Status.Invalid_Schema,
            "foreign key column lists must be non-empty and same length");
       elsif Definition.Referencing_Table /= Referencing_Schema.Table_Id
-        or else Definition.Referenced_Table /= Referenced_Schema.Table_Id then
+        or else Definition.Referenced_Table /= Referenced_Schema.Table_Id
+      then
          return Database.Status.Failure (Database.Status.Invalid_Schema, "foreign key table ids do not match schemas");
       end if;
       for I in 0 .. Natural (Definition.Referencing_Cols.Length) - 1 loop
@@ -50,10 +53,12 @@ package body Database.Foreign_Keys is
          Parent_Pos := Database.Schema.Find_Column_Id_Position  (Referenced_Schema,
            Definition.Referenced_Cols.Element (I));
          if Ref_Pos >= Database.Schema.Column_Count (Referencing_Schema)
-           or else Parent_Pos >= Database.Schema.Column_Count (Referenced_Schema) then
+           or else Parent_Pos >= Database.Schema.Column_Count (Referenced_Schema)
+         then
             return Database.Status.Failure (Database.Status.Invalid_Schema, "foreign key references unknown column");
          elsif Referencing_Schema.Columns.Element (Ref_Pos).Kind
-           /= Referenced_Schema.Columns.Element (Parent_Pos).Kind then
+           /= Referenced_Schema.Columns.Element (Parent_Pos).Kind
+         then
             return Database.Status.Failure (Database.Status.Invalid_Schema, "foreign key column types must match");
          end if;
       end loop;
@@ -115,7 +120,8 @@ package body Database.Foreign_Keys is
       end if;
       for Parent of Referenced_Rows loop
          if Rows_Match (Referencing_Schema, Referencing_Row, Definition.Referencing_Cols,
-                        Referenced_Schema, Parent, Definition.Referenced_Cols) then
+                        Referenced_Schema, Parent, Definition.Referenced_Cols)
+         then
             return Database.Status.Success;
          end if;
       end loop;
@@ -135,7 +141,8 @@ package body Database.Foreign_Keys is
       end if;
       for Child of Referencing_Rows loop
          if Rows_Match (Referencing_Schema, Child, Definition.Referencing_Cols,
-                        Referenced_Schema, Referenced_Row, Definition.Referenced_Cols) then
+                        Referenced_Schema, Referenced_Row, Definition.Referenced_Cols)
+         then
             return Database.Status.Failure (Database.Status.Constraint_Error,
               "foreign key restrict delete failed: " & To_Wide_Wide_String (Definition.Name));
          end if;

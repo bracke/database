@@ -1,7 +1,5 @@
-with Ada.Strings.Wide_Wide_Unbounded;
 
 package body Database.Full_Text.Segments is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    function Create (Id : Segment_Id) return Segment is
       S : Segment;

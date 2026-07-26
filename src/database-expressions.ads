@@ -1,7 +1,6 @@
 --  Ada-native deterministic expression trees used by checks, generated columns,
 --  partial indexes, expression indexes, views, and materialized views.
 with Ada.Containers.Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Rows;
 with Database.Schema;
 with Database.Status;
@@ -9,7 +8,6 @@ with Database.Values;
 
 --  Typed expression descriptors used by constraints, views, and indexes.
 package Database.Expressions is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Expression_Kind defines a public database type used by this package.
    type Expression_Kind is

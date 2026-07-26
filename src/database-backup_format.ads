@@ -1,11 +1,9 @@
 --  Backup manifest and checksum helpers for physical backup and restore.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Status;
 with Database.Log_Sequence;
 
 --  Backup manifest and artifact format helpers.
 package Database.Backup_Format is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Backup_Format_Version is a public constant used by this package.
    Backup_Format_Version : constant Natural := 1;

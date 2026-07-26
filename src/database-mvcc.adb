@@ -1,9 +1,55 @@
-package body Database.MVCC is
-   Max_Tracked_Transactions : constant Natural := 65_535;
+with Ada.Containers;
+with Ada.Containers.Hashed_Maps;
+with Ada.Containers.Ordered_Maps;
 
-   type Snapshot_Counts is array (Natural range <>) of Natural;
-   type Lifecycle_Array is array (Natural range <>) of Transaction_Lifecycle;
-   type Commit_Array is array (Natural range <>) of Database.Versioning.Commit_Version;
+package body Database.MVCC is
+
+   --  Transaction lifecycles and active snapshots are tracked in dynamic maps:
+   --  there is no ceiling on the number of transactions or on snapshot commit
+   --  versions, and the lifecycle map is bounded over a long-running session:
+   --
+   --    * A committed transaction's entry is reclaimed once its commit version
+   --      is below every active snapshot (see Reclaim_Settled). Safe because a
+   --      missing entry reads Unknown, which the visibility and reclamation
+   --      rules treat as committed for any persisted or in-memory row -- version
+   --      gating then gives the same answer.
+   --    * An aborted transaction is forgotten outright on rollback (see
+   --      Database.Transactions), once its work has been undone in every store
+   --      (heap before-images, in-memory finalizers, full-text rollback), so
+   --      nothing references it.
+   --    * Only active (in-flight) entries are pinned.
+   --
+   --  Steady-state size is therefore bounded by in-flight transactions plus
+   --  commits since the oldest live snapshot -- not by total history.
+
+   type Lifecycle_Entry is record
+      Life    : Transaction_Lifecycle := Unknown;
+      Version : Database.Versioning.Commit_Version := Database.Versioning.No_Version;
+   end record;
+
+   function Tx_Hash (Id : Database.Versioning.Transaction_Id)
+     return Ada.Containers.Hash_Type
+   is (Ada.Containers.Hash_Type'Mod (Id));
+
+   package Lifecycle_Maps is new Ada.Containers.Hashed_Maps
+     (Key_Type        => Database.Versioning.Transaction_Id,
+      Element_Type    => Lifecycle_Entry,
+      Hash            => Tx_Hash,
+      Equivalent_Keys => "=");
+
+   --  Active snapshots keyed by commit version; only versions with at least one
+   --  live reader are present, so the smallest key is the oldest active
+   --  snapshot (exact, unlike the former fixed-range-plus-overflow scheme).
+   package Snapshot_Maps is new Ada.Containers.Ordered_Maps
+     (Key_Type     => Database.Versioning.Commit_Version,
+      Element_Type => Natural);
+
+   --  Committed transactions indexed by their unique, monotonic commit version,
+   --  so settled entries can be reclaimed from the low end without scanning the
+   --  whole lifecycle map.
+   package Version_Tx_Maps is new Ada.Containers.Ordered_Maps
+     (Key_Type     => Database.Versioning.Commit_Version,
+      Element_Type => Database.Versioning.Transaction_Id);
 
    protected State is
       procedure Register_Snapshot (Snapshot : Database.Versioning.Commit_Version);
@@ -13,91 +59,125 @@ package body Database.MVCC is
         (Tx_Id          : Database.Versioning.Transaction_Id;
          Commit_Version : Database.Versioning.Commit_Version);
       procedure Rollback_Tx (Tx_Id : Database.Versioning.Transaction_Id);
+      procedure Forget_Tx (Tx_Id : Database.Versioning.Transaction_Id);
       function Tx_Lifecycle
         (Tx_Id : Database.Versioning.Transaction_Id) return Transaction_Lifecycle;
       function Tx_Commit_Version
         (Tx_Id : Database.Versioning.Transaction_Id) return Database.Versioning.Commit_Version;
       function Oldest return Database.Versioning.Commit_Version;
       function Any return Boolean;
+      function Live_Count return Natural;
    private
-      Counts : Snapshot_Counts (0 .. 255) := (others => 0);
-      Overflow_Count : Natural := 0;
-      Overflow_Min   : Database.Versioning.Commit_Version := Database.Versioning.No_Version;
-      Lifecycles     : Lifecycle_Array (0 .. Max_Tracked_Transactions) := (others => Unknown);
-      Commit_Versions : Commit_Array (0 .. Max_Tracked_Transactions)  :=
-        (others => Database.Versioning.No_Version);
+      procedure Reclaim_Settled;
+      Lives      : Lifecycle_Maps.Map;
+      Snapshots  : Snapshot_Maps.Map;
+      Committed_By_Version : Version_Tx_Maps.Map;
    end State;
 
    protected body State is
       procedure Register_Snapshot (Snapshot : Database.Versioning.Commit_Version) is
+         C : constant Snapshot_Maps.Cursor := Snapshots.Find (Snapshot);
       begin
-         if Snapshot <= Counts'Last then
-            Counts (Snapshot) := Counts (Snapshot) + 1;
+         if Snapshot_Maps.Has_Element (C) then
+            Snapshots.Replace_Element (C, Snapshot_Maps.Element (C) + 1);
          else
-            Overflow_Count := Overflow_Count + 1;
-            if Overflow_Min = Database.Versioning.No_Version or else Snapshot < Overflow_Min then
-               Overflow_Min := Snapshot;
-            end if;
+            Snapshots.Insert (Snapshot, 1);
          end if;
       end Register_Snapshot;
 
       procedure Release_Snapshot (Snapshot : Database.Versioning.Commit_Version) is
+         C : Snapshot_Maps.Cursor := Snapshots.Find (Snapshot);
       begin
-         if Snapshot <= Counts'Last then
-            if Counts (Snapshot) > 0 then
-               Counts (Snapshot) := Counts (Snapshot) - 1;
-            end if;
-         elsif Overflow_Count > 0 then
-            Overflow_Count := Overflow_Count - 1;
-            if Overflow_Count = 0 then
-               Overflow_Min := Database.Versioning.No_Version;
-            end if;
+         if Snapshot_Maps.Has_Element (C) then
+            declare
+               N : constant Natural := Snapshot_Maps.Element (C);
+            begin
+               if N <= 1 then
+                  Snapshots.Delete (C);
+               else
+                  Snapshots.Replace_Element (C, N - 1);
+               end if;
+            end;
          end if;
+         --  The oldest active snapshot can only rise here; drop entries that
+         --  are now settled below it.
+         Reclaim_Settled;
       end Release_Snapshot;
+
+      procedure Reclaim_Settled is
+         Bound : Database.Versioning.Commit_Version;
+      begin
+         if Snapshots.Is_Empty then
+            --  No live reader: every committed version is settled.
+            Bound := Database.Versioning.Commit_Version'Last;
+         else
+            Bound := Snapshot_Maps.Key (Snapshots.First);
+         end if;
+         while not Committed_By_Version.Is_Empty loop
+            declare
+               C  : Version_Tx_Maps.Cursor := Committed_By_Version.First;
+               V  : constant Database.Versioning.Commit_Version :=
+                 Version_Tx_Maps.Key (C);
+               Id : constant Database.Versioning.Transaction_Id :=
+                 Version_Tx_Maps.Element (C);
+            begin
+               exit when V >= Bound;
+               Committed_By_Version.Delete (C);
+               Lives.Exclude (Id);
+            end;
+         end loop;
+      end Reclaim_Settled;
 
       procedure Register_Tx (Tx_Id : Database.Versioning.Transaction_Id) is
       begin
-         if Tx_Id in Lifecycles'Range then
-            Lifecycles (Tx_Id) := Active;
-            Commit_Versions (Tx_Id) := Database.Versioning.No_Version;
-         end if;
+         Lives.Include
+           (Tx_Id, (Life => Active, Version => Database.Versioning.No_Version));
       end Register_Tx;
 
       procedure Commit_Tx
         (Tx_Id          : Database.Versioning.Transaction_Id;
          Commit_Version : Database.Versioning.Commit_Version) is
       begin
-         if Tx_Id in Lifecycles'Range then
-            Lifecycles (Tx_Id) := Committed;
-            Commit_Versions (Tx_Id) := Commit_Version;
-         end if;
+         Lives.Include (Tx_Id, (Life => Committed, Version => Commit_Version));
+         --  Index by commit version for low-end reclamation. Versions are
+         --  unique and monotonic, so Include never collides in practice.
+         Committed_By_Version.Include (Commit_Version, Tx_Id);
       end Commit_Tx;
 
       procedure Rollback_Tx (Tx_Id : Database.Versioning.Transaction_Id) is
       begin
-         if Tx_Id in Lifecycles'Range then
-            Lifecycles (Tx_Id) := Rolled_Back;
-            Commit_Versions (Tx_Id) := Database.Versioning.No_Version;
-         end if;
+         Lives.Include
+           (Tx_Id, (Life => Rolled_Back, Version => Database.Versioning.No_Version));
       end Rollback_Tx;
+
+      procedure Forget_Tx (Tx_Id : Database.Versioning.Transaction_Id) is
+      begin
+         Lives.Exclude (Tx_Id);
+      end Forget_Tx;
 
       function Tx_Lifecycle
         (Tx_Id : Database.Versioning.Transaction_Id) return Transaction_Lifecycle is
       begin
          if Tx_Id = Database.Versioning.No_Transaction then
             return Committed;
-         elsif Tx_Id in Lifecycles'Range then
-            return Lifecycles (Tx_Id);
-         else
-            return Unknown;
          end if;
+         declare
+            C : constant Lifecycle_Maps.Cursor := Lives.Find (Tx_Id);
+         begin
+            if Lifecycle_Maps.Has_Element (C) then
+               return Lifecycle_Maps.Element (C).Life;
+            else
+               return Unknown;
+            end if;
+         end;
       end Tx_Lifecycle;
 
       function Tx_Commit_Version
         (Tx_Id : Database.Versioning.Transaction_Id) return Database.Versioning.Commit_Version is
+         C : constant Lifecycle_Maps.Cursor := Lives.Find (Tx_Id);
       begin
-         if Tx_Id in Commit_Versions'Range then
-            return Commit_Versions (Tx_Id);
+         if Lifecycle_Maps.Has_Element (C) then
+            return Lifecycle_Maps.Element (C).Version;
          else
             return Database.Versioning.No_Version;
          end if;
@@ -105,26 +185,22 @@ package body Database.MVCC is
 
       function Oldest return Database.Versioning.Commit_Version is
       begin
-         for I in Counts'Range loop
-            if Counts (I) > 0 then
-               return I;
-            end if;
-         end loop;
-         return Overflow_Min;
+         if Snapshots.Is_Empty then
+            return Database.Versioning.No_Version;
+         else
+            return Snapshot_Maps.Key (Snapshots.First);
+         end if;
       end Oldest;
 
       function Any return Boolean is
       begin
-         if Overflow_Count > 0 then
-            return True;
-         end if;
-         for I in Counts'Range loop
-            if Counts (I) > 0 then
-               return True;
-            end if;
-         end loop;
-         return False;
+         return not Snapshots.Is_Empty;
       end Any;
+
+      function Live_Count return Natural is
+      begin
+         return Natural (Lives.Length);
+      end Live_Count;
    end State;
 
    procedure Register_Snapshot (Snapshot : Database.Versioning.Commit_Version) is
@@ -154,6 +230,11 @@ package body Database.MVCC is
       State.Rollback_Tx (Tx_Id);
    end Mark_Rolled_Back;
 
+   procedure Forget (Tx_Id : Database.Versioning.Transaction_Id) is
+   begin
+      State.Forget_Tx (Tx_Id);
+   end Forget;
+
    function Lifecycle
      (Tx_Id : Database.Versioning.Transaction_Id) return Transaction_Lifecycle is
    begin
@@ -182,4 +263,9 @@ package body Database.MVCC is
    begin
       return Oldest = Database.Versioning.No_Version or else Version < Oldest;
    end Safe_Reclaim_Version;
+
+   function Tracked_Transaction_Count return Natural is
+   begin
+      return State.Live_Count;
+   end Tracked_Transaction_Count;
 end Database.MVCC;

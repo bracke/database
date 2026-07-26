@@ -1,12 +1,10 @@
 --  Table schema metadata with stable table ids, schema versions, and column ids.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Types;
 with Database.Indexes;
 
    --  Public nested package `Database.Schema`.
 package Database.Schema is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Public type `Column`.
    type Column is record

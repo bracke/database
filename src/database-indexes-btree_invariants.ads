@@ -40,7 +40,7 @@ is
       Keys         : Key_Array (1 .. Max_Keys_Per_Node) := (others => 0);
       Children     : Page_Array (1 .. Max_Children_Per_Node) := (others => No_Page);
       Next_Leaf    : Page_Id_Type := No_Page;
-      Previous_Leaf: Page_Id_Type := No_Page;
+      Previous_Leaf : Page_Id_Type := No_Page;
    end record;
 
    --  Node_Array defines a public database type used by this package.

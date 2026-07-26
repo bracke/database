@@ -1,10 +1,4 @@
-with Database.Date_Time;
-with Database.Schema;
-with Database.Types;
-with Database.Values;
-with Database.UUIDs;
 with Ada.Strings.Wide_Wide_Unbounded;
-with Interfaces;
 
 package body Database.Randomized is
    use type Interfaces.Unsigned_64;
@@ -112,7 +106,7 @@ package body Database.Randomized is
    end Next_Date_Time;
 
    function Next_UUID (G : in out Generator) return Database.UUIDs.UUID is
-      U : Database.UUIDs.UUID := (others => 0);
+      U : Database.UUIDs.UUID := [others => 0];
    begin
       for I in U'Range loop
          U (I) := Database.UUIDs.Byte (Next_Natural (G, 256));
@@ -127,7 +121,7 @@ package body Database.Randomized is
    begin
       return
         (Coefficient => Long_Long_Integer (Integer (Next_Natural (G, 2_000_001)) - 1_000_000),
-         Scale       => Natural (Next_Natural (G, 6)));
+         Scale       => Next_Natural (G, 6));
    end Next_Decimal;
 
    function Next_Enum_Literal (G : in out Generator) return Wide_Wide_String is

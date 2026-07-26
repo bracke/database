@@ -1,11 +1,7 @@
 --  Database value type descriptors, exact decimal values, and logical type metadata.
-with Ada.Strings.Wide_Wide_Unbounded;
-with Database.Date_Time;
-with Database.UUIDs;
 
 --  Core logical type definitions for schemas, values, and serialized fields.
 package Database.Types is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Value_Kind defines a public database type used by this package.
    type Value_Kind is

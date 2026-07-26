@@ -1,24 +1,13 @@
-with Database.Rows;
-with Database.Schema;
-with Database.Transactions;
-with Database.Predicates;
-with Database.Status;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Ada.Containers;
-with Ada.Containers.Indefinite_Vectors;
 with Database.Catalog;
 with Database.Constraints;
-with Database.Storage.Table_Heap;
+with Database.Memory_Store;
 with Database.Storage.Pages;
-with Database.Values;
-with Database.Types;
-with Database.Indexes;
 with Database.Indexes.BTree;
-with Database.Queries;
 with Database.Cursors;
 with Database.Versioning;
 with Database.Visibility;
-with Database.Expressions;
 with Database.Foreign_Keys;
 with Database.Check_Constraints;
 with Database.Generated_Columns;
@@ -30,15 +19,16 @@ package body Database.Tables is
    use type Database.Foreign_Keys.Foreign_Key_Action;
    package body Typed is
       use type Database.Types.Value_Kind;
-      use type Database.Status.Status_Code;
       use type Ada.Containers.Count_Type;
-      type Versioned_Row is record
-         Item : Row_Type;
-         Metadata : Database.Versioning.Row_Version_Metadata;
-      end record;
 
-      package All_Rows is new Ada.Containers.Indefinite_Vectors (Natural, Versioned_Row);
-      Memory : All_Rows.Vector;
+      --  In-memory rows live in the central Database.Memory_Store, keyed by the
+      --  database state key and table id, so aborted transactions can be
+      --  finalized directly by Database.Transactions.Rollback.
+      function Memory_Key
+        (DB : Database.Handle; S : Database.Schema.Table_Schema)
+         return Database.Memory_Store.Table_Key
+      is (State_Key => Database.Catalog_State_Key (DB),
+          Table_Id  => S.Table_Id);
 
       function Future_Commit_Version (DB : Database.Handle) return Natural is
       begin
@@ -47,9 +37,9 @@ package body Database.Tables is
 
       function Visible_To
         (Tx : Database.Transactions.Transaction;
-         V  : Versioned_Row) return Boolean is
+         M  : Database.Versioning.Row_Version_Metadata) return Boolean is
       begin
-         return Database.Visibility.Is_Visible (Tx, V.Metadata);
+         return Database.Visibility.Is_Visible (Tx, M);
       end Visible_To;
 
       function Read_Tx_Ok (Tx : Database.Transactions.Transaction) return Boolean is
@@ -73,6 +63,7 @@ package body Database.Tables is
          Schema : Database.Schema.Table_Schema) return Database.Schema.Table_Schema is
          S : Database.Schema.Table_Schema := Schema;
          R : Database.Status.Result;
+         pragma Unreferenced (DB);
       begin
          R := Database.Catalog.Find_By_Name
            (Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (Schema.Name), S);
@@ -107,7 +98,8 @@ package body Database.Tables is
                          /= Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (B.Name)
                        or else A.Kind /= B.Kind
                        or else A.Nullable /= B.Nullable
-                       or else A.Primary_Key /= B.Primary_Key then
+                       or else A.Primary_Key /= B.Primary_Key
+                     then
                         return Database.Status.Failure (Database.Status.Schema_Mismatch,
                           "registered table schema is incompatible");
                      end if;
@@ -186,27 +178,6 @@ package body Database.Tables is
          end loop;
          return (others => <>);
       end Matching_Index;
-
-      function Catalog_Row_Id
-        (S         : Database.Schema.Table_Schema;
-         Row_Value : Database.Rows.Row) return Natural is
-         Rows : constant Database.Foreign_Keys.Row_Vectors.Vector  :=
-           Database.Catalog.Rows_For_Table (S.Table_Id);
-         Wanted : constant Key_Type := Key_Of (From_Row (Row_Value));
-      begin
-         if Rows.Length = 0 then
-            return 0;
-         end if;
-         for I in 0 .. Natural (Rows.Length) - 1 loop
-            if Key_Of (From_Row (Rows.Element (I))) = Wanted then
-               return I + 1;
-            end if;
-         end loop;
-         return 0;
-      exception
-         when others =>
-            return 0;
-      end Catalog_Row_Id;
 
       function Indexable_Predicate
         (Schema : Database.Schema.Table_Schema;
@@ -352,7 +323,7 @@ package body Database.Tables is
          Predicate : Database.Predicates.Predicate;
          C : in out Cursor) return Database.Status.Result is
          Found : Boolean := False;
-         Chosen : Database.Predicates.Predicate := Indexable_Predicate (Schema, Predicate, Found);
+         Chosen : constant Database.Predicates.Predicate := Indexable_Predicate (Schema, Predicate, Found);
          IX : Database.Indexes.Index_Metadata;
          Refs : Database.Indexes.BTree.Row_Reference_Vectors.Vector;
          Row_Value : Database.Rows.Row;
@@ -604,9 +575,9 @@ package body Database.Tables is
                declare K : constant Database.Values.Value := Index_Value  (S,
                  C.Row,
                  Column);
-                 Ref : constant Database.Indexes.Row_Reference := (Page => C.Current_Page,
+                  Ref : constant Database.Indexes.Row_Reference := (Page => C.Current_Page,
                  Slot_Offset => C.Slot_Offset);
-                 begin
+               begin
                   R := Database.Indexes.Validate_Secondary_Key (K);
                   if not Database.Status.Is_Ok (R) then
                      return R;
@@ -619,7 +590,7 @@ package body Database.Tables is
                              "duplicate value for unique index");
                         elsif R.Code /= Database.Status.Key_Not_Found then
                            return R;
-                           end if;
+                        end if;
                         R := Database.Indexes.BTree.Insert (Tx, DB.File, DB.Page_Allocator, Root, K, Ref);
                      else
                         R := Database.Indexes.BTree.Insert_Duplicate (Tx, DB.File, DB.Page_Allocator, Root, K, Ref);
@@ -692,9 +663,9 @@ package body Database.Tables is
             declare K : constant Database.Values.Value := Index_Value  (S,
               C.Row,
               Target.Column_Id);
-              Ref : constant Database.Indexes.Row_Reference := (Page => C.Current_Page,
+               Ref : constant Database.Indexes.Row_Reference := (Page => C.Current_Page,
               Slot_Offset => C.Slot_Offset);
-              begin
+            begin
                if K.Kind /= Database.Types.Null_Value then
                   if Target.Unique then
                      R := Database.Indexes.BTree.Find (DB.File, Root, K, Existing);
@@ -703,7 +674,7 @@ package body Database.Tables is
                           "duplicate value for unique index");
                      elsif R.Code /= Database.Status.Key_Not_Found then
                         return R;
-                        end if;
+                     end if;
                      R := Database.Indexes.BTree.Insert (Tx, DB.File, DB.Page_Allocator, Root, K, Ref);
                   else
                      R := Database.Indexes.BTree.Insert_Duplicate (Tx, DB.File, DB.Page_Allocator, Root, K, Ref);
@@ -844,7 +815,6 @@ package body Database.Tables is
          Root  : Database.Storage.Pages.Page_Id := Database.Storage.Pages.Page_Id (S.Primary_Index_Root);
          Key   : Database.Values.Value;
          Ref   : Database.Indexes.Row_Reference;
-         Existing : Database.Indexes.Row_Reference;
       begin
          if not Write_Tx_Ok (Tx) then
             return Read_Only_Write_Error;
@@ -888,8 +858,7 @@ package body Database.Tables is
                   declare K : constant Database.Values.Value := Index_Value  (S,
                     Row_Value,
                     IX.Column_Id);
-                    Existing_Secondary : Database.Indexes.Row_Reference;
-                    begin
+                  begin
                      V := Database.Indexes.Validate_Secondary_Key (K);
                      if not Database.Status.Is_Ok (V) then
                         return V;
@@ -922,8 +891,7 @@ package body Database.Tables is
                declare K : constant Database.Values.Value := Index_Value  (S,
                  Row_Value,
                  IX.Column_Id);
-                 Existing_Secondary : Database.Indexes.Row_Reference;
-                 begin
+               begin
                   V := Database.Indexes.Validate_Secondary_Key (K);
                   if not Database.Status.Is_Ok (V) then
                      return V;
@@ -967,18 +935,25 @@ package body Database.Tables is
             end if;
             return V;
          else
-            for Existing_Item of Memory loop
-               if Visible_To (Tx, Existing_Item)
-                 and then Key_Of (Existing_Item.Item) = Key_Of (Stored_Item)
-               then
-                  return Database.Status.Failure (Database.Status.Duplicate_Key, "duplicate primary key");
-               end if;
-            end loop;
-            Memory.Append
-              (Versioned_Row'
-                 (Item     => Stored_Item,
-                  Metadata => Database.Versioning.New_Uncommitted
-                    (Database.Transactions.Id (Tx), Future_Commit_Version (DB))));
+            declare
+               MK  : constant Database.Memory_Store.Table_Key := Memory_Key (DB, S);
+               SRs : constant Database.Memory_Store.Stored_Row_Array :=
+                 Database.Memory_Store.Snapshot (MK);
+            begin
+               for I in SRs'Range loop
+                  if Visible_To (Tx, SRs (I).Metadata)
+                    and then Key_Of (From_Row (SRs (I).Row)) = Key_Of (Stored_Item)
+                  then
+                     return Database.Status.Failure
+                       (Database.Status.Duplicate_Key, "duplicate primary key");
+                  end if;
+               end loop;
+               Database.Memory_Store.Append
+                 (MK,
+                  (Row      => Row_Value,
+                   Metadata => Database.Versioning.New_Uncommitted
+                     (Database.Transactions.Id (Tx), Future_Commit_Version (DB))));
+            end;
             Database.Catalog.Register_Row (S.Table_Id, Row_Value);
             Database.Full_Text.Maintain_Insert  (Tx,
               S,
@@ -994,7 +969,7 @@ package body Database.Tables is
          Schema : Database.Schema.Table_Schema;
          Key    : Key_Type;
          Item   : out Row_Type) return Database.Status.Result is
-         S : Database.Schema.Table_Schema := Current_Schema (DB, Schema);
+         S : constant Database.Schema.Table_Schema := Current_Schema (DB, Schema);
          Key_Value_For_Find : constant Database.Values.Value := Key_Value (Key);
          Ref : Database.Indexes.Row_Reference;
          Row_Value : Database.Rows.Row;
@@ -1026,14 +1001,24 @@ package body Database.Tables is
             Item := From_Row (Row_Value);
             return Database.Status.Success;
          else
-            for Existing_Item of Memory loop
-               if Visible_To (Tx, Existing_Item)
-                 and then Key_Of (Existing_Item.Item) = Key
-               then
-                  Item := Existing_Item.Item;
-                  return Database.Status.Success;
-               end if;
-            end loop;
+            declare
+               MK  : constant Database.Memory_Store.Table_Key := Memory_Key (DB, S);
+               SRs : constant Database.Memory_Store.Stored_Row_Array :=
+                 Database.Memory_Store.Snapshot (MK);
+            begin
+               for I in SRs'Range loop
+                  declare
+                     Row_Item : constant Row_Type := From_Row (SRs (I).Row);
+                  begin
+                     if Visible_To (Tx, SRs (I).Metadata)
+                       and then Key_Of (Row_Item) = Key
+                     then
+                        Item := Row_Item;
+                        return Database.Status.Success;
+                     end if;
+                  end;
+               end loop;
+            end;
             return Database.Status.Failure (Database.Status.Not_Found, "row not found");
          end if;
       end Find;
@@ -1043,7 +1028,7 @@ package body Database.Tables is
          DB     : in out Database.Handle;
          Schema : Database.Schema.Table_Schema;
          Key    : Key_Type) return Database.Status.Result is
-         S : Database.Schema.Table_Schema := Current_Schema (DB, Schema);
+         S : constant Database.Schema.Table_Schema := Current_Schema (DB, Schema);
          K : constant Database.Values.Value := Key_Value (Key);
          Ref : Database.Indexes.Row_Reference;
          C : Database.Storage.Table_Heap.Heap_Cursor;
@@ -1082,31 +1067,35 @@ package body Database.Tables is
             Database.Catalog.Remove_Row (S.Table_Id, S, Row_Value);
             return Database.Status.Success;
          else
-            if Memory.Length > 0 then
-               for I in 0 .. Natural (Memory.Length) - 1 loop
-                  declare
-                     Existing_Item : Versioned_Row := Memory.Element (I);
-                  begin
-                     if Visible_To (Tx, Existing_Item)
-                       and then Key_Of (Existing_Item.Item) = Key
-                     then
-                        Row_Value := To_Row (Existing_Item.Item);
+            declare
+               MK  : constant Database.Memory_Store.Table_Key := Memory_Key (DB, S);
+               SRs : constant Database.Memory_Store.Stored_Row_Array :=
+                 Database.Memory_Store.Snapshot (MK);
+            begin
+               for I in SRs'Range loop
+                  if Visible_To (Tx, SRs (I).Metadata)
+                    and then Key_Of (From_Row (SRs (I).Row)) = Key
+                  then
+                     declare
+                        SR : Database.Memory_Store.Stored_Row := SRs (I);
+                     begin
+                        Row_Value := SR.Row;
                         R := Apply_Referential_Delete_Actions (Tx, DB, S, Row_Value);
                         if not Database.Status.Is_Ok (R) then
                            return R;
                         end if;
                         Database.Versioning.Mark_Deleted
-                          (Existing_Item.Metadata,
+                          (SR.Metadata,
                            Database.Transactions.Id (Tx),
                            Future_Commit_Version (DB));
-                        Memory.Replace_Element (I, Existing_Item);
+                        Database.Memory_Store.Put (MK, I, SR);
                         Database.Full_Text.Maintain_Delete (Tx, S, Row_Value);
                         Database.Catalog.Remove_Row (S.Table_Id, S, Row_Value);
                         return Database.Status.Success;
-                     end if;
-                  end;
+                     end;
+                  end if;
                end loop;
-            end if;
+            end;
             return Database.Status.Failure (Database.Status.Not_Found, "row not found");
          end if;
       end Delete;
@@ -1170,13 +1159,20 @@ package body Database.Tables is
             end loop;
             return R;
          else
-            for Item of Memory loop
-               if Visible_To (Tx, Item)
-                 and then Database.Predicates.Matches (Predicate, To_Row (Item.Item))
-               then
-                  C.In_Memory_Rows.Append (Item.Item);
-               end if;
-            end loop;
+            declare
+               MK  : constant Database.Memory_Store.Table_Key :=
+                 Memory_Key (DB, Current_Schema (DB, Schema));
+               SRs : constant Database.Memory_Store.Stored_Row_Array :=
+                 Database.Memory_Store.Snapshot (MK);
+            begin
+               for I in SRs'Range loop
+                  if Visible_To (Tx, SRs (I).Metadata)
+                    and then Database.Predicates.Matches (Predicate, SRs (I).Row)
+                  then
+                     C.In_Memory_Rows.Append (From_Row (SRs (I).Row));
+                  end if;
+               end loop;
+            end;
             if C.In_Memory_Rows.Length > 0 then
                C.Current := C.In_Memory_Rows.Element (0);
                C.Has_Current := True;

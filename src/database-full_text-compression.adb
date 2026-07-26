@@ -1,8 +1,6 @@
 with Ada.Containers;
 
 package body Database.Full_Text.Compression is
-   use type Ada.Containers.Count_Type;
-   use type Database.Storage.Pages.Byte;
 
    procedure Append_Varint
      (Bytes : in out Byte_Vectors.Vector;

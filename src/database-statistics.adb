@@ -1,5 +1,5 @@
-with Database.Status;
 
+with Database.Diagnostics;
 package body Database.Statistics is
    function Table_Stats
      (Tx     : in out Database.Transactions.Transaction;

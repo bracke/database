@@ -1,11 +1,19 @@
-with "../../database.gpr";
+with "config/database_example_queries_config.gpr";
+
 project Queries is
-   for Source_Dirs use ("src");
-   for Main use ("main.adb");
-   for Object_Dir use "obj";
+   for Source_Dirs use ("src", "config");
+   for Object_Dir use "obj/" & Database_Example_Queries_Config.Build_Profile;
+   for Create_Missing_Dirs use "True";
    for Exec_Dir use "bin";
+   for Main use ("main.adb");
 
    package Compiler is
-      for Default_Switches ("Ada") use ("-gnat2022", "-gnata", "-gnatVa", "-gnatW8");
+      for Default_Switches ("Ada") use
+        Database_Example_Queries_Config.Ada_Compiler_Switches
+        & ("-gnat2022", "-gnatyM120", "-gnata", "-gnatVa", "-gnatW8");
    end Compiler;
+
+   package Binder is
+      for Switches ("Ada") use ("-Es"); --  Symbolic traceback
+   end Binder;
 end Queries;

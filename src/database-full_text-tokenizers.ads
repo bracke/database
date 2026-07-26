@@ -1,12 +1,10 @@
 --  Unicode-aware tokenization support for Ada-native full-text indexes.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Extension_Metadata;
 with Database.Status;
 
 --  Public specification for this database subsystem.
 package Database.Full_Text.Tokenizers is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Tokenizer_Kind enumerates the supported values for this database abstraction.
    type Tokenizer_Kind is (Unicode_Whitespace, Custom_Tokenizer);

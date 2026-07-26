@@ -1,5 +1,4 @@
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Queries;
 with Database.Rows;
 use Database.Rows;
@@ -8,7 +7,6 @@ with Database.Transactions;
 
 --  Materialized view metadata and refresh support.
 package Database.Materialized_Views is
-   use Ada.Strings.Wide_Wide_Unbounded;
    --  Materialized_View_Id defines a public database type used by this package.
    type Materialized_View_Id is new Natural;
    --  Row_Vectors stores ordered row values for this package.

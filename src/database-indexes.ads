@@ -1,5 +1,4 @@
 --  Index metadata, key comparison, and index validation helpers.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Ada.Containers.Indefinite_Vectors;
 with Database.Status;
 with Database.Storage.Pages;
@@ -9,7 +8,6 @@ with Database.Values;
 
    --  Public nested package `Database.Indexes`.
 package Database.Indexes is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Public type `Index_Id`.
    type Index_Id is new Natural;

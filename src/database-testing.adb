@@ -2,21 +2,16 @@ with Ada.Streams;
 with Database.Crash_Harness;
 with Database.Crypto;
 with Database.Crypto_Checks;
-with Database.Fault_Injection;
 with Database.Fuzzing;
 with Database.Invariant_Checks;
 with Database.Keys;
 with Database.Log_Sequence;
 with Database.Metrics;
-with Database.Status;
 with Database.Storage.File_IO;
 with Database.Storage.Pages;
 with Database.WAL;
 
 package body Database.Testing is
-   use type Database.Status.Status_Code;
-   use type Database.Storage.Pages.Byte_Array;
-   use type Database.Crypto.Byte;
 
    function Make_Report
      (Status       : Database.Status.Result := Database.Status.Success;
@@ -156,7 +151,7 @@ package body Database.Testing is
       Records := Records + 1;
 
       Database.Storage.Pages.Initialize (P, 2, Database.Storage.Pages.Table_Heap_Page);
-      Database.Storage.Pages.Set_Payload (P, (0 => 16#5A#, 1 => 16#A5#));
+      Database.Storage.Pages.Set_Payload (P, [0 => 16#5A#, 1 => 16#A5#]);
       R := Database.WAL.Append_Page_Frame (W, 91_001, P, L);
       if Database.Status.Is_Ok (R) then
          R := Database.WAL.Append_Commit (W, 91_001, 1, L);
@@ -217,7 +212,7 @@ package body Database.Testing is
    end Verify_WAL_Replay_Convergence;
 
    function Verify_Page_Corruption_Rejected return Recovery_Report is
-      Data : Ada.Streams.Stream_Element_Array (1 .. 3) := (others => 0);
+      Data : constant Ada.Streams.Stream_Element_Array (1 .. 3) := [others => 0];
       R : constant Database.Fuzzing.Fuzz_Result  :=
         Database.Fuzzing.Fuzz_Input (Database.Fuzzing.Page_Parser, Data);
    begin
@@ -236,10 +231,10 @@ package body Database.Testing is
       Key : constant Database.Keys.Encryption_Key  :=
         Database.Keys.Derive_Key ("tamper", Database.Keys.Default_Salt);
       Nonce : constant Database.Crypto.Nonce := Database.Crypto.Generate_Nonce (7, 11);
-      AAD : constant Database.Crypto.Byte_Array (0 .. 1) := (16#44#, 16#42#);
-      Plain : constant Database.Crypto.Byte_Array (0 .. 3) := (1, 2, 3, 4);
-      Cipher : Database.Crypto.Byte_Array (0 .. 3) := (others => 0);
-      Tag : Database.Crypto.Authentication_Tag := (others => 0);
+      AAD : constant Database.Crypto.Byte_Array (0 .. 1) := [16#44#, 16#42#];
+      Plain : constant Database.Crypto.Byte_Array (0 .. 3) := [1, 2, 3, 4];
+      Cipher : Database.Crypto.Byte_Array (0 .. 3) := [others => 0];
+      Tag : Database.Crypto.Authentication_Tag := [others => 0];
       R : Database.Status.Result;
       Check : Database.Crypto_Checks.Check_Result;
    begin

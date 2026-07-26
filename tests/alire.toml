@@ -21,4 +21,15 @@ gnat_native = "=15.2.1"
 database = "*"
 
 [[pins]]
-database = { path='..' }
+database = { path = ".." }
+
+# database depends on cryptolib, but Alire honours pins only in the root crate,
+# so every root that builds database must pin it too.
+[[pins]]
+cryptolib = { path = "../../cryptolib" }
+
+# Build dependencies in the development profile (-Og) too, not the default
+# release (-O3), so this root and the parent share database object files rather
+# than forcing each other into full rebuilds.
+[build-profiles]
+"*" = "development"

@@ -131,7 +131,7 @@ package body Database.Backup is
       end if;
       if Encrypted then
          declare
-            Empty : constant Database.Crypto.Byte_Array (0 .. 0) := (others => 0);
+            Empty : constant Database.Crypto.Byte_Array (0 .. 0) := [others => 0];
          begin
             R := Database.Encrypted_Persistence.Write_Artifact
               (Database.Backup_Format.Encrypted_Manifest_Image_Path (Destination),

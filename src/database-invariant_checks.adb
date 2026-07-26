@@ -1,30 +1,20 @@
 with Database.Metrics;
-with Database.Status;
-with Database.Storage.Pages;
 with Database.Storage.Free_List;
 with Database.Storage.Table_Heap;
-with Database.Storage.File_IO;
-with Database.Backup_Format;
-with Database.Indexes.BTree;
-with Database.WAL;
-with Database.Versioning;
-with Database.MVCC;
 with Database.Catalog;
 with Database.Constraints;
-with Database.Rows;
 with Database.Foreign_Keys;
-with Database.Schema;
 with Database.Indexes;
 with Database.Full_Text;
 with Database.Full_Text.Indexes;
-with Ada.Strings.Wide_Wide_Unbounded;
 
+with Database.Indexes.BTree;
+with Database.WAL;
+with Database.MVCC;
 package body Database.Invariant_Checks is
    use type Database.Full_Text.Indexes.Full_Text_Index_Id;
-   use type Database.Storage.Pages.Page_Id;
    use type Database.Storage.Pages.Page_Kind;
    use type Database.Log_Sequence.Log_Sequence_Number;
-   use type Database.Versioning.Commit_Version;
    function Pass (Items : Natural := 0) return Check_Report is
    begin
       return (Result => Database.Status.Success, Checked_Items => Items, Failed_Items => 0);
@@ -572,7 +562,6 @@ package body Database.Invariant_Checks is
 
    function Validate_Database
      (DB : in out Database.Handle) return Check_Report is
-      use Ada.Strings.Wide_Wide_Unbounded;
       Report : Check_Report := Pass (0);
       R      : Database.Status.Result;
    begin
@@ -616,109 +605,109 @@ package body Database.Invariant_Checks is
 
       --  Catalog tables and index metadata.
       if Database.Catalog.Table_Count > 0 then
-      for T in 0 .. Database.Catalog.Table_Count - 1 loop
-         declare
-            S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (T);
-            Seen_Primary : Natural := 0;
-         begin
-            if S.Table_Id = 0 or else Length (S.Name) = 0 then
-               return Fail (Catalog_Metadata, "catalog table has invalid identity metadata");
-            end if;
-            if Database.Schema.Column_Count (S) = 0 then
-               return Fail (Catalog_Metadata, "catalog table has no columns");
-            end if;
-            Report := Combine (Report, Pass (1));
-
-            if Database.Schema.Column_Count (S) > 0 then
-            for C in 0 .. Database.Schema.Column_Count (S) - 1 loop
-               declare
-                  Col : constant Database.Schema.Column := S.Columns.Element (C);
-               begin
-                  if Length (Col.Name) = 0 then
-                     return Fail (Catalog_Metadata, "catalog column has invalid identity metadata");
-                  end if;
-                  if Col.Primary_Key then
-                     Seen_Primary := Seen_Primary + 1;
-                  end if;
-                  if C > 0 then
-                     for D in 0 .. C - 1 loop
-                        if S.Columns.Element (D).Id = Col.Id then
-                           return Fail (Catalog_Metadata, "catalog column ids are not unique");
-                        end if;
-                     end loop;
-                  end if;
-                  Report := Combine (Report, Pass (1));
-               end;
-            end loop;
-            end if;
-
-            if Seen_Primary /= Database.Schema.Primary_Key_Column_Count (S) then
-               return Fail (Catalog_Metadata, "primary-key column metadata is inconsistent");
-            end if;
-
-            if Database.Backend (DB) = Database.Persistent_Backend
-              and then S.Heap_First_Page /= 0
-            then
-               Report := Combine
-                 (Report,
-                  Validate_Linked_Page_Chain
-                    (DB.File,
-                     Database.Storage.Pages.Page_Id (S.Heap_First_Page),
-                     Database.Storage.Pages.Table_Heap_Page));
-               if not Database.Status.Is_Ok (Report.Result) then
-                  return Report;
-               end if;
-
-               Report := Combine
-                 (Report,
-                  Validate_Table_Heap_Deep
-                    (DB.File,
-                     Database.Storage.Pages.Page_Id (S.Heap_First_Page),
-                     S));
-               if not Database.Status.Is_Ok (Report.Result) then
-                  return Report;
-               end if;
-            end if;
-
+         for T in 0 .. Database.Catalog.Table_Count - 1 loop
             declare
-               Rows : constant Database.Foreign_Keys.Row_Vectors.Vector  :=
-                 Database.Catalog.Rows_For_Table (S.Table_Id);
+               S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (T);
+               Seen_Primary : Natural := 0;
             begin
-               for Row of Rows loop
-                  R := Database.Constraints.Validate_Row (S, Row);
-                  if not Database.Status.Is_Ok (R) then
-                     return
-                       (Result => Database.Status.Failure
-                          (Database.Status.Invariant_Failure,
-                           "catalog row registry contains a row that violates its schema"),
-                        Checked_Items => Report.Checked_Items + 1,
-                        Failed_Items  => 1);
-                  end if;
-                  Report := Combine (Report, Pass (1));
-               end loop;
-            end;
-
-            for IX of S.Indexes loop
-               R := Database.Indexes.Validate_Index_Metadata (IX);
-               if not Database.Status.Is_Ok (R) then
-                  return
-                    (Result => Database.Status.Failure
-                       (Database.Status.Invariant_Failure, "catalog index metadata is invalid"),
-                     Checked_Items => Report.Checked_Items + 1,
-                     Failed_Items  => 1);
+               if S.Table_Id = 0 or else Length (S.Name) = 0 then
+                  return Fail (Catalog_Metadata, "catalog table has invalid identity metadata");
+               end if;
+               if Database.Schema.Column_Count (S) = 0 then
+                  return Fail (Catalog_Metadata, "catalog table has no columns");
                end if;
                Report := Combine (Report, Pass (1));
-               if Database.Backend (DB) = Database.Persistent_Backend
-                 and then IX.Root_Page /= Database.Storage.Pages.Invalid_Page_Id
-               then
-                  Report := Combine (Report, Validate_BTree (DB.File, IX.Root_Page));
-                  if not Database.Status.Is_Ok (Report.Result) then
-                     return Report;
-                  end if;
+
+               if Database.Schema.Column_Count (S) > 0 then
+                  for C in 0 .. Database.Schema.Column_Count (S) - 1 loop
+                     declare
+                        Col : constant Database.Schema.Column := S.Columns.Element (C);
+                     begin
+                        if Length (Col.Name) = 0 then
+                           return Fail (Catalog_Metadata, "catalog column has invalid identity metadata");
+                        end if;
+                        if Col.Primary_Key then
+                           Seen_Primary := Seen_Primary + 1;
+                        end if;
+                        if C > 0 then
+                           for D in 0 .. C - 1 loop
+                              if S.Columns.Element (D).Id = Col.Id then
+                                 return Fail (Catalog_Metadata, "catalog column ids are not unique");
+                              end if;
+                           end loop;
+                        end if;
+                        Report := Combine (Report, Pass (1));
+                     end;
+                  end loop;
                end if;
-            end loop;
-         end;
-      end loop;
+
+                  if Seen_Primary /= Database.Schema.Primary_Key_Column_Count (S) then
+                     return Fail (Catalog_Metadata, "primary-key column metadata is inconsistent");
+                  end if;
+
+                  if Database.Backend (DB) = Database.Persistent_Backend
+                 and then S.Heap_First_Page /= 0
+                  then
+                     Report := Combine
+                    (Report,
+                     Validate_Linked_Page_Chain
+                       (DB.File,
+                        Database.Storage.Pages.Page_Id (S.Heap_First_Page),
+                        Database.Storage.Pages.Table_Heap_Page));
+                     if not Database.Status.Is_Ok (Report.Result) then
+                        return Report;
+                     end if;
+
+                     Report := Combine
+                    (Report,
+                     Validate_Table_Heap_Deep
+                       (DB.File,
+                        Database.Storage.Pages.Page_Id (S.Heap_First_Page),
+                        S));
+                     if not Database.Status.Is_Ok (Report.Result) then
+                        return Report;
+                     end if;
+                  end if;
+
+                  declare
+                     Rows : constant Database.Foreign_Keys.Row_Vectors.Vector  :=
+                    Database.Catalog.Rows_For_Table (S.Table_Id);
+                  begin
+                     for Row of Rows loop
+                        R := Database.Constraints.Validate_Row (S, Row);
+                        if not Database.Status.Is_Ok (R) then
+                           return
+                             (Result => Database.Status.Failure
+                                (Database.Status.Invariant_Failure,
+                                 "catalog row registry contains a row that violates its schema"),
+                              Checked_Items => Report.Checked_Items + 1,
+                              Failed_Items  => 1);
+                        end if;
+                        Report := Combine (Report, Pass (1));
+                     end loop;
+                  end;
+
+                  for IX of S.Indexes loop
+                     R := Database.Indexes.Validate_Index_Metadata (IX);
+                     if not Database.Status.Is_Ok (R) then
+                        return
+                       (Result => Database.Status.Failure
+                          (Database.Status.Invariant_Failure, "catalog index metadata is invalid"),
+                        Checked_Items => Report.Checked_Items + 1,
+                        Failed_Items  => 1);
+                     end if;
+                     Report := Combine (Report, Pass (1));
+                     if Database.Backend (DB) = Database.Persistent_Backend
+                    and then IX.Root_Page /= Database.Storage.Pages.Invalid_Page_Id
+                     then
+                        Report := Combine (Report, Validate_BTree (DB.File, IX.Root_Page));
+                        if not Database.Status.Is_Ok (Report.Result) then
+                           return Report;
+                        end if;
+                     end if;
+                  end loop;
+            end;
+         end loop;
       end if;
 
       --  Full-text metadata and posting structures reachable from the catalog.

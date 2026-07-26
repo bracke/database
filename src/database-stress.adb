@@ -1,4 +1,3 @@
-with Database.Status;
 with Ada.Characters.Conversions;
 with Ada.Directories;
 with Database.Metrics;
@@ -20,11 +19,9 @@ with Database.Backup;
 with Database.Backup_Format;
 with Database.Restore;
 with Database.Export;
-with Database.Import;
 with Database.Encryption;
 with Database.Testing;
 with Database.Keys;
-with Ada.Strings.Wide_Wide_Unbounded;
 
 package body Database.Stress is
    use type Ada.Directories.File_Kind;
@@ -46,7 +43,7 @@ package body Database.Stress is
 
    type App_Row is record
       Id    : Integer := 0;
-      Name  : Wide_Wide_String (1 .. 16) := (others => ' ');
+      Name  : Wide_Wide_String (1 .. 16) := [others => ' '];
       Count : Integer := 0;
    end record;
 
@@ -60,11 +57,10 @@ package body Database.Stress is
    end To_Row;
 
    function From_Row (Row : Database.Rows.Row) return App_Row is
-      use Ada.Strings.Wide_Wide_Unbounded;
       Text : constant Wide_Wide_String := To_Wide_Wide_String (Database.Rows.Get (Row, 1).Text);
       Item : App_Row  :=
         (Id => Database.Rows.Get (Row, 0).Int,
-         Name => (others => ' '),
+         Name => [others => ' '],
          Count => Database.Rows.Get (Row, 2).Int);
    begin
       for I in 1 .. Integer'Min (16, Text'Length) loop
@@ -83,7 +79,6 @@ package body Database.Stress is
    procedure Run_Application_Workload
      (Options : Workload_Options;
       Report  : in out Stress_Report) is
-      use Ada.Strings.Wide_Wide_Unbounded;
       Path        : constant Wide_Wide_String  :=
         "app_stress_" & Natural_Image (Options.Seed) & ".db";
       Backup_Path : constant Wide_Wide_String := Path & ".backup";
@@ -98,7 +93,7 @@ package body Database.Stress is
       G : Database.Randomized.Generator;
       Found : App_Row;
       Cursor : App_Table.Cursor;
-      Key : Database.Keys.Encryption_Key  :=
+      Key : constant Database.Keys.Encryption_Key  :=
         Database.Keys.Derive_Key ("stress", Database.Keys.Default_Salt);
    begin
       Database.Randomized.Reset (G, Options.Seed);
@@ -381,7 +376,7 @@ package body Database.Stress is
                   2,
                   Database.Storage.Pages.Table_Heap_Page);
                Database.Storage.Pages.Set_Payload
-                 (Page, (0 => Database.Storage.Pages.Byte (Database.Randomized.Next_Natural (G, 256))));
+                 (Page, [0 => Database.Storage.Pages.Byte (Database.Randomized.Next_Natural (G, 256))]);
                SR := Database.WAL.Append_Page_Frame (W, Tx_Id, Page, LSN);
                if not Database.Status.Is_Ok (SR) then
                   R.Verification_Failures := R.Verification_Failures + 1;
@@ -420,10 +415,10 @@ package body Database.Stress is
                     Database.Randomized.Next_Index_Definition (G, 4);
                   pragma Unreferenced (Def);
                   Keys : constant Database.Invariant_Checks.Integer_Array (1 .. 4)  :=
-                    (1 => Integer (Database.Randomized.Next_Natural (G, 10)),
+                    [1 => Integer (Database.Randomized.Next_Natural (G, 10)),
                      2 => Integer (Database.Randomized.Next_Natural (G, 10)) + 10,
                      3 => Integer (Database.Randomized.Next_Natural (G, 10)) + 20,
-                     4 => Integer (Database.Randomized.Next_Natural (G, 10)) + 30);
+                     4 => Integer (Database.Randomized.Next_Natural (G, 10)) + 30];
                   Check : constant Database.Invariant_Checks.Check_Report  :=
                     Database.Invariant_Checks.Validate_Sorted_Keys (Keys);
                begin

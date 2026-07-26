@@ -46,9 +46,9 @@ package body Database.Generated_Columns is
               Schema,
               Row,
               V);
-              if not Database.Status.Is_Ok (R) then
-                 return R;
-              end if;
+            if not Database.Status.Is_Ok (R) then
+               return R;
+            end if;
             Pos := Database.Schema.Find_Column_Id_Position (Schema, C.Column_Id);
             if Pos >= Database.Rows.Column_Count (Row) then
                return Database.Status.Failure (Database.Status.Invalid_Argument,
@@ -74,9 +74,9 @@ package body Database.Generated_Columns is
               Schema,
               Row,
               V);
-              if not Database.Status.Is_Ok (R) then
-                 return R;
-              end if;
+            if not Database.Status.Is_Ok (R) then
+               return R;
+            end if;
             Pos := Database.Schema.Find_Column_Id_Position (Schema, C.Column_Id);
             Existing := Database.Rows.Get (Row, Pos);
             if not Database.Values.Equal (V, Existing) then

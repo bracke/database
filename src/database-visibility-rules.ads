@@ -11,15 +11,16 @@ is
       Snapshot         : Database.Versioning.Commit_Version;
       Created_By_Tx    : Database.Versioning.Transaction_Id;
       Created_Version  : Database.Versioning.Commit_Version;
-      Created_Committed: Boolean;
-      Created_Lifecycle: Database.MVCC.Transaction_Lifecycle) return Boolean
+      Created_Committed : Boolean;
+      Created_Lifecycle : Database.MVCC.Transaction_Lifecycle) return Boolean
      with
        Global => null,
        Post =>
          (if Created_By_Tx = Tx_Id then Created_Is_Visible'Result
           elsif not Created_Committed then
             Created_Is_Visible'Result =
-              (Created_Lifecycle = Database.MVCC.Committed
+              ((Created_Lifecycle = Database.MVCC.Committed
+                or else Created_Lifecycle = Database.MVCC.Unknown)
                and then Created_Version <= Snapshot)
           else Created_Is_Visible'Result = (Created_Version <= Snapshot));
 
@@ -37,7 +38,8 @@ is
           elsif Deleted_By_Tx = Tx_Id then Deleted_For'Result
           elsif Deleted_By_Tx /= Database.Versioning.No_Transaction then
             Deleted_For'Result =
-              (Deleted_Lifecycle = Database.MVCC.Committed
+              ((Deleted_Lifecycle = Database.MVCC.Committed
+                or else Deleted_Lifecycle = Database.MVCC.Unknown)
                and then Deleted_Version /= Database.Versioning.No_Version
                and then Deleted_Version <= Snapshot)
           else Deleted_For'Result =

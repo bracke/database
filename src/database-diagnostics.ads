@@ -1,12 +1,10 @@
 --  Read-only diagnostic counters for storage, tables, and indexes.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Transactions;
 with Database.Schema;
 with Database.Indexes;
 
    --  Public nested package `Database.Diagnostics`.
 package Database.Diagnostics is
-   use Ada.Strings.Wide_Wide_Unbounded;
    --  Public operation `Page_Count`. See the package documentation for transaction, ownership, and error-result
    --  semantics.
    --  @param Tx transaction object that scopes the operation.

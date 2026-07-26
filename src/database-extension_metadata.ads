@@ -1,10 +1,8 @@
 --  Metadata shared by Ada-native extension registries and persistent dependency checks.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 
 --  Durable extension dependency metadata.
 package Database.Extension_Metadata is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Extension_Object_Kind defines a public database type used by this package.
    type Extension_Object_Kind is

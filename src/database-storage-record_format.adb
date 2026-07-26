@@ -1,18 +1,11 @@
-with Database.Rows;
-with Database.Schema;
-with Database.Storage.Pages;
-with Database.Status;
-with Ada.Characters.Conversions;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Constraints;
 with Database.Types;
 with Database.Values;
-with Database.Date_Time;
 with Database.UUIDs;
 with Interfaces;
 
 package body Database.Storage.Record_Format is
-   use Database.Storage.Pages;
    use type Database.Types.Value_Kind;
    use type Interfaces.Unsigned_64;
 
@@ -31,7 +24,7 @@ package body Database.Storage.Record_Format is
    end Put_U32;
 
    procedure Put_I64 (B : in out Byte_Vector; V : Long_Long_Integer) is
-      U : Interfaces.Unsigned_64 := Interfaces.Unsigned_64'Mod (V);
+      U : constant Interfaces.Unsigned_64 := Interfaces.Unsigned_64'Mod (V);
    begin
       for Shift in reverse 0 .. 7 loop
          Put
@@ -44,7 +37,7 @@ package body Database.Storage.Record_Format is
 
    procedure Put_Text (B : in out Byte_Vector; S : Wide_Wide_String) is
    begin
-      -- UTF-32BE: exact Unicode scalar storage without relying on Ada memory layout.
+      --  UTF-32BE: exact Unicode scalar storage without relying on Ada memory layout.
       Put_U32 (B, S'Length);
       for Ch of S loop
          Put_U32 (B, Wide_Wide_Character'Pos (Ch));
@@ -105,7 +98,7 @@ package body Database.Storage.Record_Format is
       R : Database.Status.Result;
    begin
       Result.Last := 0;
-      Result.Data := (others => 0);
+      Result.Data := [others => 0];
       R := Database.Constraints.Validate_Row (Schema, Row);
       if not Database.Status.Is_Ok (R) then
          return R;
@@ -346,7 +339,8 @@ package body Database.Storage.Record_Format is
                           S) or else not Read_U32 (Data,
                           Pos,
                           Last,
-                          N) then
+                          N)
+                     then
                         return Database.Status.Failure (Database.Status.Serialization_Error, "truncated timestamp");
                      end if;
                      T :=

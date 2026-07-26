@@ -1,12 +1,9 @@
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Date_Time;
-with Database.Status;
 with Database.Type_Metadata;
 with Database.Types;
 with Database.Values;
 
 package body Database.Constraints is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    function Digit_Count (V : Long_Long_Integer) return Natural is
       N : Long_Long_Integer := (if V < 0 then -V else V);

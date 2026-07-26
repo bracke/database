@@ -4,13 +4,11 @@ use Ada.Strings.Wide_Wide_Unbounded;
 with Database.Indexes;
 with Database.Predicates;
 with Database.Status;
-with Database.Ordering;
 with Database.Types;
 with Database.Metrics;
 
 package body Database.Optimizer is
    use type Ada.Containers.Count_Type;
-   use type Database.Ordering.Direction;
    use type Database.Plans.Logical_Node_Kind;
    use type Database.Indexes.Index_Id;
    use type Database.Predicates.Predicate_Kind;
@@ -27,14 +25,6 @@ package body Database.Optimizer is
       end if;
       return Database.Plans.Step (Plan, 0).Stats.Row_Count;
    end Base_Rows;
-
-   function Base_Pages (Plan : Database.Plans.Logical_Plan) return Natural is
-   begin
-      if Database.Plans.Step_Count (Plan) = 0 then
-         return 0;
-      end if;
-      return Database.Plans.Step (Plan, 0).Stats.Page_Count;
-   end Base_Pages;
 
    function Matching_Index
      (Indexes : Database.Indexes.Index_Metadata_Vectors.Vector;
@@ -221,11 +211,11 @@ package body Database.Optimizer is
                         Chosen := Extract_Indexable (L.Predicate, Scan.Indexes, Found_Indexable);
                      end if;
                      if Needs_Residual_Filter (L.Predicate, Chosen, Found_Indexable) then
-                     S.Node_Kind := Filter_Node;
-                     S.Estimated_Rows := Natural'Max (1, Rows / 2);
-                     S.Estimated_Cost := Long_Float (Rows);
-                     S.Details := To_Unbounded_Wide_Wide_String ("predicate retained as filter node");
-                     Append (Result.Plan, S);
+                        S.Node_Kind := Filter_Node;
+                        S.Estimated_Rows := Natural'Max (1, Rows / 2);
+                        S.Estimated_Cost := Long_Float (Rows);
+                        S.Details := To_Unbounded_Wide_Wide_String ("predicate retained as filter node");
+                        Append (Result.Plan, S);
                      end if;
                   end;
                when Database.Plans.Project =>
@@ -281,7 +271,8 @@ package body Database.Optimizer is
                   Append (Result.Plan, S);
                when Database.Plans.Join =>
                   if Settings.Enabled and then L.Columns.Length >= 2 and then Has_Index_For  (Scan.Indexes,
-                    L.Columns.Element (1)) then
+                    L.Columns.Element (1))
+                  then
                      S.Node_Kind := Index_Nested_Loop_Join;
                      S.Estimated_Rows := Rows;
                      S.Estimated_Cost := Long_Float (Rows * 4);

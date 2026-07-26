@@ -1,9 +1,6 @@
-with Database.Transactions;
-with Database.Status;
 with Database.Catalog;
 with Database.Schema;
 with Database.Values;
-with Database.UUIDs;
 with Database.Types;
 with Database.Indexes;
 with Database.Storage.Table_Heap;
@@ -14,7 +11,6 @@ with Ada.Characters.Conversions;
 with Ada.Directories;
 with Ada.Streams;
 with Ada.Streams.Stream_IO;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Interfaces;
 with Database.Metrics;
 with Database.Fault_Hooks;
@@ -30,7 +26,6 @@ with Database.Queries;
 
 package body Database.Export is
    use Ada.Streams;
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Interfaces.Unsigned_64;
 
    Magic : constant Wide_Wide_String := "DATABASE_LOGICAL_EXPORT_26";
@@ -54,7 +49,7 @@ package body Database.Export is
       --  Store signed integers in fixed-width two's-complement big-endian form.
       --  This preserves negative Decimal coefficients and Long_Integer values
       --  without relying on implementation-specific text images.
-      U : Interfaces.Unsigned_64 := Interfaces.Unsigned_64'Mod (V);
+      U : constant Interfaces.Unsigned_64 := Interfaces.Unsigned_64'Mod (V);
    begin
       for Shift in reverse 0 .. 7 loop
          Write_Byte
@@ -112,35 +107,35 @@ package body Database.Export is
             Write_Text (F, To_Wide_Wide_String (V.Enum_Text));
          when Database.Types.Date_Value => Write_U32  (F,
            Natural (V.Date.Year));
-           Write_U32 (F,
+            Write_U32 (F,
            Natural (V.Date.Month));
-           Write_U32 (F,
+            Write_U32 (F,
            Natural (V.Date.Day));
          when Database.Types.Time_Value => Write_U32  (F,
            Natural (V.Clock_Time.Hour));
-           Write_U32 (F,
+            Write_U32 (F,
            Natural (V.Clock_Time.Minute));
-           Write_U32 (F,
+            Write_U32 (F,
            Natural (V.Clock_Time.Second));
-           Write_U32 (F,
+            Write_U32 (F,
            V.Clock_Time.Nanosecond);
          when Database.Types.Date_Time_Value => Write_U32  (F,
            Natural (V.Date_Time.Date_Part.Year));
-           Write_U32 (F,
+            Write_U32 (F,
            Natural (V.Date_Time.Date_Part.Month));
-           Write_U32 (F,
+            Write_U32 (F,
            Natural (V.Date_Time.Date_Part.Day));
-           Write_U32 (F,
+            Write_U32 (F,
            Natural (V.Date_Time.Time_Part.Hour));
-           Write_U32 (F,
+            Write_U32 (F,
            Natural (V.Date_Time.Time_Part.Minute));
-           Write_U32 (F,
+            Write_U32 (F,
            Natural (V.Date_Time.Time_Part.Second));
-           Write_U32 (F,
+            Write_U32 (F,
            V.Date_Time.Time_Part.Nanosecond);
          when Database.Types.Duration_Value => Write_I64  (F,
            V.Time_Span.Seconds);
-           Write_U32 (F,
+            Write_U32 (F,
            V.Time_Span.Nanoseconds);
          when Database.Types.UUID_Value => for B of V.UUID loop Write_Byte (F, Natural (B));
          end loop;
@@ -343,46 +338,46 @@ package body Database.Export is
       Write_U32 (F, 26);
       Write_U32 (F, Database.Catalog.Table_Count);
       if Database.Catalog.Table_Count > 0 then
-      for T in 0 .. Database.Catalog.Table_Count - 1 loop
-         declare
-            S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (T);
-            C : Database.Storage.Table_Heap.Heap_Cursor;
-            Row_Count : Natural := 0;
-         begin
-            Write_Schema (F, S);
+         for T in 0 .. Database.Catalog.Table_Count - 1 loop
+            declare
+               S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (T);
+               C : Database.Storage.Table_Heap.Heap_Cursor;
+               Row_Count : Natural := 0;
+            begin
+               Write_Schema (F, S);
 
-            R := Database.Storage.Table_Heap.Scan_First (Tx, DB.File,
-              Database.Storage.Pages.Page_Id (S.Heap_First_Page), S, C);
-            if not Database.Status.Is_Ok (R) then
-               Ada.Streams.Stream_IO.Close (F);
-               return R;
-            end if;
-            while C.Has_Row loop
-               Row_Count := Row_Count + 1;
-               R := Database.Storage.Table_Heap.Scan_Next (Tx, DB.File, S, C);
+               R := Database.Storage.Table_Heap.Scan_First (Tx, DB.File,
+                 Database.Storage.Pages.Page_Id (S.Heap_First_Page), S, C);
                if not Database.Status.Is_Ok (R) then
                   Ada.Streams.Stream_IO.Close (F);
                   return R;
                end if;
-            end loop;
+               while C.Has_Row loop
+                  Row_Count := Row_Count + 1;
+                  R := Database.Storage.Table_Heap.Scan_Next (Tx, DB.File, S, C);
+                  if not Database.Status.Is_Ok (R) then
+                     Ada.Streams.Stream_IO.Close (F);
+                     return R;
+                  end if;
+               end loop;
 
-            Write_U32 (F, Row_Count);
-            R := Database.Storage.Table_Heap.Scan_First (Tx, DB.File,
-              Database.Storage.Pages.Page_Id (S.Heap_First_Page), S, C);
-            if not Database.Status.Is_Ok (R) then
-               Ada.Streams.Stream_IO.Close (F);
-               return R;
-            end if;
-            while C.Has_Row loop
-               Write_Row (F, C.Row);
-               R := Database.Storage.Table_Heap.Scan_Next (Tx, DB.File, S, C);
+               Write_U32 (F, Row_Count);
+               R := Database.Storage.Table_Heap.Scan_First (Tx, DB.File,
+                 Database.Storage.Pages.Page_Id (S.Heap_First_Page), S, C);
                if not Database.Status.Is_Ok (R) then
                   Ada.Streams.Stream_IO.Close (F);
                   return R;
                end if;
-            end loop;
-         end;
-      end loop;
+               while C.Has_Row loop
+                  Write_Row (F, C.Row);
+                  R := Database.Storage.Table_Heap.Scan_Next (Tx, DB.File, S, C);
+                  if not Database.Status.Is_Ok (R) then
+                     Ada.Streams.Stream_IO.Close (F);
+                     return R;
+                  end if;
+               end loop;
+            end;
+         end loop;
       end if;
       Write_Relational_Metadata (F);
       Ada.Streams.Stream_IO.Close (F);

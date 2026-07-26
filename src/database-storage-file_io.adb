@@ -1,25 +1,19 @@
-with Database.Status;
-with Database.Storage.Pages;
 with Database.Metrics;
 with Database.Fault_Hooks;
 with Database.Encrypted_Persistence;
 with Database.Crypto;
 with Database.Crypto_Checks;
-with Database.Keys;
 with Database.Log_Sequence;
 with Database.Tracing;
 with Ada.Characters.Conversions;
 with Ada.Directories;
 with Ada.Streams;
-with Ada.Streams.Stream_IO;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Interfaces.C;
 
 package body Database.Storage.File_IO is
    use Ada.Streams;
    use Ada.Streams.Stream_IO;
    use Database.Storage.Pages;
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Interfaces.C.int;
 
    Invalid_Lock_FD : constant Interfaces.C.int := Interfaces.C.int'First;
@@ -233,8 +227,8 @@ package body Database.Storage.File_IO is
         (Search    => Search,
          Directory => Sidecar_Directory,
          Pattern   => Sidecar_Base & ".page*.enc",
-         Filter    => (Ada.Directories.Ordinary_File => True,
-                       others => False));
+         Filter    => [Ada.Directories.Ordinary_File => True,
+                       others => False]);
       while Ada.Directories.More_Entries (Search) loop
          Ada.Directories.Get_Next_Entry (Search, Dir_Entry);
          begin
@@ -288,8 +282,8 @@ package body Database.Storage.File_IO is
         (Search    => Search,
          Directory => Sidecar_Directory,
          Pattern   => Sidecar_Base & ".page*.enc",
-         Filter    => (Ada.Directories.Ordinary_File => True,
-                       others => False));
+         Filter    => [Ada.Directories.Ordinary_File => True,
+                       others => False]);
       while Ada.Directories.More_Entries (Search) loop
          Ada.Directories.Get_Next_Entry (Search, Dir_Entry);
          declare
@@ -439,7 +433,7 @@ package body Database.Storage.File_IO is
      (F  : in out File_Handle;
       Id : Page_Id) return Database.Status.Result is
       Zeros : constant Stream_Element_Array
-        (0 .. Stream_Element_Offset (Page_Size - 1)) := (others => 0);
+        (0 .. Stream_Element_Offset (Page_Size - 1)) := [others => 0];
       R : Database.Status.Result;
    begin
       --  Encrypted page contents live in authenticated sidecar artifacts.
@@ -579,7 +573,7 @@ package body Database.Storage.File_IO is
       F.Name := To_Unbounded_Wide_Wide_String (Path);
       Initialize (P, 0, Header_Page);
       declare
-         Magic : constant Byte_Array (0 .. 7) := (16#44#,16#41#,16#54#,16#41#,16#42#,16#36#,16#00#,16#01#);
+         Magic : constant Byte_Array (0 .. 7) := [16#44#, 16#41#, 16#54#, 16#41#, 16#42#, 16#36#, 16#00#, 16#01#];
          R     : Database.Status.Result;
       begin
          Set_Payload (P, Magic);

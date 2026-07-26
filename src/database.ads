@@ -192,6 +192,12 @@ private
       Page_Allocator : Allocator;
       Lock : Read_Write_Lock;
       Version : Natural := 0;
+      --  Highest transaction id referenced by any persisted row at open time,
+      --  used to reserve fresh ids above it so a recovered process never
+      --  reuses an id that still appears in Created_By_Tx / Deleted_By_Tx
+      --  (which would alias the global MVCC lifecycle map). Derived from the
+      --  heap during Catalog.Load, mirroring how Version is recovered.
+      Max_Persisted_Tx : Natural := 0;
       FT_State_Key : Natural := 0;
       Catalog_State_Key_Value : Natural := 0;
       Encryption_Enabled        : Boolean := False;

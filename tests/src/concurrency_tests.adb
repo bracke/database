@@ -357,10 +357,96 @@ package body Concurrency_Tests is
          raise;
    end Process_Lock_Blocks_Second_Process;
 
+
+   --  Many readers admitted at once run Start concurrently; the transaction-id
+   --  allocator must be atomic or two of them get the same id.
+   procedure Concurrent_Begin_Assigns_Unique_Ids
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Tasks    : constant := 8;
+      Per_Task : constant := 250;
+      Total    : constant := Tasks * Per_Task;
+
+      type Id_Array is array (1 .. Total) of Natural;
+
+      DB : Database.Handle;
+      S  : Database.Schema.Table_Schema;
+      R  : Database.Status.Result;
+
+      protected Collector is
+         procedure Record_Id (Id : Natural);
+         function Get (I : Positive) return Natural;
+         function Count return Natural;
+      private
+         Ids : Id_Array := (others => 0);
+         N   : Natural := 0;
+      end Collector;
+
+      protected body Collector is
+         procedure Record_Id (Id : Natural) is
+         begin
+            N := N + 1;
+            if N <= Total then
+               Ids (N) := Id;
+            end if;
+         end Record_Id;
+         function Get (I : Positive) return Natural is (Ids (I));
+         function Count return Natural is (N);
+      end Collector;
+
+      task type Reader;
+      task body Reader is
+         Tx : Database.Transactions.Transaction;
+         RR : Database.Status.Result;
+      begin
+         for I in 1 .. Per_Task loop
+            Database.Transactions.Begin_Read (DB, Tx);
+            Collector.Record_Id (Natural (Database.Transactions.Id (Tx)));
+            RR := Database.Transactions.Commit (Tx);
+         end loop;
+      end Reader;
+
+      Local     : array (1 .. Total) of Natural := (others => 0);
+      Duplicate : Boolean := False;
+   begin
+      Database.Open_In_Memory (DB);
+      Build_Schema (S);
+      R := Items.Register (DB, S);
+      Assert (Database.Status.Is_Ok (R), "register failed");
+
+      declare
+         Readers : array (1 .. Tasks) of Reader;
+         pragma Unreferenced (Readers);
+      begin
+         null;  --  block until every reader task terminates
+      end;
+
+      Assert (Collector.Count = Total,
+              "some concurrent transactions were lost");
+      for I in 1 .. Total loop
+         Local (I) := Collector.Get (I);
+      end loop;
+      for I in 1 .. Total loop
+         for J in I + 1 .. Total loop
+            if Local (I) = Local (J) then
+               Duplicate := True;
+            end if;
+         end loop;
+      end loop;
+      Assert (not Duplicate,
+              "concurrent transactions were assigned duplicate ids");
+      Database.Close (DB);
+   end Concurrent_Begin_Assigns_Unique_Ids;
+
    overriding
    procedure Register_Tests (T : in out Case_Type) is
       use AUnit.Test_Cases.Registration;
    begin
+      Register_Routine
+        (T,
+         Concurrent_Begin_Assigns_Unique_Ids'Access,
+         "concurrent begins assign unique transaction ids");
       Register_Routine
         (T,
          Lock_Allows_Multiple_Readers'Access,

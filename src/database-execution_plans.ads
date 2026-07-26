@@ -1,13 +1,11 @@
 --  Physical execution plan representation and stable plan diagnostics.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Indexes;
 with Database.Ordering;
 with Database.Status;
 
 --  Executable query-plan structures and diagnostics.
 package Database.Execution_Plans is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Physical_Node_Kind defines a public database type used by this package.
    type Physical_Node_Kind is

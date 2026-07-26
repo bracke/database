@@ -1,0 +1,28 @@
+#  The project checks are their own crate, deliberately separate from the
+#  database library crate: they need project_tools, and consumers of database
+#  must not inherit a tooling dependency just to link the storage engine.
+
+name = "database_tools"
+description = "Ada project checks for the database crate"
+version = "0.14.0"
+licenses = "MIT"
+authors = ["Bent Bracke"]
+maintainers = ["Bent Bracke <bent@bracke.dk>"]
+maintainers-logins = ["bracke"]
+website = "https://github.com/bracke/database"
+tags = ["database", "tools", "checks", "ada"]
+project-files = ["tools.gpr"]
+
+executables = ["check_all"]
+
+[[depends-on]]
+gnat_native = "=15.2.1"
+
+[[depends-on]]
+project_tools = "*"
+
+[[pins]]
+project_tools = { path = "../../project_tools" }
+
+[build-profiles]
+"*" = "development"

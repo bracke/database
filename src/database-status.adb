@@ -1,7 +1,5 @@
-with Ada.Strings.Wide_Wide_Unbounded;
 
 package body Database.Status is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    function Success return Result is
    begin

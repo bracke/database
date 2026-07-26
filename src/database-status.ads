@@ -1,9 +1,7 @@
 --  Structured status results returned by ordinary database operations.
 --  Exceptions are not used for expected validation, storage, or transaction failures.
-with Ada.Strings.Wide_Wide_Unbounded;
 
 package Database.Status is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Status-code subtype re-exported from the root package.
    subtype Status_Code is Database.Status_Code;

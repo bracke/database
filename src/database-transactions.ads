@@ -3,7 +3,6 @@ with Ada.Containers.Vectors;
 with Ada.Finalization;
 with Database.Status;
 with Database.Storage.Pages;
-use type Database.Storage.Pages.Page_Id;
 use type Database.Storage.Pages.Page;
 with Database.Versioning;
 
@@ -21,6 +20,13 @@ package Database.Transactions is
    --  @param DB database handle used by the operation.
    --  @param Tx transaction object that scopes the operation.
    procedure Begin_Read (DB : in out Database.Handle; Tx : out Transaction);
+
+   --  Ensure freshly assigned transaction ids stay strictly above Highest.
+   --  Called during open-time recovery with the largest transaction id still
+   --  referenced by any persisted row, so a restarted process never reuses an
+   --  id that appears in Created_By_Tx / Deleted_By_Tx (which would alias the
+   --  process-global MVCC lifecycle map). Only ever raises the counter.
+   procedure Reserve_Ids_Through (Highest : Natural);
 
    --  Start a read-write transaction. The transaction holds the exclusive
    --  writer lock until Commit, Rollback, or Finalize.

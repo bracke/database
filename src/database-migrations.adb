@@ -1,23 +1,17 @@
 with Ada.Containers;
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Catalog;
 with Database.Foreign_Keys;
 with Database.Rows;
 with Database.Schema;
-with Database.Status;
 with Database.Storage.Pages;
 with Database.Storage.Table_Heap;
 with Database.Indexes;
 with Database.Indexes.BTree;
-with Database.Transactions;
 
 package body Database.Migrations is
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Ada.Containers.Count_Type;
-   use type Database.Status.Status_Code;
    use type Database.Types.Value_Kind;
-   use type Database.Storage.Pages.Page_Id;
 
    type Schema_Snapshot is record
       Transaction_Id : Natural := 0;
@@ -108,6 +102,7 @@ package body Database.Migrations is
       Default_Value : Database.Values.Value) return Database.Status.Result is
       Rows : constant Database.Foreign_Keys.Row_Vectors.Vector :=
         Database.Catalog.Rows_For_Table (Old_Schema.Table_Id);
+      pragma Unreferenced (New_Schema);
    begin
       if Rows.Length > 0 then
          for Old_Row of Rows loop
@@ -132,7 +127,7 @@ package body Database.Migrations is
       Old_Schema    : Database.Schema.Table_Schema;
       New_Schema    : Database.Schema.Table_Schema;
       Default_Value : Database.Values.Value) return Database.Status.Result is
-      DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
       type Row_Ref_Pair is record
          Row : Database.Rows.Row;
          Ref : Database.Indexes.Row_Reference;
@@ -166,40 +161,40 @@ package body Database.Migrations is
       if Pairs.Length > 0 then
          for Pair of Pairs loop
             declare
-            Old_Row : constant Database.Rows.Row := Pair.Row;
-            New_Row : Database.Rows.Row := Pair.Row;
-            Old_Cursor : constant Database.Storage.Table_Heap.Heap_Cursor :=
+               Old_Row : constant Database.Rows.Row := Pair.Row;
+               New_Row : Database.Rows.Row := Pair.Row;
+               Old_Cursor : constant Database.Storage.Table_Heap.Heap_Cursor :=
               (Current_Page => Pair.Ref.Page,
                Slot_Offset  => Pair.Ref.Slot_Offset,
                Has_Row      => True,
                Row          => Pair.Row);
-            Ref : Database.Indexes.Row_Reference;
-            First : Database.Storage.Pages.Page_Id :=
+               Ref : Database.Indexes.Row_Reference;
+               First : Database.Storage.Pages.Page_Id :=
               Database.Storage.Pages.Page_Id (New_Schema.Heap_First_Page);
-            Key : constant Database.Values.Value :=
+               Key : constant Database.Values.Value :=
               Primary_Key_Value (Old_Schema, Old_Row);
-            Root : Database.Storage.Pages.Page_Id :=
+               Root : Database.Storage.Pages.Page_Id :=
               Database.Storage.Pages.Page_Id (New_Schema.Primary_Index_Root);
-         begin
-            Database.Rows.Append (New_Row, Default_Value);
-            R := Database.Storage.Table_Heap.Delete_At (Tx, DB.File, Old_Cursor);
-            if not Database.Status.Is_Ok (R) then
-               return R;
-            end if;
-            R := Database.Storage.Table_Heap.Append_Row
-              (Tx, DB.File, DB.Page_Allocator, First, New_Schema, New_Row, Ref);
-            if not Database.Status.Is_Ok (R) then
-               return R;
-            end if;
-            if Root /= Database.Storage.Pages.Invalid_Page_Id
-              and then Key.Kind /= Database.Types.Null_Value
-            then
-               R := Database.Indexes.BTree.Insert_Duplicate
-                 (Tx, DB.File, DB.Page_Allocator, Root, Key, Ref);
+            begin
+               Database.Rows.Append (New_Row, Default_Value);
+               R := Database.Storage.Table_Heap.Delete_At (Tx, DB.File, Old_Cursor);
                if not Database.Status.Is_Ok (R) then
                   return R;
                end if;
-            end if;
+               R := Database.Storage.Table_Heap.Append_Row
+                 (Tx, DB.File, DB.Page_Allocator, First, New_Schema, New_Row, Ref);
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
+               if Root /= Database.Storage.Pages.Invalid_Page_Id
+                 and then Key.Kind /= Database.Types.Null_Value
+               then
+                  R := Database.Indexes.BTree.Insert_Duplicate
+                    (Tx, DB.File, DB.Page_Allocator, Root, Key, Ref);
+                  if not Database.Status.Is_Ok (R) then
+                     return R;
+                  end if;
+               end if;
             end;
          end loop;
       end if;
@@ -229,7 +224,7 @@ package body Database.Migrations is
          Type_Info     : Database.Types.Type_Descriptor;
          Nullable      : Boolean;
          Default_Value : Database.Values.Value) return Database.Status.Result is
-      DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
       Old_Schema : Database.Schema.Table_Schema;
       New_Schema : Database.Schema.Table_Schema;
       R : Database.Status.Result;
@@ -294,7 +289,7 @@ package body Database.Migrations is
          Table_Name : Wide_Wide_String;
          Old_Name   : Wide_Wide_String;
          New_Name   : Wide_Wide_String) return Database.Status.Result is
-      DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
       S : Database.Schema.Table_Schema;
       R : Database.Status.Result;
       Pos : Natural;
@@ -333,7 +328,7 @@ package body Database.Migrations is
         (Tx          : in out Database.Transactions.Transaction;
          Table_Name  : Wide_Wide_String;
          Column_Name : Wide_Wide_String) return Database.Status.Result is
-      DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
       S : Database.Schema.Table_Schema;
       R : Database.Status.Result;
       Pos : Natural;
@@ -370,7 +365,7 @@ package body Database.Migrations is
          Table_Name  : Wide_Wide_String;
          Column_Name : Wide_Wide_String;
          Nullable    : Boolean) return Database.Status.Result is
-      DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
       S : Database.Schema.Table_Schema;
       R : Database.Status.Result;
       Pos : Natural;

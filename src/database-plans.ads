@@ -1,6 +1,5 @@
 --  Logical query plans for Ada-native query composition.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Aggregates;
 with Database.Indexes;
 with Database.Ordering;
@@ -8,7 +7,6 @@ with Database.Predicates;
 
 --  Logical and physical query plan structures.
 package Database.Plans is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Logical_Node_Kind defines a public database type used by this package.
    type Logical_Node_Kind is

@@ -1,12 +1,8 @@
-with Ada.Strings.Wide_Wide_Unbounded;
 with Ada.Containers;
-with Database.Types;
 with Database.Date_Time;
 with Database.UUIDs;
-with Database.Values;
 
 package body Database.Indexes is
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Database.Types.Value_Kind;
    use type Ada.Containers.Count_Type;
 
@@ -82,7 +78,7 @@ package body Database.Indexes is
       case Left.Kind is
          when Database.Types.Boolean_Value =>
             Order  :=
-              (if Left.Bool = Right.Bool then Equal elsif (not Left.Bool and Right.Bool) then Less else Greater);
+              (if Left.Bool = Right.Bool then Equal elsif not Left.Bool and then Right.Bool then Less else Greater);
          when Database.Types.Integer_Value =>
             Order := (if Left.Int = Right.Int then Equal elsif Left.Int < Right.Int then Less else Greater);
          when Database.Types.Long_Integer_Value =>
@@ -102,7 +98,7 @@ package body Database.Indexes is
          when Database.Types.Text_Value =>
             declare
                L : constant Wide_Wide_String := To_Wide_Wide_String (Left.Text);
-            R : constant Wide_Wide_String := To_Wide_Wide_String (Right.Text);
+               R : constant Wide_Wide_String := To_Wide_Wide_String (Right.Text);
             begin
                Order := (if L = R then Equal elsif L < R then Less else Greater);
             end;
@@ -111,33 +107,33 @@ package body Database.Indexes is
          when Database.Types.Enum_Value =>
             declare
                L : constant Wide_Wide_String := To_Wide_Wide_String (Left.Enum_Text);
-            R : constant Wide_Wide_String := To_Wide_Wide_String (Right.Enum_Text);
+               R : constant Wide_Wide_String := To_Wide_Wide_String (Right.Enum_Text);
             begin
                Order := (if L = R then Equal elsif L < R then Less else Greater);
             end;
          when Database.Types.Date_Value => declare C : constant Integer := Database.Date_Time.Compare  (Left.Date,
            Right.Date);
-           begin Order := (if C = 0 then Equal elsif C < 0 then Less else Greater);
-           end;
+         begin Order := (if C = 0 then Equal elsif C < 0 then Less else Greater);
+         end;
          when Database.Types.Time_Value => declare C : constant Integer  :=
            Database.Date_Time.Compare  (Left.Clock_Time,
            Right.Clock_Time);
-           begin Order := (if C = 0 then Equal elsif C < 0 then Less else Greater);
-           end;
+         begin Order := (if C = 0 then Equal elsif C < 0 then Less else Greater);
+         end;
          when Database.Types.Date_Time_Value => declare C : constant Integer  :=
            Database.Date_Time.Compare  (Left.Date_Time,
            Right.Date_Time);
-           begin Order := (if C = 0 then Equal elsif C < 0 then Less else Greater);
-           end;
+         begin Order := (if C = 0 then Equal elsif C < 0 then Less else Greater);
+         end;
          when Database.Types.Duration_Value => declare C : constant Integer  :=
            Database.Date_Time.Compare  (Left.Time_Span,
            Right.Time_Span);
-           begin Order := (if C = 0 then Equal elsif C < 0 then Less else Greater);
-           end;
+         begin Order := (if C = 0 then Equal elsif C < 0 then Less else Greater);
+         end;
          when Database.Types.UUID_Value => declare C : constant Integer := Database.UUIDs.Compare  (Left.UUID,
            Right.UUID);
-           begin Order := (if C = 0 then Equal elsif C < 0 then Less else Greater);
-           end;
+         begin Order := (if C = 0 then Equal elsif C < 0 then Less else Greater);
+         end;
          when others =>
             return Database.Status.Failure (Database.Status.Unsupported_Key_Type, "unsupported index key type");
       end case;
@@ -254,7 +250,7 @@ package body Database.Indexes is
      (Previous : Database.Values.Value;
       Current  : Database.Values.Value) return Database.Status.Result is
       O : Ordering;
-      R : Database.Status.Result := Compare (Previous, Current, O);
+      R : constant Database.Status.Result := Compare (Previous, Current, O);
    begin
       if not Database.Status.Is_Ok (R) then
          return R;

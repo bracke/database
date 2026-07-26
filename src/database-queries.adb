@@ -1,19 +1,9 @@
-with Database.Aggregates;
-with Database.Ordering;
-with Database.Predicates;
-with Database.Status;
-with Database.Rows;
 with Ada.Containers;
 with Database.Types;
 with Database.Values;
 with Database.Full_Text;
-with Database.Full_Text.Queries;
-with Database.Catalog;
-with Database.Foreign_Keys;
-with Database.Schema;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Metrics;
-with Database.Tracing;
 with Database.UUIDs;
 
 package body Database.Queries is
@@ -241,10 +231,11 @@ package body Database.Queries is
                            Have := True;
                         elsif (A.Kind = Database.Aggregates.Minimum and then Database.Ordering.Compare (V, Best) < 0)
                           or else  (A.Kind = Database.Aggregates.Maximum and then Database.Ordering.Compare (V,
-                            Best) > 0) then
+                            Best) > 0)
+                        then
                            Best := V;
                         end if;
-                     end if;
+                  end if;
                end loop;
                Database.Rows.Append (Result, Best);
             when Database.Aggregates.Total | Database.Aggregates.Average =>
@@ -261,7 +252,7 @@ package body Database.Queries is
                         end if;
                         Sum_Value := Sum_Value + X;
                         Count_Non_Null := Count_Non_Null + 1;
-                     end if;
+                  end if;
                end loop;
                if A.Kind = Database.Aggregates.Total then
                   Database.Rows.Append (Result, Database.Values.From_Float (Sum_Value));
@@ -418,7 +409,7 @@ package body Database.Queries is
             end if;
             Out_Row := Row;
             Database.Rows.Append
-              (Out_Row, Database.Values.From_Float (Long_Float (Hit.Score)));
+              (Out_Row, Database.Values.From_Float (Hit.Score));
             Result.Data.Append (Out_Row);
          end;
          Database.Full_Text.Next (C);
@@ -612,7 +603,7 @@ package body Database.Queries is
      (Image : Wide_Wide_String;
       Pos   : in out Natural;
       Field : out Ada.Strings.Wide_Wide_Unbounded.Unbounded_Wide_Wide_String) return Boolean is
-      Start : Natural := Pos;
+      Start : constant Natural := Pos;
    begin
       if Pos > Image'Last + 1 then
          return False;
@@ -703,9 +694,8 @@ package body Database.Queries is
                   V := V * 16 + N;
                   P := P + 1;
                end loop;
-               if V > Wide_Wide_Character'Pos (Wide_Wide_Character'Last) then
-                  return False;
-               end if;
+               --  V is Natural, whose range is exactly Wide_Wide_Character's
+               --  (0 .. 2**31-1), so 'Val below can never be out of range.
                Out_Text (I) := Wide_Wide_Character'Val (V);
             end;
          end loop;
@@ -773,15 +763,16 @@ package body Database.Queries is
          when Database.Types.Decimal_Value =>
             declare
                C : Long_Long_Integer;
-            Scale : Natural;
+               Scale : Natural;
             begin
                if not Next_Long_Long_Integer  (Image,
                  Pos,
                  C) or else not Next_Natural (Image,
                  Pos,
-                 Scale) then
-                    return False;
-                 end if;
+                 Scale)
+               then
+                  return False;
+               end if;
                V := Database.Values.From_Decimal ((Coefficient => C, Scale => Scale));
             end;
          when Database.Types.Text_Value =>
@@ -796,7 +787,7 @@ package body Database.Queries is
          when Database.Types.Blob_Value =>
             declare
                Len, B : Natural;
-            Bytes : Database.Values.Byte_Vectors.Vector;
+               Bytes : Database.Values.Byte_Vectors.Vector;
             begin
                if not Next_Natural (Image, Pos, Len) then
                   return False;
@@ -858,9 +849,10 @@ package body Database.Queries is
                  Pos,
                  Mo) or else not Next_Natural (Image,
                  Pos,
-                 D) then
-                    return False;
-                 end if;
+                 D)
+               then
+                  return False;
+               end if;
                V := Database.Values.From_Date ((Year => Y, Month => Mo, Day => D));
             end;
          when Database.Types.Time_Value =>
@@ -875,9 +867,10 @@ package body Database.Queries is
                  Pos,
                  S) or else not Next_Natural (Image,
                  Pos,
-                 N) then
-                    return False;
-                 end if;
+                 N)
+               then
+                  return False;
+               end if;
                V := Database.Values.From_Time ((Hour => H, Minute => Mi, Second => S, Nanosecond => N));
             end;
          when Database.Types.Date_Time_Value =>
@@ -913,21 +906,22 @@ package body Database.Queries is
          when Database.Types.Duration_Value =>
             declare
                Seconds : Long_Long_Integer;
-            N : Natural;
+               N : Natural;
             begin
                if not Next_Long_Long_Integer  (Image,
                  Pos,
                  Seconds) or else not Next_Natural (Image,
                  Pos,
-                 N) then
-                    return False;
-                 end if;
+                 N)
+               then
+                  return False;
+               end if;
                V := Database.Values.From_Duration ((Seconds => Seconds, Nanoseconds => N));
             end;
          when Database.Types.UUID_Value =>
             declare
                U : Database.UUIDs.UUID;
-            B : Natural;
+               B : Natural;
             begin
                for I in U'Range loop
                   if not Next_Natural (Image, Pos, B) or else B > 255 then

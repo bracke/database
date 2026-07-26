@@ -1,4 +1,3 @@
-with Interfaces;
 package body Database.Storage.Free_List_Manager
   with SPARK_Mode => On
 is

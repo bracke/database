@@ -1,17 +1,9 @@
-with Database.Rows;
-with Database.Schema;
-with Database.Storage.File_IO;
-with Database.Storage.Free_List;
-with Database.Storage.Pages;
 with Database.Storage.Table_Heap_Layout;
-with Database.Status;
 with Database.Storage.Record_Format;
-with Database.Transactions;
-with Database.Indexes;
 with Database.Visibility;
-with Database.Versioning;
 with Database.MVCC;
 
+with Database.Versioning;
 package body Database.Storage.Table_Heap is
    use Database.Storage.Pages;
 
@@ -22,10 +14,6 @@ package body Database.Storage.Table_Heap is
    begin
       Database.Storage.Table_Heap_Layout.Put_U32 (B, Offset, V);
    end Put_U32;
-   function Get_U32 (B : Page_Buffer; Offset : Natural) return Natural is
-   begin
-      return Database.Storage.Table_Heap_Layout.Read_U32 (B, Offset);
-   end Get_U32;
 
    function Metadata_At
      (P : Page; Offset : Natural) return Database.Versioning.Row_Version_Metadata is
@@ -476,7 +464,14 @@ package body Database.Storage.Table_Heap is
          return M.Flags.Deleted
            and then not M.Flags.Tombstone
            and then M.Deleted_By_Tx /= Database.Versioning.No_Transaction
-           and then Database.MVCC.Lifecycle (M.Deleted_By_Tx) = Database.MVCC.Committed
+           --  A persisted tombstone whose deleting transaction is no longer
+           --  tracked (Unknown) is a settled commit -- rolled-back deletions
+           --  never persist and their entries are never reclaimed -- so treat
+           --  Unknown like Committed, matching the visibility rules. Otherwise a
+           --  row would stop being vacuumable the moment its commit entry is
+           --  reclaimed. Safe_Reclaim_Version still gates on the oldest snapshot.
+           and then Database.MVCC.Lifecycle (M.Deleted_By_Tx) /= Database.MVCC.Active
+           and then Database.MVCC.Lifecycle (M.Deleted_By_Tx) /= Database.MVCC.Rolled_Back
            and then M.Deleted_Version /= Database.Versioning.No_Version
            and then Database.MVCC.Safe_Reclaim_Version (M.Deleted_Version);
       end Reclaimable;
@@ -585,6 +580,42 @@ package body Database.Storage.Table_Heap is
       when others =>
          return Max_V;
    end Max_Commit_Version;
+
+   function Max_Transaction_Id
+     (F          : in out Database.Storage.File_IO.File_Handle;
+      First_Page : Database.Storage.Pages.Page_Id) return Natural is
+      Current : Page_Id := First_Page;
+      P       : Page;
+      R       : Database.Status.Result;
+      Off     : Natural;
+      Len     : Natural;
+      Max_T   : Natural := 0;
+   begin
+      while Current /= Invalid_Page_Id loop
+         R := Database.Storage.File_IO.Read_Page (F, Current, Table_Heap_Page, P);
+         if not Database.Status.Is_Ok (R) then
+            return Max_T;
+         end if;
+         Off := 0;
+         while Off < Used (P) loop
+            exit when Off + Slot_Header > Used (P);
+            Len := Slot_Length (P, Off);
+            exit when Len > Payload_Capacity or else Off + Slot_Header + Len > Used (P);
+            declare
+               M : constant Database.Versioning.Row_Version_Metadata := Metadata_At (P, Off);
+            begin
+               Max_T := Natural'Max (Max_T, M.Created_By_Tx);
+               Max_T := Natural'Max (Max_T, M.Deleted_By_Tx);
+            end;
+            Off := Off + Slot_Header + Len;
+         end loop;
+         Current := Get_Next (P);
+      end loop;
+      return Max_T;
+   exception
+      when others =>
+         return Max_T;
+   end Max_Transaction_Id;
 
    function Validate_Row_Slots
      (Page : Database.Storage.Pages.Page) return Database.Status.Result is

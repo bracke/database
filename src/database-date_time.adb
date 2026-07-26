@@ -158,7 +158,8 @@ package body Database.Date_Time is
    end Add;
 
    function Difference (Left, Right : Date_Time) return Time_Span is
-      N : Long_Long_Integer := (Day_Number (Left.Date_Part) - Day_Number (Right.Date_Part)) * 86_400_000_000_000
+      N : constant Long_Long_Integer :=
+        (Day_Number (Left.Date_Part) - Day_Number (Right.Date_Part)) * 86_400_000_000_000
         + To_Nanos (Left.Time_Part) - To_Nanos (Right.Time_Part);
       S : Long_Long_Integer := N / 1_000_000_000;
       R : Long_Long_Integer := N mod 1_000_000_000;

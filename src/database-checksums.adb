@@ -1,9 +1,7 @@
-with Interfaces;
 
 package body Database.Checksums
   with SPARK_Mode => On
 is
-   use type Interfaces.Unsigned_32;
 
    function Low_16 (Value : Word_32) return Word_32 is
      (Value and 16#0000_FFFF#)

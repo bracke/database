@@ -1,6 +1,5 @@
 --  Ada-native extension registration and persistent dependency validation.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Extension_Metadata;
 with Database.Status;
 
@@ -12,7 +11,6 @@ package Database.Extensions is
    --  Perform drop database for the supplied database state or arguments.
    --  @param State_Key state key argument supplied to the operation.
    procedure Drop_Database (State_Key : Natural);
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Extension_Definition stores the public fields for this database abstraction.
    type Extension_Definition is record

@@ -4,10 +4,8 @@ with Database.Versioning;
 
 package body Database.Full_Text.Storage is
    use type Ada.Containers.Count_Type;
-   use type Database.Storage.Pages.Byte;
    use type Database.Storage.Pages.Page_Kind;
 
-   subtype Byte is Database.Storage.Pages.Byte;
    package Byte_Vectors renames Database.Full_Text.Compression.Byte_Vectors;
 
    procedure Append_Varint
@@ -43,9 +41,8 @@ package body Database.Full_Text.Storage is
          if not Decode_Varint (Bytes, Offset, Code) then
             return False;
          end if;
-         if Code > Wide_Wide_Character'Pos (Wide_Wide_Character'Last) then
-            return False;
-         end if;
+         --  Code is Natural, whose range is exactly Wide_Wide_Character's
+         --  (0 .. 2**31-1), so 'Val below can never be out of range.
          Append (Text, Wide_Wide_Character'Val (Code));
       end loop;
       return True;

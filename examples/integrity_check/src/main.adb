@@ -13,16 +13,30 @@ with Database.Rows;
 procedure Main is
    use Ada.Strings.Wide_Wide_Unbounded;
    type Item is record Id : Integer; Name : Wide_Wide_String (1 .. 8); end record;
-   function To_Row (I : Item) return Database.Rows.Row is R : Database.Rows.Row; begin
-      Database.Rows.Append (R, Database.Values.From_Integer (I.Id)); Database.Rows.Append (R, Database.Values.From_Text (I.Name)); return R; end To_Row;
+   function To_Row (I : Item) return Database.Rows.Row is
+      R : Database.Rows.Row;
+   begin
+      Database.Rows.Append (R, Database.Values.From_Integer (I.Id));
+      Database.Rows.Append (R, Database.Values.From_Text (I.Name));
+      return R;
+   end To_Row;
    function From_Row (R : Database.Rows.Row) return Item is
       S : constant Wide_Wide_String := To_Wide_Wide_String (Database.Rows.Get (R, 1).Text);
-      I : Item := (Database.Rows.Get (R, 0).Int, (others => ' '));
-   begin for N in 1 .. Integer'Min (8, S'Length) loop I.Name (N) := S (S'First + N - 1); end loop; return I; end From_Row;
+      I : Item := (Database.Rows.Get (R, 0).Int, [others => ' ']);
+   begin
+      for N in 1 .. Integer'Min (8, S'Length) loop
+         I.Name (N) := S (S'First + N - 1);
+      end loop;
+      return I;
+   end From_Row;
    function Key_Of (I : Item) return Integer is (I.Id);
    function Key_Value (K : Integer) return Database.Values.Value is (Database.Values.From_Integer (K));
    package Items is new Database.Tables.Typed (Item, Integer, To_Row, From_Row, Key_Of, Key_Value);
-   DB : Database.Handle; Tx : Database.Transactions.Transaction; S : Database.Schema.Table_Schema; R : Database.Status.Result; Check : Database.Check.Check_Result;
+   DB : Database.Handle;
+   Tx : Database.Transactions.Transaction;
+   S : Database.Schema.Table_Schema;
+   R : Database.Status.Result;
+   Check : Database.Check.Check_Result;
 begin
    Database.Open_In_Memory (DB);
    S.Name := To_Unbounded_Wide_Wide_String ("items");

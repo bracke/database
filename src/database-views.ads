@@ -1,5 +1,4 @@
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Queries;
 with Database.Rows;
 with Database.Status;
@@ -7,7 +6,6 @@ with Database.Values;
 
 --  View metadata and durable view query bodies.
 package Database.Views is
-   use Ada.Strings.Wide_Wide_Unbounded;
    --  View_Id defines a public database type used by this package.
    type View_Id is new Natural;
    --  View_Definition stores the public fields for this database abstraction.

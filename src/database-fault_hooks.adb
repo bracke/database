@@ -1,9 +1,6 @@
-with Database.Status;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Metrics;
 
 package body Database.Fault_Hooks is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    type Fault_State is record
       Enabled : Boolean := False;
@@ -29,15 +26,15 @@ package body Database.Fault_Hooks is
       procedure Consume_Crash (Point : Crash_Point; Hit : out Boolean);
    private
       Faults : Fault_State_Array;
-      Crashes : Crash_State_Array := (others => False);
+      Crashes : Crash_State_Array := [others => False];
       Seed_Value : Natural := 1;
    end State;
 
    protected body State is
       procedure Reset_All is
       begin
-         Faults := (others => (Enabled => False, Countdown => 0, Counted => False));
-         Crashes := (others => False);
+         Faults := [others => (Enabled => False, Countdown => 0, Counted => False)];
+         Crashes := [others => False];
          Seed_Value := 1;
       end Reset_All;
 

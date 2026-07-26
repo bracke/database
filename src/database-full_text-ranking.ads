@@ -1,12 +1,10 @@
 --  Deterministic full-text ranking helpers.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Extension_Metadata;
 with Database.Status;
 with Database.Full_Text.Postings;
 
 --  Public specification for this database subsystem.
 package Database.Full_Text.Ranking is
-   use Ada.Strings.Wide_Wide_Unbounded;
    --  Score defines a public database type used by this package.
    type Score is digits 15;
 

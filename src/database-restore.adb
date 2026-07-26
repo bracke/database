@@ -1,11 +1,9 @@
 with Ada.Characters.Conversions;
 with Ada.Directories;
 with Database.Backup_Format;
-with Database.Crypto;
 with Database.Crypto_Checks;
 with Database.Encrypted_Persistence;
 with Database.Fault_Hooks;
-with Database.Keys;
 with Database.WAL;
 
 package body Database.Restore is
@@ -78,8 +76,8 @@ package body Database.Restore is
         (Search    => Search,
          Directory => Sidecar_Directory,
          Pattern   => Sidecar_Base & ".page*.enc",
-         Filter    => (Ada.Directories.Ordinary_File => True,
-                       others => False));
+         Filter    => [Ada.Directories.Ordinary_File => True,
+                       others => False]);
       while Ada.Directories.More_Entries (Search) loop
          Ada.Directories.Get_Next_Entry (Search, Dir_Entry);
          Delete_If_Exists
@@ -94,51 +92,6 @@ package body Database.Restore is
          exception when others => null;
          end;
    end Delete_Page_Sidecars;
-
-   function Any_Page_Sidecar_Exists (Database_Path : Wide_Wide_String) return Boolean is
-      Search      : Ada.Directories.Search_Type;
-      Native_Path : constant String := Native (Database_Path);
-      Found       : Boolean := False;
-
-      function Sidecar_Directory return String is
-      begin
-         declare
-            Dir : constant String := Ada.Directories.Containing_Directory (Native_Path);
-         begin
-            if Dir'Length = 0 then
-               return ".";
-            else
-               return Dir;
-            end if;
-         end;
-      exception
-         when others => return ".";
-      end Sidecar_Directory;
-
-      function Sidecar_Base return String is
-      begin
-         return Ada.Directories.Simple_Name (Native_Path);
-      exception
-         when others => return Native_Path;
-      end Sidecar_Base;
-   begin
-      Ada.Directories.Start_Search
-        (Search    => Search,
-         Directory => Sidecar_Directory,
-         Pattern   => Sidecar_Base & ".page*.enc",
-         Filter    => (Ada.Directories.Ordinary_File => True,
-                       others => False));
-      Found := Ada.Directories.More_Entries (Search);
-      Ada.Directories.End_Search (Search);
-      return Found;
-   exception
-      when others =>
-         begin
-            Ada.Directories.End_Search (Search);
-         exception when others => null;
-         end;
-         return False;
-   end Any_Page_Sidecar_Exists;
 
    function Restore_Artifacts_Exist (Database_Path : Wide_Wide_String) return Boolean is
    begin

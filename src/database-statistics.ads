@@ -1,5 +1,4 @@
 --  Query optimizer statistics facade.
-with Database.Diagnostics;
 with Database.Indexes;
 with Database.Schema;
 with Database.Status;

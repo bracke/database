@@ -1,10 +1,8 @@
 --  Strongly typed full-text query objects. No SQL-like query parser is required.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 
 --  Public specification for this database subsystem.
 package Database.Full_Text.Queries is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Query_Kind defines a public database type used by this package.
    type Query_Kind is

@@ -3,14 +3,12 @@
 --  This package does not expose SQL or parser syntax.  It defines the byte
 --  contract used when full-text terms/postings are stored inside ordinary
 --  database pages and therefore can be WAL-framed like every other page kind.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Full_Text.Postings;
 with Database.Storage.Pages;
 with Database.Status;
 
 --  Public specification for this database subsystem.
 package Database.Full_Text.Storage is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Native_Format_Version is a public constant used by this package.
    Native_Format_Version : constant Natural := 1;

@@ -1,7 +1,6 @@
 package body Database.Storage.Table_Heap_Layout
   with SPARK_Mode => On
 is
-   use type Database.Byte;
 
    function Raw_U32_Value
      (Buffer : Byte_Array;

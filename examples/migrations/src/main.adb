@@ -12,16 +12,29 @@ with Database.Values;
 procedure Main is
    use Ada.Strings.Wide_Wide_Unbounded;
    type Person is record Id : Integer; Name : Wide_Wide_String (1 .. 16); end record;
-   function To_Row (P : Person) return Database.Rows.Row is R : Database.Rows.Row; begin
-      Database.Rows.Append (R, Database.Values.From_Integer (P.Id)); Database.Rows.Append (R, Database.Values.From_Text (P.Name)); return R; end To_Row;
+   function To_Row (P : Person) return Database.Rows.Row is
+      R : Database.Rows.Row;
+   begin
+      Database.Rows.Append (R, Database.Values.From_Integer (P.Id));
+      Database.Rows.Append (R, Database.Values.From_Text (P.Name));
+      return R;
+   end To_Row;
    function From_Row (R : Database.Rows.Row) return Person is
       S : constant Wide_Wide_String := To_Wide_Wide_String (Database.Rows.Get (R, 1).Text);
-      P : Person := (Database.Rows.Get (R, 0).Int, (others => ' '));
-   begin for I in 1 .. Integer'Min (16, S'Length) loop P.Name (I) := S (S'First + I - 1); end loop; return P; end From_Row;
+      P : Person := (Database.Rows.Get (R, 0).Int, [others => ' ']);
+   begin
+      for I in 1 .. Integer'Min (16, S'Length) loop
+         P.Name (I) := S (S'First + I - 1);
+      end loop;
+      return P;
+   end From_Row;
    function Key_Of (P : Person) return Integer is (P.Id);
    function Key_Value (K : Integer) return Database.Values.Value is (Database.Values.From_Integer (K));
    package People is new Database.Tables.Typed (Person, Integer, To_Row, From_Row, Key_Of, Key_Value);
-   DB : Database.Handle; Tx : Database.Transactions.Transaction; S : Database.Schema.Table_Schema; R : Database.Status.Result;
+   DB : Database.Handle;
+   Tx : Database.Transactions.Transaction;
+   S : Database.Schema.Table_Schema;
+   R : Database.Status.Result;
 begin
    Database.Open_In_Memory (DB);
    S.Name := To_Unbounded_Wide_Wide_String ("people");

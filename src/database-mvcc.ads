@@ -26,6 +26,15 @@ package Database.MVCC is
    --  @param Tx_Id tx id argument supplied to the operation.
    procedure Mark_Rolled_Back (Tx_Id : Database.Versioning.Transaction_Id);
 
+   --  Drop a transaction's lifecycle entry entirely. Used on rollback once the
+   --  abort has been fully undone in every store (heap before-images, in-memory
+   --  finalizers, full-text rollback), so nothing references the transaction
+   --  any more. Forgetting it -- rather than retaining a Rolled_Back marker --
+   --  keeps the map bounded under a stream of aborts. A subsequent lookup reads
+   --  Unknown, which the visibility rules treat as committed, but that is moot
+   --  because no row created or deleted by the transaction survives.
+   procedure Forget (Tx_Id : Database.Versioning.Transaction_Id);
+
    --  Return lifecycle for the supplied database state or arguments.
    --  @param Tx_Id tx id argument supplied to the operation.
    --  @return Result produced by the function.
@@ -49,4 +58,9 @@ package Database.MVCC is
    --  @return Result produced by the function.
    function Safe_Reclaim_Version
      (Version : Database.Versioning.Commit_Version) return Boolean;
+
+   --  Number of transaction-lifecycle entries currently retained. Diagnostic
+   --  and test hook: this stays bounded over a long-running session because
+   --  settled committed entries are reclaimed once below the oldest snapshot.
+   function Tracked_Transaction_Count return Natural;
 end Database.MVCC;

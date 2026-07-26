@@ -2,14 +2,9 @@ with Ada.Characters.Conversions;
 with Ada.Containers.Vectors;
 with Ada.Directories;
 with Ada.Streams;
-with Ada.Streams.Stream_IO;
-with Ada.Strings.Wide_Wide_Unbounded;
-with Database.Storage.File_IO;
-with Database.Storage.Pages;
 with Database.Metrics;
 with Database.Fault_Hooks;
-with Database.Log_Sequence;
-with Database.Status;
+with Database.MVCC;
 with Database.Tracing;
 with Database.WAL.Payload_Rules;
 with Interfaces.C;
@@ -18,17 +13,16 @@ package body Database.WAL is
    use type Database.Log_Sequence.Log_Sequence_Number;
    use Ada.Streams;
    use Ada.Streams.Stream_IO;
-   use Ada.Strings.Wide_Wide_Unbounded;
    use Database.Log_Sequence;
    use Database.Storage.Pages;
    use type Interfaces.C.int;
 
    Header_Size : constant := 40;
    Magic : constant Stream_Element_Array (0 .. 7)  :=
-     (Stream_Element (Character'Pos ('D')), Stream_Element (Character'Pos ('B')),
+     [Stream_Element (Character'Pos ('D')), Stream_Element (Character'Pos ('B')),
       Stream_Element (Character'Pos ('W')), Stream_Element (Character'Pos ('A')),
       Stream_Element (Character'Pos ('L')), Stream_Element (Character'Pos ('1')),
-      Stream_Element (Character'Pos ('7')), 0);
+      Stream_Element (Character'Pos ('7')), 0];
    O_RDONLY : constant Interfaces.C.int := 0;
    O_RDWR : constant Interfaces.C.int := 2;
    O_DIRECTORY : constant Interfaces.C.int := 16#10000#;
@@ -398,7 +392,7 @@ package body Database.WAL is
       Page_Kind_Code : Natural;
       Payload        : Stream_Element_Array;
       LSN            : out Log_Sequence_Number) return Database.Status.Result is
-      H : Stream_Element_Array (0 .. Header_Size - 1) := (others => 0);
+      H : Stream_Element_Array (0 .. Header_Size - 1) := [others => 0];
    begin
       if not W.Opened then
          return Database.Status.Failure (Database.Status.Not_Open, "WAL not open");
@@ -515,7 +509,7 @@ package body Database.WAL is
       Transaction_Id : Natural;
       Commit_Version : Natural;
       LSN            : out Log_Sequence_Number) return Database.Status.Result is
-      Payload : Stream_Element_Array (0 .. 3) := (others => 0);
+      Payload : Stream_Element_Array (0 .. 3) := [others => 0];
       R       : Database.Status.Result;
    begin
       if Database.Fault_Hooks.Should_Crash
@@ -1113,5 +1107,66 @@ package body Database.WAL is
          end;
          return Max;
    end Max_Commit_Version;
+
+   procedure Restore_Committed_Lifecycles (Database_Path : Wide_Wide_String) is
+      File : Ada.Streams.Stream_IO.File_Type;
+      H    : Stream_Element_Array (0 .. Header_Size - 1);
+      Last : Database.Log_Sequence.Log_Sequence_Number :=
+        Database.Log_Sequence.Invalid_LSN;
+      K    : Record_Kind;
+      L    : Log_Sequence_Number;
+      R    : Database.Status.Result;
+   begin
+      if not Exists (Database_Path) then
+         return;
+      end if;
+
+      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)));
+      while not End_Of_File (File) loop
+         exit when not Read_Header (File, H);
+         declare
+            Len   : constant Natural := Get_U32 (H, 26);
+            Len_R : constant Database.Status.Result :=
+              Validate_Payload_Length (H, Len);
+         begin
+            exit when not Database.Status.Is_Ok (Len_R);
+            if Len = 0 then
+               declare
+                  Empty : Stream_Element_Array (1 .. 0);
+               begin
+                  R := Validate_Header (H, Empty, Last, K, L);
+               end;
+               exit when not Database.Status.Is_Ok (R);
+            else
+               declare
+                  Payload      : Stream_Element_Array
+                    (0 .. Stream_Element_Offset (Len - 1));
+                  Payload_Last : Stream_Element_Offset;
+               begin
+                  Read (File, Payload, Payload_Last);
+                  exit when Payload_Last /= Payload'Last;
+                  R := Validate_Header (H, Payload, Last, K, L);
+                  exit when not Database.Status.Is_Ok (R);
+                  if K = Commit_Record and then Len >= 4 then
+                     --  Header offset 17 holds the transaction id; payload
+                     --  offset 0 holds the commit version (see Append_Commit).
+                     Database.MVCC.Mark_Committed
+                       (Get_U32 (H, 17), Get_U32 (Payload, 0));
+                  end if;
+               end;
+            end if;
+         end;
+      end loop;
+      Ada.Streams.Stream_IO.Close (File);
+   exception
+      when others =>
+         begin
+            if Ada.Streams.Stream_IO.Is_Open (File) then
+               Ada.Streams.Stream_IO.Close (File);
+            end if;
+         exception
+            when others => null;
+         end;
+   end Restore_Committed_Lifecycles;
 
 end Database.WAL;

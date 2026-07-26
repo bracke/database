@@ -1,12 +1,10 @@
 with Ada.Containers;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Types;
 with Database.Date_Time;
 with Database.UUIDs;
 
 package body Database.Ordering is
    use type Database.Types.Value_Kind;
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Ada.Containers.Count_Type;
 
    function Decimal_Compare (L, R : Database.Types.Decimal) return Integer is
@@ -26,7 +24,7 @@ package body Database.Ordering is
          return -1;
       elsif LC > RC then
          return 1;
-         else
+      else
             return 0;
       end if;
    end Decimal_Compare;
@@ -83,7 +81,7 @@ package body Database.Ordering is
                return 0;
             elsif not Left.Bool and then Right.Bool then
                return -1;
-               else
+            else
                   return 1;
             end if;
          when Database.Types.Integer_Value =>
@@ -91,7 +89,7 @@ package body Database.Ordering is
                return -1;
             elsif Left.Int > Right.Int then
                return 1;
-               else
+            else
                   return 0;
             end if;
          when Database.Types.Long_Integer_Value =>
@@ -99,7 +97,7 @@ package body Database.Ordering is
                return -1;
             elsif Left.Long_Int > Right.Long_Int then
                return 1;
-               else
+            else
                   return 0;
             end if;
          when Database.Types.Float_Value =>
@@ -107,7 +105,7 @@ package body Database.Ordering is
                return -1;
             elsif Left.Flt > Right.Flt then
                return 1;
-               else
+            else
                   return 0;
             end if;
          when Database.Types.Decimal_Value =>
@@ -117,15 +115,15 @@ package body Database.Ordering is
                return -1;
             elsif To_Wide_Wide_String (Left.Text) > To_Wide_Wide_String (Right.Text) then
                return 1;
-               else
+            else
                   return 0;
-               end if;
+            end if;
          when Database.Types.Blob_Value =>
             if Left.Blob.Length < Right.Blob.Length then
                return -1;
             elsif Left.Blob.Length > Right.Blob.Length then
                return 1;
-               else
+            else
                   return 0;
             end if;
          when Database.Types.Timestamp_Value =>
@@ -135,9 +133,9 @@ package body Database.Ordering is
                return -1;
             elsif To_Wide_Wide_String (Left.Enum_Text) > To_Wide_Wide_String (Right.Enum_Text) then
                return 1;
-               else
+            else
                   return 0;
-               end if;
+            end if;
          when Database.Types.Date_Value => return Database.Date_Time.Compare (Left.Date, Right.Date);
          when Database.Types.Time_Value => return Database.Date_Time.Compare (Left.Clock_Time, Right.Clock_Time);
          when Database.Types.Date_Time_Value => return Database.Date_Time.Compare (Left.Date_Time, Right.Date_Time);
@@ -148,9 +146,9 @@ package body Database.Ordering is
                return -1;
             elsif To_Wide_Wide_String (Left.Array_Text) > To_Wide_Wide_String (Right.Array_Text) then
                return 1;
-               else
+            else
                   return 0;
-               end if;
+            end if;
       end case;
    end Base_Compare;
 

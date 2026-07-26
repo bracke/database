@@ -9,12 +9,10 @@
 --  SQL-like behavior.
 
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Full_Text.Postings;
 
 --  Public specification for this database subsystem.
 package Database.Full_Text.Segments is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Segment_Id defines a public database type used by this package.
    type Segment_Id is new Natural;

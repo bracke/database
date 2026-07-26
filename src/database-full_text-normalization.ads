@@ -1,9 +1,7 @@
 --  Conservative Unicode normalization for full-text matching.
-with Ada.Strings.Wide_Wide_Unbounded;
 
 --  Public specification for this database subsystem.
 package Database.Full_Text.Normalization is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Accent_Mode enumerates the supported values for this database abstraction.
    type Accent_Mode is (Preserve_Accents, Strip_Basic_Latin_Accents);

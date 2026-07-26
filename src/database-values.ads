@@ -1,13 +1,11 @@
 --  Runtime database values. Text is Unicode and rows are serialized value-by-value.
 with Ada.Containers.Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Date_Time;
 with Database.Types;
 with Database.UUIDs;
 
 --  Typed value representation used by rows, predicates, queries, and storage.
 package Database.Values is
-   use Ada.Strings.Wide_Wide_Unbounded;
    --  Byte defines a public database type used by this package.
    subtype Byte is Natural range 0 .. 255;
    --  Byte_Vectors stores ordered byte values for this package.

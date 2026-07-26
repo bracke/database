@@ -1,4 +1,3 @@
-with Database.Status;
 with Database.Fault_Hooks;
 
 package body Database.Fault_Injection is

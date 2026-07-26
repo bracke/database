@@ -1,11 +1,9 @@
 --  Ada-native deterministic text collation registry.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Extension_Metadata;
 with Database.Status;
 
 --  Custom collation registry support.
 package Database.Collations is
-   use Ada.Strings.Wide_Wide_Unbounded;
    --  Collation_Function defines a public database type used by this package.
    type Collation_Function is access function (Left, Right : Wide_Wide_String) return Integer;
    --  Collation_Metadata stores the public fields for this database abstraction.

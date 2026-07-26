@@ -1,10 +1,8 @@
 --  Unicode-safe snippet generation for full-text search results.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Full_Text.Queries;
 
 --  Public specification for this database subsystem.
 package Database.Full_Text.Snippets is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Snippet_Config stores the public fields for this database abstraction.
    type Snippet_Config is record

@@ -1,5 +1,4 @@
 with Ada.Containers;
-with Ada.Strings.Wide_Wide_Unbounded;
 package body Database.Full_Text.Postings is
    use type Ada.Containers.Count_Type;
    function Same_Row (Left, Right : Row_Reference) return Boolean is

@@ -1,14 +1,11 @@
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Rows;
 use Database.Rows;
 with Database.Schema;
 with Database.Status;
-with Database.Values;
 
 --  Foreign-key metadata and enforcement.
 package Database.Foreign_Keys is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Column_Id_Vectors stores ordered column id values for this package.
    package Column_Id_Vectors is new Ada.Containers.Indefinite_Vectors

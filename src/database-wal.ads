@@ -130,6 +130,18 @@ package Database.WAL is
    --  no committed transaction version is present.
    function Max_Commit_Version (Database_Path : Wide_Wide_String) return Natural;
 
+   --  Reconstruct the global MVCC transaction-lifecycle map after recovery.
+   --  Scans the WAL commit records and marks each committed transaction as
+   --  committed (with its commit version) in Database.MVCC. A fresh process
+   --  starts with an empty map, so without this a replayed committed row's
+   --  creating/deleting transaction reads back as Unknown -- resurrecting a
+   --  committed deletion for visibility and blocking space reclamation of the
+   --  dead row. Call it during open-time recovery, after Replay_WAL. Safe to
+   --  call when no WAL exists (it does nothing). Transactions whose id exceeds
+   --  the tracked range are left Unknown and rely on the visibility rules'
+   --  persisted-tombstone handling instead.
+   procedure Restore_Committed_Lifecycles (Database_Path : Wide_Wide_String);
+
    --  Return validate for the supplied database state or arguments.
    --  @param Database_Path database path argument supplied to the operation.
    --  @return True when the requested condition holds;

@@ -4,13 +4,12 @@ with CryptoLib.Secure_Wipe;
 
 package body Database.Keys is
    use type Ada.Streams.Stream_Element_Offset;
-   use Database.Storage.Pages;
 
    subtype Stream_Array is Ada.Streams.Stream_Element_Array;
 
    function Empty_Key return Encryption_Key is
    begin
-      return (Valid => False, Id => 0, Data => (others => 0));
+      return (Valid => False, Id => 0, Data => [others => 0]);
    end Empty_Key;
 
    function Is_Valid (Key : Encryption_Key) return Boolean is (Key.Valid);
@@ -60,7 +59,7 @@ package body Database.Keys is
       Salt_Data     : Stream_Array := Salt_To_Stream (Salt);
       Derived       : Stream_Array := CryptoLib.Macs.PBKDF2_HMAC_SHA256
         (Password_Data, Salt_Data, 100_000, 32);
-      Data          : Binary_Key := (others => 0);
+      Data          : Binary_Key := [others => 0];
    begin
       for I in Data'Range loop
          Data (I) := Byte (Derived (Derived'First + Ada.Streams.Stream_Element_Offset (I)));
@@ -81,7 +80,7 @@ package body Database.Keys is
    procedure Clear (Key : in out Encryption_Key) is
    begin
       CryptoLib.Secure_Wipe.Wipe (Key.Data'Address, Key.Data'Length);
-      Key.Data := (others => 0);
+      Key.Data := [others => 0];
       Key.Id := 0;
       Key.Valid := False;
    end Clear;

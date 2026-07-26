@@ -1,8 +1,6 @@
-with Interfaces;
 package body Database.Indexes.BTree_Invariants
   with SPARK_Mode => On
 is
-   use type Interfaces.Unsigned_32;
    use type Interfaces.Integer_64;
 
    function Find_Node_Index

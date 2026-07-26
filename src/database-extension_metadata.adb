@@ -1,7 +1,5 @@
-with Ada.Strings.Wide_Wide_Unbounded;
 
 package body Database.Extension_Metadata is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    function Same_Object
      (Left  : Extension_Object_Metadata;

@@ -1,8 +1,6 @@
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Metrics;
 
 package body Database.Profiling is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    function Build (Q : Database.Queries.Query) return Query_Profile is
       P : Query_Profile;

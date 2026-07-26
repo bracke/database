@@ -1,12 +1,10 @@
 --  Rich logical type metadata validation for schemas and catalog persistence.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Status;
 with Database.Types;
 
 --  Richer type metadata descriptors.
 package Database.Type_Metadata is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Enum_Literal stores the public fields for this database abstraction.
    type Enum_Literal is record

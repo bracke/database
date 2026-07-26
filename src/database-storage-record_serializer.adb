@@ -1,8 +1,6 @@
-with Interfaces;
 package body Database.Storage.Record_Serializer
   with SPARK_Mode => On
 is
-   use type Interfaces.Unsigned_8;
    use type Interfaces.Unsigned_32;
 
    function Read_U32_LE

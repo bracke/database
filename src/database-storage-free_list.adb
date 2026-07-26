@@ -1,9 +1,5 @@
-with Database.Storage.File_IO;
-with Database.Storage.Pages;
-with Database.Status;
 package body Database.Storage.Free_List is
    use type Database.Storage.Pages.Page_Kind;
-   use type Database.Storage.Pages.Page_Id;
    procedure Initialize_From_File
      (A : in out Allocator;
       F : in out Database.Storage.File_IO.File_Handle) is

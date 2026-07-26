@@ -6,7 +6,6 @@ with Database.Predicates;
 with Database.Rows;
 use Database.Rows;
 with Database.Status;
-with Database.Plans;
 with Database.Execution_Plans;
 with Database.Transactions;
 with Database.Full_Text.Queries;

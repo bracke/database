@@ -1,16 +1,12 @@
 --  Integrity checking for catalog, heaps, indexes, pages, and free-list state.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Schema;
 with Database.Indexes;
-with Database.Full_Text;
 with Database.Storage.Pages;
 with Database.Transactions;
 
    --  Public nested package `Database.Check`.
 package Database.Check is
-   use type Database.Storage.Pages.Page_Id;
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Public type `Check_Error_Kind`.
    type Check_Error_Kind is

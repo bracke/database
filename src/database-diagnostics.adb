@@ -1,17 +1,15 @@
 with Database.Catalog;
 with Database.Full_Text;
-with Database.Rows;
 with Database.Status;
 with Database.Storage.File_IO;
 with Database.Storage.Pages;
 with Database.Storage.Table_Heap;
-with Database.Transactions;
 
 package body Database.Diagnostics is
 
    function Page_Count
      (Tx : in out Database.Transactions.Transaction) return Natural is
-      DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
    begin
       if DB = null or else Database.Backend (DB.all) /= Database.Persistent_Backend then
          return 0;
@@ -36,7 +34,7 @@ package body Database.Diagnostics is
    function Table_Row_Count
      (Tx     : in out Database.Transactions.Transaction;
       Schema : Database.Schema.Table_Schema) return Natural is
-      DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
       C  : Database.Storage.Table_Heap.Heap_Cursor;
       R  : Database.Status.Result;
       Count : Natural := 0;

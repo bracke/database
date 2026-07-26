@@ -1,7 +1,3 @@
-with Database.Status;
-with Database.Crypto;
-with Database.Keys;
-with Database.Log_Sequence;
 
 package body Database.Crypto_Checks is
    use type Database.Log_Sequence.Log_Sequence_Number;
@@ -46,8 +42,8 @@ package body Database.Crypto_Checks is
       LSN            : Database.Log_Sequence.Log_Sequence_Number)
       return Database.Crypto.Byte_Array
    is
-      Data : Database.Crypto.Byte_Array (0 .. 23) := (others => 0);
-      L    : Natural := Natural (LSN mod Database.Log_Sequence.Log_Sequence_Number (Natural'Last));
+      Data : Database.Crypto.Byte_Array (0 .. 23) := [others => 0];
+      L : constant Natural := Natural (LSN mod Database.Log_Sequence.Log_Sequence_Number (Natural'Last));
    begin
       Data (0) := Database.Crypto.Byte (Character'Pos ('D'));
       Data (1) := Database.Crypto.Byte (Character'Pos ('B'));

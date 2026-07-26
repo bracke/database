@@ -1,14 +1,11 @@
-with Database.Status;
 with Database.Catalog;
 with Database.Storage.File_IO;
 with Database.Storage.Table_Heap;
-with Database.Storage.Pages;
+with Database.Memory_Store;
 with Database.MVCC;
-with Database.Versioning;
 with Database.WAL;
 with Database.Log_Sequence;
 with Database.Schema;
-with Database.Rows;
 with Database.Foreign_Keys;
 with Database.Check_Constraints;
 with Database.Full_Text;
@@ -24,7 +21,30 @@ use Ada.Strings.Wide_Wide_Unbounded;
 package body Database.Transactions is
    use type Ada.Containers.Count_Type;
    use type Database.Log_Sequence.Log_Sequence_Number;
-   Next_Transaction_Id : Natural := 1;
+
+   --  Transaction ids are handed out here. Concurrent readers on one handle run
+   --  Start in parallel (the read lock admits many), so the allocation must be
+   --  atomic or two transactions could receive the same id.
+   protected Id_Counter is
+      procedure Next (Id : out Database.Versioning.Transaction_Id);
+      procedure Reserve_Through (Highest : Natural);
+   private
+      Value : Natural := 1;
+   end Id_Counter;
+
+   protected body Id_Counter is
+      procedure Next (Id : out Database.Versioning.Transaction_Id) is
+      begin
+         Id := Value;
+         Value := Value + 1;
+      end Next;
+      procedure Reserve_Through (Highest : Natural) is
+      begin
+         if Highest >= Value then
+            Value := Highest + 1;
+         end if;
+      end Reserve_Through;
+   end Id_Counter;
 
    function Already_Saved
      (Tx : Transaction;
@@ -93,8 +113,7 @@ package body Database.Transactions is
       Tx.Current_State := Active;
       Tx.Current_Mode := Mode_In;
       Tx.Lock_Held := True;
-      Tx.Transaction_Id := Next_Transaction_Id;
-      Next_Transaction_Id := Next_Transaction_Id + 1;
+      Id_Counter.Next (Tx.Transaction_Id);
       Tx.Started_At_Version := Database.Commit_Version (DB);
       Database.MVCC.Register_Snapshot (Tx.Started_At_Version);
       Database.MVCC.Register_Transaction (Tx.Transaction_Id);
@@ -153,6 +172,11 @@ package body Database.Transactions is
    begin
       Start (DB, Tx, Read_Only, True, Granted);
    end Begin_Read;
+
+   procedure Reserve_Ids_Through (Highest : Natural) is
+   begin
+      Id_Counter.Reserve_Through (Highest);
+   end Reserve_Ids_Through;
 
    procedure Begin_Write (DB : in out Database.Handle; Tx : out Transaction) is
       Granted : Boolean;
@@ -492,7 +516,10 @@ package body Database.Transactions is
          end if;
       end if;
       if Tx.Current_Mode = Read_Write then
-         Database.MVCC.Mark_Rolled_Back (Tx.Transaction_Id);
+         --  Undo the aborted transaction's work in every store: heap pages were
+         --  restored from before-images above; drop its in-memory inserts and
+         --  undo its in-memory delete marks here; then migrations and full text.
+         Database.Memory_Store.Rollback (Tx.Transaction_Id);
          Database.Migrations.Rollback_Transaction
            (Natural (Tx.Transaction_Id), Tx.DB.all);
          Database.Full_Text.Select_Database (Database.Full_Text_State_Key (Tx.DB.all));
@@ -506,6 +533,10 @@ package body Database.Transactions is
                return R;
             end if;
          end if;
+         --  Nothing references the transaction any more, so drop its lifecycle
+         --  entry outright instead of retaining a Rolled_Back marker. This is
+         --  what keeps the MVCC map bounded under a stream of aborts.
+         Database.MVCC.Forget (Tx.Transaction_Id);
       end if;
       Tx.Ended_At_Version := Database.Commit_Version (Tx.DB.all);
       Tx.Current_State := Rolled_Back;

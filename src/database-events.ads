@@ -1,10 +1,8 @@
 --  Operational lifecycle events and isolated handler dispatch.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Status;
 
 --  Operational event hooks.
 package Database.Events is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Event_Kind defines a public database type used by this package.
    type Event_Kind is

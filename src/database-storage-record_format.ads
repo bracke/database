@@ -8,7 +8,7 @@ with Database.Storage.Pages;
 package Database.Storage.Record_Format is
    --  Public type `Byte_Vector`.
    type Byte_Vector is record
-      Data : Database.Storage.Pages.Byte_Array (0 .. Database.Storage.Pages.Payload_Capacity - 1) := (others => 0);
+      Data : Database.Storage.Pages.Byte_Array (0 .. Database.Storage.Pages.Payload_Capacity - 1) := [others => 0];
       Last : Natural := 0;
    end record;
 

@@ -1,5 +1,4 @@
 --  Ada-native aggregate function registry for grouped query execution.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Extension_Metadata;
 with Database.Status;
 with Database.Types;
@@ -7,7 +6,6 @@ with Database.Values;
 
 --  Aggregate function registry support.
 package Database.Aggregate_Functions is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Aggregate_State defines a public database type used by this package.
    type Aggregate_State is tagged record

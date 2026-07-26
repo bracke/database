@@ -1,6 +1,3 @@
-with Database.Status;
-with Interfaces;
-with Database.Log_Sequence;
 
 package body Database.Storage.Pages is
    use type Ada.Streams.Stream_Element_Offset;
@@ -72,7 +69,7 @@ package body Database.Storage.Pages is
       Kind : Page_Kind;
       Next : Page_Id := Invalid_Page_Id) is
    begin
-      P.Buffer := (others => 0);
+      P.Buffer := [others => 0];
       P.Buffer (0) := Magic_0;
       P.Buffer (1) := Magic_1;
       P.Buffer (2) := Magic_2;
@@ -201,7 +198,7 @@ package body Database.Storage.Pages is
    function From_Stream (S : Ada.Streams.Stream_Element_Array) return Page is
       P : Page;
    begin
-      P.Buffer := (others => 0);
+      P.Buffer := [others => 0];
       for I in 0 .. Page_Size - 1 loop
          P.Buffer (I) := Byte (S (S'First + Ada.Streams.Stream_Element_Offset (I)));
       end loop;

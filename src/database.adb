@@ -1,19 +1,19 @@
 with Database.Status;
 with Database.Storage.File_IO;
 with Database.Storage.Free_List;
-with Database.Locking;
 with Database.Keys;
 with Database.Catalog;
 with Database.Extensions;
 with Database.Functions;
 with Database.Aggregate_Functions;
 with Database.Collations;
-with Database.Expressions;
 with Database.Full_Text;
 with Database.Full_Text.Tokenizers;
 with Database.Full_Text.Ranking;
 with Database.Validation_Hooks;
+with Database.Memory_Store;
 with Database.Replay;
+with Database.Transactions;
 with Database.WAL;
 
 package body Database is
@@ -70,14 +70,33 @@ package body Database is
       function Waiting_Writers return Natural is (Waiting_Write);
    end Read_Write_Lock;
 
-   Next_Full_Text_State_Key : Natural := 1;
-   Next_Catalog_State_Key : Natural := 1;
+   --  State keys are process-global; opening databases from several tasks must
+   --  not hand out the same key, so allocation is atomic.
+   protected State_Key_Counter is
+      procedure Next_Catalog (Key : out Natural);
+      procedure Next_Full_Text (Key : out Natural);
+   private
+      Next_Catalog_Value   : Natural := 1;
+      Next_Full_Text_Value : Natural := 1;
+   end State_Key_Counter;
+
+   protected body State_Key_Counter is
+      procedure Next_Catalog (Key : out Natural) is
+      begin
+         Key := Next_Catalog_Value;
+         Next_Catalog_Value := Next_Catalog_Value + 1;
+      end Next_Catalog;
+      procedure Next_Full_Text (Key : out Natural) is
+      begin
+         Key := Next_Full_Text_Value;
+         Next_Full_Text_Value := Next_Full_Text_Value + 1;
+      end Next_Full_Text;
+   end State_Key_Counter;
 
    procedure Assign_Catalog_State_Key (DB : in out Handle) is
    begin
       if DB.Catalog_State_Key_Value = 0 then
-         DB.Catalog_State_Key_Value := Next_Catalog_State_Key;
-         Next_Catalog_State_Key := Next_Catalog_State_Key + 1;
+         State_Key_Counter.Next_Catalog (DB.Catalog_State_Key_Value);
       end if;
       Database.Catalog.Select_Database (DB.Catalog_State_Key_Value);
       Database.Extensions.Select_Database (DB.Catalog_State_Key_Value);
@@ -92,8 +111,7 @@ package body Database is
    procedure Assign_Full_Text_State_Key (DB : in out Handle) is
    begin
       if DB.FT_State_Key = 0 then
-         DB.FT_State_Key := Next_Full_Text_State_Key;
-         Next_Full_Text_State_Key := Next_Full_Text_State_Key + 1;
+         State_Key_Counter.Next_Full_Text (DB.FT_State_Key);
       end if;
       Database.Full_Text.Select_Database (DB.FT_State_Key);
    end Assign_Full_Text_State_Key;
@@ -169,6 +187,10 @@ package body Database is
          DB.Last := Database.Replay.Replay_WAL (Path, DB.File);
          if Database.Status.Is_Ok (DB.Last) then
             DB.Version := Natural'Max (DB.Version, Database.WAL.Max_Commit_Version (Path));
+            --  Rebuild the MVCC committed-transaction map from the replayed WAL
+            --  so visibility and reclamation treat recovered committed rows
+            --  correctly (a fresh process starts with an empty map).
+            Database.WAL.Restore_Committed_Lifecycles (Path);
          end if;
       end if;
       if Database.Status.Is_Ok (DB.Last) then
@@ -178,6 +200,10 @@ package body Database is
          Database.Storage.Free_List.Initialize_From_File (DB.Page_Allocator, DB.File);
          DB.Last := Database.Catalog.Load (DB);
          if Database.Status.Is_Ok (DB.Last) then
+            --  Never hand out a transaction id that a persisted row still
+            --  references; Catalog.Load derived the high-water mark from the
+            --  heap (covers both replayed-WAL and clean-checkpoint reopens).
+            Database.Transactions.Reserve_Ids_Through (DB.Max_Persisted_Tx);
             Database.Full_Text.Select_Database (DB.FT_State_Key);
             DB.Last := Database.Full_Text.Load (DB, Path);
             if Database.Status.Is_Ok (DB.Last) then
@@ -189,8 +215,11 @@ package body Database is
             end if;
          end if;
       else
+         --  Open validation failed; close the handle but keep DB.Last, which
+         --  already holds the reason, rather than the close status.
          declare
             R : constant Database.Status.Result := Database.Storage.File_IO.Close (DB.File);
+            pragma Unreferenced (R);
          begin
             null;
          end;
@@ -208,6 +237,10 @@ package body Database is
          DB.Last := Database.Replay.Replay_WAL (Path, DB.File);
          if Database.Status.Is_Ok (DB.Last) then
             DB.Version := Natural'Max (DB.Version, Database.WAL.Max_Commit_Version (Path));
+            --  Rebuild the MVCC committed-transaction map from the replayed WAL
+            --  so visibility and reclamation treat recovered committed rows
+            --  correctly (a fresh process starts with an empty map).
+            Database.WAL.Restore_Committed_Lifecycles (Path);
          end if;
       end if;
       if Database.Status.Is_Ok (DB.Last) then
@@ -220,6 +253,10 @@ package body Database is
          Database.Storage.Free_List.Initialize_From_File (DB.Page_Allocator, DB.File);
          DB.Last := Database.Catalog.Load (DB);
          if Database.Status.Is_Ok (DB.Last) then
+            --  Never hand out a transaction id that a persisted row still
+            --  references; Catalog.Load derived the high-water mark from the
+            --  heap (covers both replayed-WAL and clean-checkpoint reopens).
+            Database.Transactions.Reserve_Ids_Through (DB.Max_Persisted_Tx);
             Database.Full_Text.Select_Database (DB.FT_State_Key);
             DB.Last := Database.Full_Text.Load (DB, Path);
             if Database.Status.Is_Ok (DB.Last) then
@@ -231,8 +268,11 @@ package body Database is
             end if;
          end if;
       else
+         --  Open validation failed; close the handle but keep DB.Last, which
+         --  already holds the reason, rather than the close status.
          declare
             R : constant Database.Status.Result := Database.Storage.File_IO.Close (DB.File);
+            pragma Unreferenced (R);
          begin
             null;
          end;
@@ -289,6 +329,8 @@ package body Database is
       if DB.Catalog_State_Key_Value /= 0 then
          Database.Catalog.Drop_Database (DB.Catalog_State_Key_Value);
          Database.Extensions.Drop_Database (DB.Catalog_State_Key_Value);
+         --  Free this handle's in-memory rows (no-op for a persistent handle).
+         Database.Memory_Store.Drop (DB.Catalog_State_Key_Value);
       end if;
 
       DB.Kind := Closed_Backend;

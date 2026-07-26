@@ -36,7 +36,7 @@ package Database.Storage.Pages is
 
    --  Public type `Page`.
    type Page is record
-      Buffer : Page_Buffer := (others => 0);
+      Buffer : Page_Buffer := [others => 0];
    end record;
 
    --  Public operation `Initialize`. See the package documentation for transaction, ownership, and error-result

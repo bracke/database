@@ -1,6 +1,5 @@
 --  Inverted full-text index storage and lookup operations.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Full_Text.Normalization;
 with Database.Full_Text.Postings;
 with Database.Full_Text.Tokenizers;
@@ -12,7 +11,6 @@ with Database.Versioning;
 
 --  Public specification for this database subsystem.
 package Database.Full_Text.Indexes is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Full_Text_Index_Id defines a public database type used by this package.
    type Full_Text_Index_Id is new Natural;

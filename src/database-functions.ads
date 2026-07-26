@@ -1,5 +1,4 @@
 --  Ada-native scalar function registry for expressions, generated columns, and constraints.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Extension_Metadata;
 with Database.Status;
 with Database.Types;
@@ -7,7 +6,6 @@ with Database.Values;
 
 --  Scalar function registry support.
 package Database.Functions is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Scalar_Function defines a public database type used by this package.
    type Scalar_Function is access function

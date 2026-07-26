@@ -1,18 +1,11 @@
-with Ada.Strings.Wide_Wide_Unbounded;
-with Database.Status;
-with Database.Log_Sequence;
 with Ada.Characters.Conversions;
 with Ada.Directories;
 with Ada.Streams;
 with Ada.Streams.Stream_IO;
-with Ada.Text_IO;
 with Ada.Wide_Wide_Text_IO;
-with Database.Storage.Pages;
-with Database.WAL;
 with Interfaces;
 
 package body Database.Backup_Format is
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Interfaces.Unsigned_64;
 
    Checksum_Modulus : constant Interfaces.Unsigned_64 := 2_147_483_647;

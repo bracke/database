@@ -1,4 +1,3 @@
-with Ada.Characters.Conversions;
 with Ada.Containers;
 with Ada.Strings.Wide_Wide_Unbounded;
 use Ada.Strings.Wide_Wide_Unbounded;
@@ -158,7 +157,8 @@ package body Database.Expressions is
             return True;
          when Registered_Function_Expr =>
             if not Database.Status.Is_Ok (Database.Functions.Validate_Persistent_Use (
-              To_Wide_Wide_String (Expr.Node.Function_Name))) then
+              To_Wide_Wide_String (Expr.Node.Function_Name)))
+            then
                return False;
             end if;
             for A of Expr.Node.Registered_Args loop
@@ -257,16 +257,16 @@ package body Database.Expressions is
               Schema,
               Row,
               L);
-              if not Database.Status.Is_Ok (Res) then
-                 return Res;
-              end if;
+            if not Database.Status.Is_Ok (Res) then
+               return Res;
+            end if;
             Res := Evaluate  ((Node => Expr.Node.Right),
               Schema,
               Row,
               R);
-              if not Database.Status.Is_Ok (Res) then
-                 return Res;
-              end if;
+            if not Database.Status.Is_Ok (Res) then
+               return Res;
+            end if;
             if L.Kind = Database.Types.Integer_Value and then R.Kind = Database.Types.Integer_Value then
                case Expr.Node.Kind is
                   when Add_Expr => Value := Database.Values.From_Integer (L.Int + R.Int);
@@ -275,16 +275,18 @@ package body Database.Expressions is
                   when Divide_Expr =>
                      if R.Int = 0 then
                         Value := Database.Values.Null_Value;
-                        else
+                     else
                            Value := Database.Values.From_Integer (L.Int / R.Int);
                      end if;
                   when others => null;
                end case;
             elsif Expr.Node.Kind = Add_Expr and then L.Kind = Database.Types.Date_Time_Value
-              and then R.Kind = Database.Types.Duration_Value then
+              and then R.Kind = Database.Types.Duration_Value
+            then
                Value := Database.Values.From_Date_Time (Database.Date_Time.Add (L.Date_Time, R.Time_Span));
             elsif Expr.Node.Kind = Subtract_Expr and then L.Kind = Database.Types.Date_Time_Value
-              and then R.Kind = Database.Types.Date_Time_Value then
+              and then R.Kind = Database.Types.Date_Time_Value
+            then
                Value := Database.Values.From_Duration (Database.Date_Time.Difference (L.Date_Time, R.Date_Time));
             else
                Value := Database.Values.Null_Value;
@@ -297,16 +299,16 @@ package body Database.Expressions is
               Schema,
               Row,
               L);
-              if not Database.Status.Is_Ok (Res) then
-                 return Res;
-              end if;
+            if not Database.Status.Is_Ok (Res) then
+               return Res;
+            end if;
             Res := Evaluate  ((Node => Expr.Node.Right),
               Schema,
               Row,
               R);
-              if not Database.Status.Is_Ok (Res) then
-                 return Res;
-              end if;
+            if not Database.Status.Is_Ok (Res) then
+               return Res;
+            end if;
             if L.Kind = Database.Types.Null_Value or else R.Kind = Database.Types.Null_Value then
                Value := Database.Values.From_Boolean (False);
             elsif L.Kind = Database.Types.Integer_Value and then R.Kind = Database.Types.Integer_Value then
@@ -332,19 +334,19 @@ package body Database.Expressions is
               Schema,
               Row,
               B1);
-              if not Database.Status.Is_Ok (Res) then
-                 return Res;
-              end if;
+            if not Database.Status.Is_Ok (Res) then
+               return Res;
+            end if;
             Res := Evaluate_Boolean  ((Node => Expr.Node.Right),
               Schema,
               Row,
               B2);
-              if not Database.Status.Is_Ok (Res) then
-                 return Res;
-              end if;
+            if not Database.Status.Is_Ok (Res) then
+               return Res;
+            end if;
             if Expr.Node.Kind = And_Expr then
                Value := Database.Values.From_Boolean (B1 and B2);
-               else
+            else
                   Value := Database.Values.From_Boolean (B1 or B2);
             end if;
             return Database.Status.Success;
@@ -353,9 +355,9 @@ package body Database.Expressions is
               Schema,
               Row,
               B1);
-              if not Database.Status.Is_Ok (Res) then
-                 return Res;
-              end if;
+            if not Database.Status.Is_Ok (Res) then
+               return Res;
+            end if;
             Value := Database.Values.From_Boolean (not B1);
             return Database.Status.Success;
          when Is_Null_Expr | Is_Not_Null_Expr =>
@@ -363,9 +365,9 @@ package body Database.Expressions is
               Schema,
               Row,
               L);
-              if not Database.Status.Is_Ok (Res) then
-                 return Res;
-              end if;
+            if not Database.Status.Is_Ok (Res) then
+               return Res;
+            end if;
             Value  :=
               Database.Values.From_Boolean ((L.Kind = Database.Types.Null_Value) = (Expr.Node.Kind = Is_Null_Expr));
             return Database.Status.Success;
@@ -395,9 +397,9 @@ package body Database.Expressions is
                     Schema,
                     Row,
                     L);
-                    if not Database.Status.Is_Ok (Res) then
-                       return Res;
-                    end if;
+                  if not Database.Status.Is_Ok (Res) then
+                     return Res;
+                  end if;
                   if L.Kind /= Database.Types.Text_Value then
                      Value := Database.Values.Null_Value;
                      return Database.Status.Failure (Database.Status.Invalid_Argument, "lowercase expects text");
@@ -417,9 +419,9 @@ package body Database.Expressions is
                     Schema,
                     Row,
                     L);
-                    if not Database.Status.Is_Ok (Res) then
-                       return Res;
-                    end if;
+                  if not Database.Status.Is_Ok (Res) then
+                     return Res;
+                  end if;
                   if L.Kind /= Database.Types.Text_Value then
                      Value := Database.Values.Null_Value;
                      return Database.Status.Failure (Database.Status.Invalid_Argument, "length expects text");
@@ -430,9 +432,9 @@ package body Database.Expressions is
                     Schema,
                     Row,
                     L);
-                    if not Database.Status.Is_Ok (Res) then
-                       return Res;
-                    end if;
+                  if not Database.Status.Is_Ok (Res) then
+                     return Res;
+                  end if;
                   if L.Kind /= Database.Types.Integer_Value then
                      Value := Database.Values.Null_Value;
                      return Database.Status.Failure (Database.Status.Invalid_Argument, "abs expects integer");
@@ -443,16 +445,16 @@ package body Database.Expressions is
                     Schema,
                     Row,
                     L);
-                    if not Database.Status.Is_Ok (Res) then
-                       return Res;
-                    end if;
+                  if not Database.Status.Is_Ok (Res) then
+                     return Res;
+                  end if;
                   Res := Evaluate  (Expr.Node.Args.Element (1),
                     Schema,
                     Row,
                     R);
-                    if not Database.Status.Is_Ok (Res) then
-                       return Res;
-                    end if;
+                  if not Database.Status.Is_Ok (Res) then
+                     return Res;
+                  end if;
                   if L.Kind /= Database.Types.Text_Value or else R.Kind /= Database.Types.Text_Value then
                      Value := Database.Values.Null_Value;
                      return Database.Status.Failure (Database.Status.Invalid_Argument, "concat expects text");
@@ -802,7 +804,7 @@ package body Database.Expressions is
                         Args.Append (A);
                         if I < Count then
                            if not Need (':') then
-                           return False;
+                              return False;
                            end if;
                         end if;
                      end loop;
@@ -842,7 +844,7 @@ package body Database.Expressions is
                         Args.Append (A);
                         if I < Count then
                            if not Need (':') then
-                           return False;
+                              return False;
                            end if;
                         end if;
                      end loop;

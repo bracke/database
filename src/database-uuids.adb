@@ -7,7 +7,7 @@ package body Database.UUIDs is
 
    function Nil_UUID return UUID is
    begin
-      return (others => 0);
+      return [others => 0];
    end Nil_UUID;
 
    function Generate_UUID return UUID is

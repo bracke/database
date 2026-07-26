@@ -9,9 +9,7 @@ with Interfaces;
 
 package body Database.Crypto is
    use type Ada.Streams.Stream_Element_Offset;
-   use type CryptoLib.Errors.Status;
    use type Interfaces.Unsigned_64;
-   use type Database.Storage.Pages.Byte;
 
    subtype Stream_Array is Ada.Streams.Stream_Element_Array;
 
@@ -74,10 +72,10 @@ package body Database.Crypto is
      (Object_Id : Natural;
       LSN       : Database.Log_Sequence.Log_Sequence_Number) return Nonce
    is
-      Seed : Stream_Array (1 .. 16) := (others => 0);
+      Seed : Stream_Array (1 .. 16) := [others => 0];
       D1   : CryptoLib.Hashes.SHA256_Digest;
       D2   : CryptoLib.Hashes.SHA256_Digest;
-      N    : Nonce := (others => 0);
+      N    : Nonce := [others => 0];
    begin
       Put_U32 (Seed, 1, Object_Id);
       Put_U32 (Seed, 5, Natural (Interfaces.Shift_Right (Interfaces.Unsigned_64 (LSN), 32)));
@@ -146,7 +144,7 @@ package body Database.Crypto is
       Message  : Stream_Array := MAC_Message (Nonce_Value, Associated_Data, Ciphertext);
       Digest   : constant CryptoLib.Macs.HMAC_SHA256_Digest :=
         CryptoLib.Macs.HMAC_SHA256 (Key_Data, Message);
-      T        : Authentication_Tag := (others => 0);
+      T        : Authentication_Tag := [others => 0];
    begin
       for I in T'Range loop
          T (I) := Byte (Digest (I + 1));
@@ -262,6 +260,6 @@ package body Database.Crypto is
    procedure Clear (Data : in out Byte_Array) is
    begin
       CryptoLib.Secure_Wipe.Wipe (Data'Address, Data'Length);
-      Data := (others => 0);
+      Data := [others => 0];
    end Clear;
 end Database.Crypto;

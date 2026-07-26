@@ -1,12 +1,8 @@
 with Ada.Containers;
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
-with Database.Status;
 
 package body Database.Indexes.BTree is
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Ada.Containers.Count_Type;
-   use type Database.Storage.Pages.Page_Id;
 
    type Index_Entry is record
       Key  : Database.Values.Value := Database.Values.Null_Value;

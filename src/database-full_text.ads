@@ -1,6 +1,5 @@
 --  Ada-native full-text search API. No SQL parser or external search engine is used.
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Rows;
 with Database.Schema;
 with Database.Status;
@@ -9,7 +8,6 @@ with Database.Versioning;
 
 --  Full-text indexing and search subsystem.
 package Database.Full_Text is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Search_Result stores the public fields for this database abstraction.
    type Search_Result is record

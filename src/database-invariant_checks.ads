@@ -4,9 +4,6 @@ with Database.Storage.Pages;
 with Database.Storage.File_IO;
 with Database.Log_Sequence;
 with Database.Backup_Format;
-with Database.Indexes.BTree;
-with Database.WAL;
-with Database.MVCC;
 with Database.Schema;
 with Database.Versioning;
 --  Deep invariant validation entry points.

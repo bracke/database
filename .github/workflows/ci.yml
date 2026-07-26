@@ -54,8 +54,8 @@ jobs:
         working-directory: project_tools
         run: alr --non-interactive build
       - name: Build the check_all validator
-        working-directory: database
-        run: alr exec -- gprbuild -P tools/tools.gpr
+        working-directory: database/tools
+        run: alr --non-interactive build
       - name: Generate tests config
         # tests/ is its own Alire root. check_all builds it with a raw
         # `alr exec -- gprbuild -P tests.gpr`, which does not generate the gitignored
@@ -67,3 +67,48 @@ jobs:
         # 13 SPARK proofs (a real gate: --checks-as-errors=on).
         working-directory: database
         run: ./tools/bin/check_all
+
+  concurrency-baseline:
+    name: Concurrent multi-database (soak + ThreadSanitizer)
+    # Gate for docs/concurrency-multidb-plan.md. Phases 1-2 landed, so the
+    # deterministic functional isolation soak now blocks the build. The
+    # ThreadSanitizer step needs ASLR disabled (setarch -R), which some runners
+    # restrict, so it is allowed to fail as an environment guard -- TSan is
+    # verified clean locally.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out database
+        uses: actions/checkout@v4
+        with:
+          path: database
+      - name: Check out cryptolib sibling
+        # database.gpr withs ../cryptolib/cryptolib.gpr.
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/cryptolib
+          path: cryptolib
+      - name: Set up Alire
+        uses: alire-project/setup-alire@v5
+        with:
+          toolchain: gnat_native=15.2.1 gprbuild
+      - name: Build cryptolib sibling
+        working-directory: cryptolib
+        run: alr --non-interactive build
+      - name: Build database
+        working-directory: database
+        run: alr --non-interactive build
+      - name: Build tests (generates tests config)
+        working-directory: database/tests
+        run: alr --non-interactive build
+      - name: Functional soak (multi-database isolation)
+        working-directory: database/tests
+        run: ./bin/concurrency_soak 8
+      - name: ThreadSanitizer soak
+        # -R disables ASLR, which ThreadSanitizer requires. exitcode=66 makes any
+        # reported race fail the step. Allowed to fail on runners that restrict
+        # ASLR; the race check is the point, not a hard gate on such runners.
+        continue-on-error: true
+        working-directory: database/tests
+        run: |
+          alr exec -- gprbuild -P tests.gpr -XSANITIZE=thread
+          TSAN_OPTIONS="halt_on_error=0 exitcode=66" setarch "$(uname -m)" -R ./bin/concurrency_soak 2

@@ -4,6 +4,8 @@
 /config/
 /tools/bin/
 /tools/obj/
+/tools/alire/
+/tools/config/
 /tests/bin/
 /tests/obj/
 /tests/alire/
@@ -12,6 +14,13 @@
 /database_inspect/bin/
 /database_inspect/obj/
 /database_inspect/config/
+#  Each worked example under examples/ is its own Alire crate; Alire and
+#  gprbuild generate these per example.
+/examples/*/alire/
+/examples/*/config/
+/examples/*/obj/
+/examples/*/bin/
+
 /tests/*.db
 /tests/*.db.*
 /tests/*.database

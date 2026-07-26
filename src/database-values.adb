@@ -1,10 +1,6 @@
-with Ada.Strings.Wide_Wide_Unbounded;
-with Database.Date_Time;
-with Database.UUIDs;
 package body Database.Values is
    use type Database.Types.Decimal;
    use type Database.Types.Timestamp;
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Database.Types.Value_Kind;
    use type Byte_Vectors.Vector;
 
@@ -89,14 +85,14 @@ package body Database.Values is
          when Database.Types.Blob_Value => return Left.Blob = Right.Blob;
          when Database.Types.Timestamp_Value => return Left.Time = Right.Time;
          when Database.Types.Enum_Value =>
-           return To_Wide_Wide_String (Left.Enum_Text) = To_Wide_Wide_String (Right.Enum_Text);
+            return To_Wide_Wide_String (Left.Enum_Text) = To_Wide_Wide_String (Right.Enum_Text);
          when Database.Types.Date_Value => return Database.Date_Time.Compare (Left.Date, Right.Date) = 0;
          when Database.Types.Time_Value => return Database.Date_Time.Compare (Left.Clock_Time, Right.Clock_Time) = 0;
          when Database.Types.Date_Time_Value => return Database.Date_Time.Compare (Left.Date_Time, Right.Date_Time) = 0;
          when Database.Types.Duration_Value => return Database.Date_Time.Compare (Left.Time_Span, Right.Time_Span) = 0;
          when Database.Types.UUID_Value => return Database.UUIDs.Compare (Left.UUID, Right.UUID) = 0;
          when Database.Types.Array_Value =>
-           return To_Wide_Wide_String (Left.Array_Text) = To_Wide_Wide_String (Right.Array_Text);
+            return To_Wide_Wide_String (Left.Array_Text) = To_Wide_Wide_String (Right.Array_Text);
       end case;
    end Equal;
 end Database.Values;

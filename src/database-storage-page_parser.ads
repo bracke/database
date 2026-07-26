@@ -1,5 +1,4 @@
 with Interfaces;
-with Database.Checksums;
 
 package Database.Storage.Page_Parser
   with SPARK_Mode => On
@@ -43,16 +42,16 @@ is
 
    --  Magic_0 is a public constant used by this package.
    Magic_0 : constant Byte := 16#44#;
-   -- 'D'
+   --  'D'
    --  Magic_1 is a public constant used by this package.
    Magic_1 : constant Byte := 16#50#;
-   -- 'P'
+   --  'P'
    --  Magic_2 is a public constant used by this package.
    Magic_2 : constant Byte := 16#41#;
-   -- 'A'
+   --  'A'
    --  Magic_3 is a public constant used by this package.
    Magic_3 : constant Byte := 16#47#;
-   -- 'G'
+   --  'G'
 
    --  Current_Format_Version is a public constant used by this package.
    Current_Format_Version : constant Byte := 1;

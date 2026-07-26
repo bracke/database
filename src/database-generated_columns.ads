@@ -1,5 +1,4 @@
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Expressions;
 with Database.Rows;
 with Database.Schema;
@@ -7,7 +6,6 @@ with Database.Status;
 
 --  Generated column metadata and evaluation support.
 package Database.Generated_Columns is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Generated_Column_Kind enumerates the supported values for this database abstraction.
    type Generated_Column_Kind is (Stored, Virtual);

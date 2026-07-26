@@ -1,5 +1,4 @@
 --  Ada-native row and schema validation hooks registered by extensions.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Extension_Metadata;
 with Database.Rows;
 with Database.Schema;
@@ -7,7 +6,6 @@ with Database.Status;
 
 --  Public specification for this database subsystem.
 package Database.Validation_Hooks is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Validation_Hook defines a public database type used by this package.
    type Validation_Hook is access function

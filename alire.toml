@@ -7,6 +7,7 @@ maintainers = ["Bent Bracke <bent@bracke.dk>"]
 maintainers-logins = ["bracke"]
 project-files = ["database.gpr"]
 website = "https://github.com/bracke/database"
+tags = ["database", "storage", "sql", "ada"]
 
 [[depends-on]]
 gnat_native = "=15.2.1"
@@ -16,3 +17,9 @@ cryptolib = "*"
 
 [[pins]]
 cryptolib = { path = "../cryptolib" }
+
+# Build dependencies in the development profile (-Og) too, not the default
+# release (-O3), so this root and the child crates that pin it share object
+# files rather than forcing each other into full rebuilds.
+[build-profiles]
+"*" = "development"

@@ -1,5 +1,3 @@
-with Database.Status;
-with Ada.Streams;
 with Ada.Characters.Conversions;
 with Ada.Directories;
 with Ada.Streams.Stream_IO;
@@ -17,7 +15,6 @@ with Database.Keys;
 with Database.Crypto;
 with Database.WAL;
 with Database.Transactions;
-with Database.Invariant_Checks;
 with Database.Full_Text.Storage;
 with Database.Full_Text.Postings;
 with Database.Import;
@@ -119,7 +116,7 @@ package body Database.Fuzzing is
 
    function Validate_Record_Input (Data : Ada.Streams.Stream_Element_Array) return Fuzz_Result is
       S : Database.Schema.Table_Schema;
-      Bytes : Database.Storage.Pages.Byte_Array (0 .. Database.Storage.Pages.Payload_Capacity - 1) := (others => 0);
+      Bytes : Database.Storage.Pages.Byte_Array (0 .. Database.Storage.Pages.Payload_Capacity - 1) := [others => 0];
       Row : Database.Rows.Row;
       R : Database.Status.Result;
    begin
@@ -185,11 +182,11 @@ package body Database.Fuzzing is
    end Validate_Backup_Manifest_Input;
 
    function Validate_Encryption_Metadata_Input (Data : Ada.Streams.Stream_Element_Array) return Fuzz_Result is
-      Key : Database.Keys.Encryption_Key := Database.Keys.Derive_Key ("fuzz key", Database.Keys.Default_Salt);
-      Nonce : Database.Crypto.Nonce := (others => 0);
-      Associated : Database.Crypto.Byte_Array (0 .. 0) := (others => 0);
-      Cipher : Database.Crypto.Byte_Array (0 .. 0) := (others => 0);
-      Tag : Database.Crypto.Authentication_Tag := (others => 0);
+      Key : constant Database.Keys.Encryption_Key := Database.Keys.Derive_Key ("fuzz key", Database.Keys.Default_Salt);
+      Nonce : constant Database.Crypto.Nonce := [others => 0];
+      Associated : constant Database.Crypto.Byte_Array (0 .. 0) := [others => 0];
+      Cipher : constant Database.Crypto.Byte_Array (0 .. 0) := [others => 0];
+      Tag : Database.Crypto.Authentication_Tag := [others => 0];
       Check : Database.Crypto_Checks.Check_Result;
    begin
       if Data'Length >= Tag'Length then
@@ -278,21 +275,6 @@ package body Database.Fuzzing is
       when others =>
          return Reject ("malformed full-text structure rejected without propagation");
    end Validate_Full_Text_Input;
-
-   function Looks_Trivially_Valid
-     (Target : Fuzz_Target;
-      Data   : Ada.Streams.Stream_Element_Array) return Boolean is
-   begin
-      case Target is
-         when Page_Parser => return False;
-         when WAL_Replay_Parser => return False;
-         when Record_Decoder => return False;
-         when Import_Parser => return False;
-         when Backup_Manifest_Parser => return False;
-         when Encryption_Metadata_Parser => return False;
-         when Full_Text_Structure_Parser => return Data'Length >= 4;
-      end case;
-   end Looks_Trivially_Valid;
 
    function Fuzz_Input
      (Target : Fuzz_Target;
@@ -460,14 +442,14 @@ package body Database.Fuzzing is
                when 2 => return Seeded_Data (29, Database.Storage.Pages.Page_Size + 1);
                when 3 =>
                   declare
-                     P : Database.Storage.Pages.Page := Database.Full_Text.Storage.Build_Dictionary_Page (1,
+                     P : constant Database.Storage.Pages.Page := Database.Full_Text.Storage.Build_Dictionary_Page (1,
                        "term", 2);
                   begin
                      return Database.Storage.Pages.To_Stream (P);
                   end;
                when 4 =>
                   declare
-                     P : Database.Storage.Pages.Page := Database.Full_Text.Storage.Build_Dictionary_Page (1,
+                     P : constant Database.Storage.Pages.Page := Database.Full_Text.Storage.Build_Dictionary_Page (1,
                        "term", 2);
                      S : Ada.Streams.Stream_Element_Array
                        (0 .. Ada.Streams.Stream_Element_Offset

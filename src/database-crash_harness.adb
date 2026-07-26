@@ -1,5 +1,3 @@
-with Database.Status;
-with Database.Testing;
 with Ada.Characters.Conversions;
 with Ada.Command_Line;
 with Ada.Directories;
@@ -10,8 +8,6 @@ with Database.Storage.File_IO;
 with Database.Storage.Pages;
 with Database.WAL;
 with Database.Log_Sequence;
-with Database.Checkpointing;
-with Database.Encryption;
 with Database.Backup_Format;
 with Database.Crypto;
 with Database.Crypto_Checks;
@@ -22,9 +18,6 @@ package body Database.Crash_Harness is
    use type Ada.Streams.Stream_Element_Offset;
    use type Ada.Directories.File_Kind;
    use type Ada.Directories.File_Size;
-   use type Ada.Streams.Stream_Element;
-   use type Database.Storage.Pages.Byte_Array;
-   use type Database.Crypto.Byte;
 
    Crash_Exit_Code : constant Integer := 86;
 
@@ -122,53 +115,6 @@ package body Database.Crash_Harness is
          end;
    end Truncate_File_To;
 
-   procedure Flip_First_Byte (Path : Wide_Wide_String) is
-      package SIO renames Ada.Streams.Stream_IO;
-      Size : Natural;
-      Inp  : SIO.File_Type;
-      Outp : SIO.File_Type;
-      Temp : constant Wide_Wide_String := Path & ".flip.tmp";
-   begin
-      if not Ada.Directories.Exists (Native (Path)) then
-         return;
-      end if;
-      Size := Natural (Ada.Directories.Size (Native (Path)));
-      if Size = 0 then
-         return;
-      end if;
-      Delete_If_Exists (Temp);
-      declare
-         Data : Ada.Streams.Stream_Element_Array
-           (1 .. Ada.Streams.Stream_Element_Offset (Size));
-         Last : Ada.Streams.Stream_Element_Offset;
-      begin
-         SIO.Open (Inp, SIO.In_File, Native (Path));
-         SIO.Read (Inp, Data, Last);
-         SIO.Close (Inp);
-         if Last < Data'First then
-            return;
-         end if;
-         Data (Data'First) := Data (Data'First) xor 16#A5#;
-         SIO.Create (Outp, SIO.Out_File, Native (Temp));
-         SIO.Write (Outp, Data (Data'First .. Last));
-         SIO.Close (Outp);
-         Ada.Directories.Delete_File (Native (Path));
-         Ada.Directories.Rename (Native (Temp), Native (Path));
-      end;
-   exception
-      when others =>
-         begin
-            if SIO.Is_Open (Inp) then
-               SIO.Close (Inp);
-            end if;
-            if SIO.Is_Open (Outp) then
-               SIO.Close (Outp);
-            end if;
-            Delete_If_Exists (Temp);
-         exception when others => null;
-         end;
-   end Flip_First_Byte;
-
    procedure Write_WAL_Scenario
      (Path       : Wide_Wide_String;
       With_Commit : Boolean;
@@ -190,7 +136,7 @@ package body Database.Crash_Harness is
          GNAT.OS_Lib.OS_Exit (3);
       end if;
       Database.Storage.Pages.Initialize (P, 2, Database.Storage.Pages.Table_Heap_Page);
-      Database.Storage.Pages.Set_Payload (P, (0 => 16#C1#));
+      Database.Storage.Pages.Set_Payload (P, [0 => 16#C1#]);
       R := Database.WAL.Append_Page_Frame (W, 70_001, P, L);
       if not Database.Status.Is_Ok (R) then
          GNAT.OS_Lib.OS_Exit (4);
@@ -222,7 +168,7 @@ package body Database.Crash_Harness is
          GNAT.OS_Lib.OS_Exit (10);
       end if;
       Database.Storage.Pages.Initialize (P, 2, Database.Storage.Pages.Table_Heap_Page);
-      Database.Storage.Pages.Set_Payload (P, (0 => 16#D1#, 1 => 16#D2#));
+      Database.Storage.Pages.Set_Payload (P, [0 => 16#D1#, 1 => 16#D2#]);
       R := Database.Storage.File_IO.Write_Page (F, P);
       if not Database.Status.Is_Ok (R) then
          GNAT.OS_Lib.OS_Exit (11);
@@ -254,7 +200,7 @@ package body Database.Crash_Harness is
          GNAT.OS_Lib.OS_Exit (20);
       end if;
       Database.Storage.Pages.Initialize (P, 2, Database.Storage.Pages.Table_Heap_Page);
-      Database.Storage.Pages.Set_Payload (P, (0 => 16#E1#));
+      Database.Storage.Pages.Set_Payload (P, [0 => 16#E1#]);
       R := Database.Storage.File_IO.Write_Page (F, P);
       if not Database.Status.Is_Ok (R) then
          GNAT.OS_Lib.OS_Exit (21);
@@ -285,13 +231,13 @@ package body Database.Crash_Harness is
    end Write_Checkpoint_Scenario;
 
    procedure Write_Truncated_Encrypted_Page (Path : Wide_Wide_String) is
-      Key : Database.Keys.Encryption_Key  :=
+      Key : constant Database.Keys.Encryption_Key  :=
         Database.Keys.Derive_Key ("external crash encrypted page", Database.Keys.Default_Salt);
-      Nonce : Database.Crypto.Nonce := Database.Crypto.Generate_Nonce (77, 4);
-      AAD : Database.Crypto.Byte_Array (0 .. 1) := (16#45#, 16#50#);
-      Plain : Database.Crypto.Byte_Array (0 .. 15) := (others => 16#33#);
-      Cipher : Database.Crypto.Byte_Array (0 .. 15) := (others => 0);
-      Tag : Database.Crypto.Authentication_Tag := (others => 0);
+      Nonce : constant Database.Crypto.Nonce := Database.Crypto.Generate_Nonce (77, 4);
+      AAD : constant Database.Crypto.Byte_Array (0 .. 1) := [16#45#, 16#50#];
+      Plain : constant Database.Crypto.Byte_Array (0 .. 15) := [others => 16#33#];
+      Cipher : Database.Crypto.Byte_Array (0 .. 15) := [others => 0];
+      Tag : Database.Crypto.Authentication_Tag := [others => 0];
       R : Database.Status.Result;
       package SIO renames Ada.Streams.Stream_IO;
       F : SIO.File_Type;
@@ -321,12 +267,12 @@ package body Database.Crash_Harness is
       Manifest_Path : constant Wide_Wide_String  :=
         Database.Backup_Format.Manifest_Path (Backup_Path);
       Bytes : constant Ada.Streams.Stream_Element_Array (1 .. 8)  :=
-        (1 => Ada.Streams.Stream_Element (Character'Pos ('D')),
+        [1 => Ada.Streams.Stream_Element (Character'Pos ('D')),
          2 => Ada.Streams.Stream_Element (Character'Pos ('B')),
          3 => Ada.Streams.Stream_Element (Character'Pos ('B')),
          4 => Ada.Streams.Stream_Element (Character'Pos ('A')),
          5 => Ada.Streams.Stream_Element (Character'Pos ('K')),
-         6 => 0, 7 => 0, 8 => 1);
+         6 => 0, 7 => 0, 8 => 1];
    begin
       Delete_If_Exists (Backup_Path);
       Ada.Directories.Create_Directory (Native (Backup_Path));
@@ -377,12 +323,12 @@ package body Database.Crash_Harness is
       P : Database.Storage.Pages.Page;
       R : Database.Status.Result;
       Check : Database.Crypto_Checks.Check_Result;
-      Key : Database.Keys.Encryption_Key  :=
+      Key : constant Database.Keys.Encryption_Key  :=
         Database.Keys.Derive_Key ("external crash encrypted page", Database.Keys.Default_Salt);
-      Nonce : Database.Crypto.Nonce := Database.Crypto.Generate_Nonce (77, 4);
-      AAD : Database.Crypto.Byte_Array (0 .. 1) := (16#45#, 16#50#);
-      Cipher : Database.Crypto.Byte_Array (0 .. 6) := (others => 0);
-      Tag : Database.Crypto.Authentication_Tag := (others => 0);
+      Nonce : constant Database.Crypto.Nonce := Database.Crypto.Generate_Nonce (77, 4);
+      AAD : constant Database.Crypto.Byte_Array (0 .. 1) := [16#45#, 16#50#];
+      Cipher : Database.Crypto.Byte_Array (0 .. 6) := [others => 0];
+      Tag : constant Database.Crypto.Authentication_Tag := [others => 0];
    begin
       case Mode is
          when Process_Before_WAL_Commit =>
@@ -397,6 +343,7 @@ package body Database.Crash_Harness is
             R := Database.Storage.File_IO.Read_Raw_Page (F, 2, P);
             declare
                CR : constant Database.Status.Result := Database.Storage.File_IO.Close (F);
+               pragma Unreferenced (CR);
             begin
                null;
             end;
@@ -415,6 +362,7 @@ package body Database.Crash_Harness is
             if not Database.Status.Is_Ok (R) then
                declare
                   CR : constant Database.Status.Result := Database.Storage.File_IO.Close (F);
+               pragma Unreferenced (CR);
                begin
                   null;
                end;
@@ -423,6 +371,7 @@ package body Database.Crash_Harness is
             R := Database.Storage.File_IO.Read_Raw_Page (F, 2, P);
             declare
                CR : constant Database.Status.Result := Database.Storage.File_IO.Close (F);
+               pragma Unreferenced (CR);
             begin
                null;
             end;
@@ -452,6 +401,7 @@ package body Database.Crash_Harness is
             R := Database.Storage.File_IO.Read_Raw_Page (F, 2, P);
             declare
                CR : constant Database.Status.Result := Database.Storage.File_IO.Close (F);
+               pragma Unreferenced (CR);
             begin
                null;
             end;
@@ -471,6 +421,7 @@ package body Database.Crash_Harness is
                R := Database.Storage.File_IO.Read_Raw_Page (F, 2, P);
                declare
                   CR : constant Database.Status.Result := Database.Storage.File_IO.Close (F);
+               pragma Unreferenced (CR);
                begin
                   null;
                end;
@@ -505,7 +456,7 @@ package body Database.Crash_Harness is
             declare
                package SIO renames Ada.Streams.Stream_IO;
                EF : SIO.File_Type;
-               Raw : Ada.Streams.Stream_Element_Array (1 .. 7) := (others => 0);
+               Raw : Ada.Streams.Stream_Element_Array (1 .. 7) := [others => 0];
                Last : Ada.Streams.Stream_Element_Offset;
             begin
                SIO.Open (EF, SIO.In_File, Native (Path));

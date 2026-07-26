@@ -1,9 +1,7 @@
-with Database;
 
 package Database.Storage.Table_Heap_Layout
   with SPARK_Mode => On
 is
-   use type Database.Byte;
 
    subtype Byte is Database.Byte;
    subtype Byte_Array is Database.Byte_Array;

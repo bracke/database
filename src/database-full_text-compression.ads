@@ -10,7 +10,6 @@ with Database.Full_Text.Postings;
 
 --  Public specification for this database subsystem.
 package Database.Full_Text.Compression is
-   use type Database.Storage.Pages.Byte;
    --  Byte_Vectors stores ordered byte values for this package.
    package Byte_Vectors is new Ada.Containers.Vectors
      (Index_Type => Natural, Element_Type => Database.Storage.Pages.Byte);

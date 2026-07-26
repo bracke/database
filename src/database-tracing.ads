@@ -1,10 +1,8 @@
 --  Structured in-process tracing for operational diagnostics.
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Status;
 
 --  Structured tracing support.
 package Database.Tracing is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Trace_Category defines a public database type used by this package.
    type Trace_Category is

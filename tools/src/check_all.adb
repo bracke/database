@@ -132,7 +132,7 @@ procedure Check_All is
 
       if Status = 0 then
          Project_Tools.Release_Checks.Fail
-           (Label & " unexpectedly succeeded");
+           (Label & " unexpectedly succeeded: " & To_String (Output));
       end if;
    end Run_Expect_Failure;
 
@@ -229,6 +229,14 @@ procedure Check_All is
 
    procedure Check_Static_Release_Surface is
       Errors : Natural := 0;
+      Example_Names : constant Project_Tools.Tree_Checks.Text_List :=
+        [To_Unbounded_String ("minimal"),
+         To_Unbounded_String ("persistent"),
+         To_Unbounded_String ("queries"),
+         To_Unbounded_String ("migrations"),
+         To_Unbounded_String ("concurrency"),
+         To_Unbounded_String ("integrity_check"),
+         To_Unbounded_String ("typed_table")];
       Forbidden : constant Project_Tools.Tree_Checks.Text_List :=
         [To_Unbounded_String ("TODO"),
          To_Unbounded_String ("FIXME"),
@@ -370,11 +378,20 @@ procedure Check_All is
         (Errors, Root & "/src", Forbidden, "stable source");
       Project_Tools.Tree_Checks.Check_No_Forbidden_Tokens
         (Errors, Root & "/tests/src", Forbidden, "test source");
-      Project_Tools.Tree_Checks.Check_No_Forbidden_Tokens
-        (Errors, Root & "/examples", Forbidden, "examples");
+      --  Scan each example's src/, not examples/ as a whole: every example is
+      --  now its own Alire crate, so examples/<name>/{bin,obj,alire,config} sit
+      --  beside the sources and a compiled binary trivially "contains" tokens
+      --  like "not implemented".
+      for Name of Example_Names loop
+         Project_Tools.Tree_Checks.Check_No_Forbidden_Tokens
+           (Errors, Root & "/examples/" & To_String (Name) & "/src", Forbidden, "examples");
+      end loop;
       Project_Tools.Tree_Checks.Check_No_Generated_Python (Errors, Root & "/src");
       Project_Tools.Tree_Checks.Check_No_Generated_Python (Errors, Root & "/tests/src");
-      Project_Tools.Tree_Checks.Check_No_Generated_Python (Errors, Root & "/examples");
+      for Name of Example_Names loop
+         Project_Tools.Tree_Checks.Check_No_Generated_Python
+           (Errors, Root & "/examples/" & To_String (Name) & "/src");
+      end loop;
 
       if Errors > 0 then
          Project_Tools.Release_Checks.Fail ("static release checks failed");

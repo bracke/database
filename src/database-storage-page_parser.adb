@@ -1,10 +1,7 @@
-with Interfaces;
-with Database.Checksums;
 
+with Database.Checksums;
 package body Database.Storage.Page_Parser is
    pragma SPARK_Mode (On);
-   use type Interfaces.Unsigned_8;
-   use type Interfaces.Unsigned_32;
 
    function To_Checksum_Array
      (Data  : Byte_Array;

@@ -1,10 +1,8 @@
 with Ada.Containers;
 with Database.Full_Text.Normalization;
-with Ada.Strings.Wide_Wide_Unbounded;
 
 package body Database.Full_Text.Snippets is
    use type Ada.Containers.Count_Type;
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    function Default_Config return Snippet_Config is
    begin

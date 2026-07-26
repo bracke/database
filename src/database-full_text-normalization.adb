@@ -1,4 +1,3 @@
-with Ada.Strings.Wide_Wide_Unbounded;
 package body Database.Full_Text.Normalization is
    function Default_Config return Normalization_Config is
    begin

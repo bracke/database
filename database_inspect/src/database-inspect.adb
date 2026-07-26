@@ -1,12 +1,10 @@
 with Ada.Containers;
-with Ada.Strings.Wide_Wide_Unbounded;
 
 with Database.Catalog;
 with Database.Date_Time;
 with Database.Indexes;
 with Database.Rows;
 with Database.Schema;
-with Database.Status;
 with Database.Storage.Pages;
 with Database.Storage.Table_Heap;
 with Database.Transactions;
@@ -15,7 +13,6 @@ with Database.UUIDs;
 with Database.Values;
 
 package body Database.Inspect is
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Ada.Containers.Count_Type;
 
    function Int_Image (Value : Integer) return Wide_Wide_String is

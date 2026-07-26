@@ -1,6 +1,4 @@
 --  Persistent page-file creation, opening, reading, writing, flushing, and truncation.
-with Ada.Strings.Wide_Wide_Unbounded;
-with Ada.Streams.Stream_IO;
 with Database.Status;
 with Database.Storage.Pages;
 with Database.Keys;

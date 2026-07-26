@@ -1,14 +1,11 @@
 with Ada.Containers;
 with Database.MVCC;
-with Database.Rows;
 with Database.Types;
 with Database.Values;
-with Ada.Strings.Wide_Wide_Unbounded;
 
 package body Database.Full_Text.Indexes is
    use type Ada.Containers.Count_Type;
    use type Database.Types.Value_Kind;
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    function Validate_Definition
      (Schema : Database.Schema.Table_Schema;
@@ -109,7 +106,7 @@ package body Database.Full_Text.Indexes is
       else
          declare
             Existing : Term_Entry := Index.Terms.Element (Pos);
-         Merged : Boolean := False;
+            Merged : Boolean := False;
          begin
             if Existing.Postings.Length > 0 then
                for I in 0 .. Natural (Existing.Postings.Length) - 1 loop
@@ -144,7 +141,6 @@ package body Database.Full_Text.Indexes is
       Row_Id  : Natural;
       Row_Key : Wide_Wide_String;
       Row     : Database.Rows.Row) is
-      use type Database.Types.Value_Kind;
       Col : constant Natural := Index.Metadata.Column_Id;
    begin
       if Col >= Database.Rows.Column_Count (Row) then
@@ -186,7 +182,6 @@ package body Database.Full_Text.Indexes is
       Row_Id  : Natural;
       Row_Key : Wide_Wide_String;
       Row     : Database.Rows.Row) is
-      use type Database.Types.Value_Kind;
       Col : constant Natural := Index.Metadata.Column_Id;
    begin
       if Col >= Database.Rows.Column_Count (Row) then
@@ -255,7 +250,8 @@ package body Database.Full_Text.Indexes is
                      P : Database.Full_Text.Postings.Posting := TE.Postings.Element (PI);
                   begin
                      if (P.Ref.Row_Id = Row_Id and then To_Wide_Wide_String (P.Ref.Row_Key) = Row_Key)
-                       and then P.Deleted_By = 0 then
+                       and then P.Deleted_By = 0
+                     then
                         P.Deleted_By := Database.Transactions.Id (Tx);
                         P.Deleted_At := Database.Transactions.Snapshot_Version (Tx) + 1;
                         TE.Postings.Replace_Element (PI, P);
@@ -510,9 +506,16 @@ package body Database.Full_Text.Indexes is
                         Delete_Version : Database.Versioning.Commit_Version :=
                           P.Deleted_At;
                      begin
+                        --  Treat Unknown like Committed: a persisted posting
+                        --  whose deleting transaction is no longer tracked is a
+                        --  settled commit (its lifecycle entry was reclaimed).
+                        --  The concrete Deleted_At carries the version; only a
+                        --  known version is ever reclaimed.
                         if P.Deleted_By /= Database.Versioning.No_Transaction
-                          and then Database.MVCC.Lifecycle (P.Deleted_By) =
-                            Database.MVCC.Committed
+                          and then Database.MVCC.Lifecycle (P.Deleted_By) /=
+                            Database.MVCC.Active
+                          and then Database.MVCC.Lifecycle (P.Deleted_By) /=
+                            Database.MVCC.Rolled_Back
                         then
                            if Delete_Version = Database.Versioning.No_Version then
                               Delete_Version :=
@@ -520,8 +523,9 @@ package body Database.Full_Text.Indexes is
                                   (P.Deleted_By);
                            end if;
 
-                           if Database.MVCC.Safe_Reclaim_Version
-                             (Delete_Version)
+                           if Delete_Version /= Database.Versioning.No_Version
+                             and then Database.MVCC.Safe_Reclaim_Version
+                               (Delete_Version)
                            then
                               TE.Postings.Delete (PI);
                               Removed := Removed + 1;

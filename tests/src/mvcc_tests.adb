@@ -294,6 +294,142 @@ package body MVCC_Tests is
       Database.Close (DB);
    end Active_Snapshot_Tracking;
 
+   procedure Transaction_Ids_Beyond_Legacy_Cap
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      DB      : Database.Handle;
+      S       : Database.Schema.Table_Schema;
+      Writer  : Database.Transactions.Transaction;
+      Deleter : Database.Transactions.Transaction;
+      Reader  : Database.Transactions.Transaction;
+      R       : Database.Status.Result;
+      Found   : Item;
+   begin
+      Database.Open_In_Memory (DB);
+      Build_Schema (S);
+      R := Items.Register (DB, S);
+      Assert (Database.Status.Is_Ok (R), "register failed");
+
+      --  Force transaction ids above the former 65_535 tracking cap. Under the
+      --  old fixed-array MVCC state these transactions were untracked (their
+      --  lifecycle read back as Unknown), so an in-memory row they created
+      --  became invisible and a deletion they made could not be reasoned about.
+      --  The dynamic, unbounded lifecycle map removes that ceiling.
+      Database.Transactions.Reserve_Ids_Through (70_000);
+
+      Database.Transactions.Begin_Write (DB, Writer);
+      Assert (Database.Transactions.Id (Writer) > 65_535,
+              "precondition: writer id not beyond the legacy cap");
+      R := Items.Insert (Writer, DB, S, (Id => 900_001, Value => 42));
+      Assert (Database.Status.Is_Ok (R), "high-id insert failed");
+      R := Database.Transactions.Commit (Writer);
+      Assert (Database.Status.Is_Ok (R), "high-id commit failed");
+
+      Database.Transactions.Begin_Read (DB, Reader);
+      R := Items.Find (Reader, DB, S, 900_001, Found);
+      Assert (Database.Status.Is_Ok (R),
+              "row created by a high-id transaction was invisible");
+      Assert (Found.Value = 42, "high-id row read wrong value");
+      R := Database.Transactions.Commit (Reader);
+      Assert (Database.Status.Is_Ok (R), "reader commit failed");
+
+      --  A deletion by another high-id transaction must also take effect.
+      Database.Transactions.Begin_Write (DB, Deleter);
+      R := Items.Delete (Deleter, DB, S, 900_001);
+      Assert (Database.Status.Is_Ok (R),
+              "delete by a high-id transaction failed");
+      R := Database.Transactions.Commit (Deleter);
+      Assert (Database.Status.Is_Ok (R), "high-id delete commit failed");
+
+      declare
+         After : Database.Transactions.Transaction;
+      begin
+         Database.Transactions.Begin_Read (DB, After);
+         R := Items.Find (After, DB, S, 900_001, Found);
+         Assert (R.Code = Database.Status.Not_Found,
+                 "row deleted by a high-id transaction still visible");
+         R := Database.Transactions.Commit (After);
+         Assert (Database.Status.Is_Ok (R), "after commit failed");
+      end;
+
+      Database.Close (DB);
+   end Transaction_Ids_Beyond_Legacy_Cap;
+
+   procedure Lifecycle_Map_Is_Bounded
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      DB     : Database.Handle;
+      S      : Database.Schema.Table_Schema;
+      W      : Database.Transactions.Transaction;
+      R      : Database.Status.Result;
+      Before : constant Natural := Database.MVCC.Tracked_Transaction_Count;
+   begin
+      Database.Open_In_Memory (DB);
+      Build_Schema (S);
+      R := Items.Register (DB, S);
+      Assert (Database.Status.Is_Ok (R), "register failed");
+
+      for I in 1 .. 150 loop
+         Database.Transactions.Begin_Write (DB, W);
+         R := Items.Insert (W, DB, S, (Id => 500_000 + I, Value => I));
+         Assert (Database.Status.Is_Ok (R), "insert failed");
+         R := Database.Transactions.Commit (W);
+         Assert (Database.Status.Is_Ok (R), "commit failed");
+      end loop;
+
+      --  Every one of the 2000 committed transactions is settled (no live
+      --  snapshot is holding an older version open), so its lifecycle entry has
+      --  been reclaimed. The map does not grow with the number of committed
+      --  transactions -- only with what is still in flight or recently settled.
+      Assert (Database.MVCC.Tracked_Transaction_Count <= Before + 50,
+              "lifecycle map grew with committed transaction count "
+              & "(reclamation is not bounding it)");
+      Database.Close (DB);
+   end Lifecycle_Map_Is_Bounded;
+
+   procedure Lifecycle_Map_Bounded_Under_Aborts
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      DB     : Database.Handle;
+      S      : Database.Schema.Table_Schema;
+      W      : Database.Transactions.Transaction;
+      Rdr    : Database.Transactions.Transaction;
+      Found  : Item;
+      R      : Database.Status.Result;
+      Before : constant Natural := Database.MVCC.Tracked_Transaction_Count;
+   begin
+      Database.Open_In_Memory (DB);
+      Build_Schema (S);
+      R := Items.Register (DB, S);
+      Assert (Database.Status.Is_Ok (R), "register failed");
+
+      for I in 1 .. 150 loop
+         Database.Transactions.Begin_Write (DB, W);
+         R := Items.Insert (W, DB, S, (Id => 700_000 + I, Value => I));
+         Assert (Database.Status.Is_Ok (R), "insert failed");
+         R := Database.Transactions.Rollback (W);
+         Assert (Database.Status.Is_Ok (R), "rollback failed");
+      end loop;
+
+      --  Each abort is forgotten once its in-memory rows have been finalized,
+      --  so the map does not grow with the number of aborted transactions.
+      Assert (Database.MVCC.Tracked_Transaction_Count <= Before + 50,
+              "lifecycle map grew with aborted transaction count "
+              & "(aborts not forgotten)");
+
+      --  And the aborted inserts left no trace in the store.
+      Database.Transactions.Begin_Read (DB, Rdr);
+      R := Items.Find (Rdr, DB, S, 700_001, Found);
+      Assert (R.Code = Database.Status.Not_Found,
+              "an aborted insert left a visible row behind");
+      R := Database.Transactions.Commit (Rdr);
+      Assert (Database.Status.Is_Ok (R), "reader commit failed");
+      Database.Close (DB);
+   end Lifecycle_Map_Bounded_Under_Aborts;
+
    overriding
    procedure Register_Tests (T : in out Case_Type) is
       use AUnit.Test_Cases.Registration;
@@ -322,5 +458,17 @@ package body MVCC_Tests is
         (T,
          Active_Snapshot_Tracking'Access,
          "active snapshot tracking supports vacuum safety");
+      Register_Routine
+        (T,
+         Transaction_Ids_Beyond_Legacy_Cap'Access,
+         "transactions beyond the former 65535 id cap are tracked");
+      Register_Routine
+        (T,
+         Lifecycle_Map_Is_Bounded'Access,
+         "lifecycle map stays bounded under many committed transactions");
+      Register_Routine
+        (T,
+         Lifecycle_Map_Bounded_Under_Aborts'Access,
+         "lifecycle map stays bounded under many aborted transactions");
    end Register_Tests;
 end MVCC_Tests;

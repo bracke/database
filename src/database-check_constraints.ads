@@ -1,5 +1,4 @@
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Expressions;
 with Database.Rows;
 with Database.Schema;
@@ -7,7 +6,6 @@ with Database.Status;
 
 --  Check constraint metadata and validation.
 package Database.Check_Constraints is
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    --  Check_Constraint stores the public fields for this database abstraction.
    type Check_Constraint is record

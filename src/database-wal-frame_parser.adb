@@ -1,10 +1,8 @@
-with Interfaces;
-with Database.Checksums;
 
+with Database.Checksums;
 package body Database.WAL.Frame_Parser is
    pragma SPARK_Mode (On);
    use type Interfaces.Unsigned_32;
-   use type Interfaces.Unsigned_8;
 
    function To_Checksum_Array
      (Data  : Byte_Array;

@@ -1,8 +1,6 @@
-with Ada.Strings.Wide_Wide_Unbounded;
 with Ada.Containers;
 
 package body Database.Schema is
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Ada.Containers.Count_Type;
 
    procedure Add_Column

@@ -1,14 +1,11 @@
 with Ada.Containers;
-with Database.Extension_Metadata;
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
-with Database.Status;
 with Ada.Unchecked_Deallocation;
+with Database.State_Registry;
 
 package body Database.Full_Text.Ranking is
    use type Ada.Containers.Count_Type;
 
-   use Ada.Strings.Wide_Wide_Unbounded;
    type Ranking_Entry is record
       Metadata : Ranking_Metadata;
       Fn       : Ranking_Function;
@@ -16,35 +13,29 @@ package body Database.Full_Text.Ranking is
    package Ranking_Vectors is new Ada.Containers.Indefinite_Vectors
      (Index_Type => Natural, Element_Type => Ranking_Entry);
    type Registry_Access is access all Ranking_Vectors.Vector;
-   type Registry_State_Entry is record Key : Natural := 0;
-   Registry : Registry_Access := null;
-   end record;
-   package Registry_State_Vectors is new Ada.Containers.Indefinite_Vectors (Natural, Registry_State_Entry);
+   package State_Reg is new Database.State_Registry (Ranking_Vectors.Vector, Registry_Access);
    procedure Free_Registry is new Ada.Unchecked_Deallocation  (Object => Ranking_Vectors.Vector,
      Name => Registry_Access);
    Default_Registry : aliased Ranking_Vectors.Vector;
-   States : Registry_State_Vectors.Vector;
    Current_Key : Natural := 0;
+   pragma Thread_Local_Storage (Current_Key);
    function Current_Registry return Registry_Access is
+      S, Winner : Registry_Access;
    begin
       if Current_Key = 0 then
          return Default_Registry'Access;
       end if;
-      if States.Length > 0 then
-         for I in 0 .. Natural (States.Length) - 1 loop
-            if States.Element (I).Key = Current_Key then
-               return States.Element (I).Registry;
-            end if;
-         end loop;
+      S := State_Reg.Find (Current_Key);
+      if S /= null then
+         return S;
       end if;
-      declare
-         E : Registry_State_Entry;
-      begin
-         E.Key := Current_Key;
-         E.Registry := new Ranking_Vectors.Vector;
-         States.Append (E);
-         return E.Registry;
-      end;
+      S := new Ranking_Vectors.Vector;
+      State_Reg.Insert (Current_Key, S, Winner);
+      if Winner /= S then
+         Free_Registry (S);
+         S := Winner;
+      end if;
+      return S;
    end Current_Registry;
 
    procedure Select_Database (State_Key : Natural) is
@@ -61,23 +52,14 @@ package body Database.Full_Text.Ranking is
    end Select_Database;
 
    procedure Drop_Database (State_Key : Natural) is
+      Freed : Registry_Access;
    begin
       if State_Key = 0 then
          return;
       end if;
-      if States.Length > 0 then
-         for I in reverse 0 .. Natural (States.Length)-1 loop
-            if States.Element (I).Key = State_Key then
-               declare
-                  E : Registry_State_Entry := States.Element (I);
-               begin
-                  if E.Registry /= null then
-                     Free_Registry (E.Registry);
-                  end if;
-                  States.Delete (I);
-               end;
-            end if;
-         end loop;
+      State_Reg.Remove (State_Key, Freed);
+      if Freed /= null then
+         Free_Registry (Freed);
       end if;
       if Current_Key = State_Key then
          Current_Key := 0;

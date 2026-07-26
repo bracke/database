@@ -186,6 +186,24 @@ prebuilt GNAT runtime, so some reports have runtime frames; the app-side frames
       - Design lesson applied: fixed array (no container tampering, no growth) +
         allocate-outside-lock + Find is a protected function / Insert/Remove are
         protected procedures.
-- [ ] Phase 2: apply the Phase-1 pattern to the other 8 subsystems; soak + TSan
-      fully green; flip the CI gate to blocking.
-- [ ] Phase 3 … 4.
+- [x] **Phase 2: done and verified.** The Phase-1 pattern was factored into a
+      generic `Database.State_Registry` (fixed, packed, allocation-free
+      protected registry) and applied to all remaining subsystems:
+      - Six uniform "registry-of-vector" subsystems (functions,
+        aggregate_functions, collations, validation_hooks, full_text.tokenizers,
+        full_text.ranking): thread-local `Current_Key`, generic registry,
+        allocate-outside-lock.
+      - Two "value-swap" subsystems (extensions, full_text) converted from the
+        `Store_Current_State`/`Load_State` model to the same pointer model
+        (per-database state held by access in the registry; operations use
+        `Current.all.<field>`).
+      - Verified: AUnit **235/235** (no hang, no regression), full stack ALL
+        GREEN, the `concurrency_soak` functional runnable **green**, and under
+        ThreadSanitizer **0 data races / 0 warnings** (race count 17 → 13 → 3 →
+        0 across the phase).
+      - CI `concurrency-baseline` flipped from informational to a gate (the
+        functional soak blocks; the TSan step tolerates runner ASLR quirks).
+- [ ] Phase 3: residual shared state (Tracing buffer/sink/flags; Events handler
+      registration vs concurrent emit). Not on the operation hot path and off by
+      default, so lower priority.
+- [ ] Phase 4 (optional): Model B (handle-anchored state) cleanup.

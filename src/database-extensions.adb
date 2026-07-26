@@ -1,100 +1,79 @@
 with Ada.Containers;
+with Ada.Unchecked_Deallocation;
 with Database.Aggregate_Functions;
 with Database.Collations;
 with Database.Functions;
 with Database.Full_Text.Ranking;
 with Database.Full_Text.Tokenizers;
+with Database.State_Registry;
 with Database.Validation_Hooks;
 
 package body Database.Extensions is
    use type Ada.Containers.Count_Type;
 
-   Current_State_Key : Natural := 0;
-   Extensions        : Extension_Vectors.Vector;
-   Dependency_List   : Database.Extension_Metadata.Dependency_Vectors.Vector;
-
+   --  Per-database extension state, held by pointer in a protected registry so
+   --  concurrent tasks operating different database handles stay isolated. The
+   --  registry does no allocation under its lock; Current allocates outside it
+   --  (see Database.State_Registry).
    type Extension_State is record
-      Key          : Natural := 0;
       Extensions   : Extension_Vectors.Vector;
       Dependencies : Database.Extension_Metadata.Dependency_Vectors.Vector;
    end record;
+   type Extension_State_Access is access all Extension_State;
 
-   package State_Vectors is new Ada.Containers.Indefinite_Vectors
-     (Index_Type => Natural, Element_Type => Extension_State);
+   package State_Reg is new Database.State_Registry
+     (Extension_State, Extension_State_Access);
+   procedure Free_State is new Ada.Unchecked_Deallocation
+     (Object => Extension_State, Name => Extension_State_Access);
 
-   States : State_Vectors.Vector;
+   Default_State : aliased Extension_State;
+   Current_Key   : Natural := 0;
+   pragma Thread_Local_Storage (Current_Key);
 
-   function State_Position (State_Key : Natural) return Natural is
+   function Current return Extension_State_Access is
+      S, Winner : Extension_State_Access;
    begin
-      if States.Length = 0 then
-         return Natural'Last;
+      if Current_Key = 0 then
+         return Default_State'Access;
       end if;
-      for I in 0 .. Natural (States.Length) - 1 loop
-         if States.Element (I).Key = State_Key then
-            return I;
-         end if;
-      end loop;
-      return Natural'Last;
-   end State_Position;
-
-   procedure Store_Current_State is
-      Pos : Natural;
-      S   : Extension_State;
-   begin
-      if Current_State_Key = 0 then
-         return;
+      S := State_Reg.Find (Current_Key);
+      if S /= null then
+         return S;
       end if;
-
-      Pos := State_Position (Current_State_Key);
-      S.Key := Current_State_Key;
-      S.Extensions := Extensions;
-      S.Dependencies := Dependency_List;
-
-      if Pos = Natural'Last then
-         States.Append (S);
-      else
-         States.Replace_Element (Pos, S);
+      S := new Extension_State;              --  allocate outside the lock
+      State_Reg.Insert (Current_Key, S, Winner);
+      if Winner /= S then
+         Free_State (S);                      --  lost the race; free ours
+         S := Winner;
       end if;
-   end Store_Current_State;
-
-   procedure Load_State (State_Key : Natural) is
-      Pos : constant Natural := State_Position (State_Key);
-      S   : Extension_State;
-   begin
-      Extensions.Clear;
-      Dependency_List.Clear;
-      if State_Key = 0 then
-         return;
-      end if;
-      if Pos = Natural'Last then
-         S.Key := State_Key;
-         States.Append (S);
-      else
-         Extensions := States.Element (Pos).Extensions;
-         Dependency_List := States.Element (Pos).Dependencies;
-      end if;
-   end Load_State;
+      return S;
+   end Current;
 
    procedure Select_Database (State_Key : Natural) is
    begin
-      if State_Key = Current_State_Key then
-         return;
+      Current_Key := State_Key;
+      if State_Key /= 0 then
+         declare
+            Ignore : constant Extension_State_Access := Current;
+            pragma Unreferenced (Ignore);
+         begin
+            null;
+         end;
       end if;
-      Store_Current_State;
-      Current_State_Key := State_Key;
-      Load_State (State_Key);
    end Select_Database;
 
    procedure Drop_Database (State_Key : Natural) is
-      Pos : Natural;
+      Freed : Extension_State_Access;
    begin
-      if Current_State_Key = State_Key then
-         Clear;
-         Current_State_Key := 0;
+      if State_Key = 0 then
+         return;
       end if;
-      Pos := State_Position (State_Key);
-      if Pos /= Natural'Last then
-         States.Delete (Pos);
+      State_Reg.Remove (State_Key, Freed);
+      if Freed /= null then
+         Free_State (Freed);                  --  free outside the lock
+      end if;
+      if Current_Key = State_Key then
+         Current_Key := 0;
       end if;
    end Drop_Database;
 
@@ -103,18 +82,21 @@ package body Database.Extensions is
       Extension : Extension_Definition) return Database.Status.Result is
    begin
       Select_Database (Database.Catalog_State_Key (DB));
-      Extensions.Append (Extension);
+      Current.all.Extensions.Append (Extension);
       return Database.Status.Success;
    end Register_Extension;
 
    function Unregister_Extension
      (DB   : in out Database.Handle;
       Name : Wide_Wide_String) return Database.Status.Result is
+      State : Extension_State_Access;
    begin
       Select_Database (Database.Catalog_State_Key (DB));
-      for Index in reverse 0 .. Natural (Extensions.Length) - 1 loop
-         if To_Wide_Wide_String (Extensions.Element (Index).Name) = Name then
-            Extensions.Delete (Index);
+      State := Current;
+      for Index in reverse 0 .. Natural (State.all.Extensions.Length) - 1 loop
+         if To_Wide_Wide_String (State.all.Extensions.Element (Index).Name) = Name
+         then
+            State.all.Extensions.Delete (Index);
             return Database.Status.Success;
          end if;
       end loop;
@@ -130,15 +112,16 @@ package body Database.Extensions is
       return Database.Status.Result is
    begin
       Select_Database (Database.Catalog_State_Key (DB));
-      Dependency_List.Append (Dependency);
+      Current.all.Dependencies.Append (Dependency);
       return Database.Status.Success;
    end Add_Dependency;
 
    function Validate_Dependencies return Database.Status.Result is
       use Database.Extension_Metadata;
+      State : constant Extension_State_Access := Current;
    begin
-      if Dependency_List.Length > 0 then
-         for D of Dependency_List loop
+      if State.all.Dependencies.Length > 0 then
+         for D of State.all.Dependencies loop
             declare
                Name : constant Wide_Wide_String := To_Wide_Wide_String (D.Object_Name);
                Found : Boolean := False;
@@ -171,15 +154,13 @@ package body Database.Extensions is
 
    function Registered_Extensions return Extension_Vectors.Vector is
    begin
-      Store_Current_State;
-      return Extensions;
+      return Current.all.Extensions;
    end Registered_Extensions;
 
    function Dependencies
       return Database.Extension_Metadata.Dependency_Vectors.Vector is
    begin
-      Store_Current_State;
-      return Dependency_List;
+      return Current.all.Dependencies;
    end Dependencies;
 
    function Save (Path : Wide_Wide_String) return Database.Status.Result is
@@ -196,8 +177,8 @@ package body Database.Extensions is
 
    procedure Clear is
    begin
-      Extensions.Clear;
-      Dependency_List.Clear;
+      Current.all.Extensions.Clear;
+      Current.all.Dependencies.Clear;
       Database.Aggregate_Functions.Clear;
       Database.Collations.Clear;
       Database.Functions.Clear;

@@ -7,6 +7,7 @@ with Database.Full_Text.Tokenizers;
 with Ada.Characters.Conversions;
 with Ada.Wide_Wide_Text_IO;
 with Ada.Directories;
+with Ada.Unchecked_Deallocation;
 with Ada.Containers;
 with Database.Catalog;
 with Database.Types;
@@ -14,94 +15,67 @@ with Database.Values;
 with Database.UUIDs;
 with Database.Foreign_Keys;
 with Database.MVCC;
-with Database.Versioning;
 with Database.Storage.Table_Heap;
 with Database.Storage.Pages;
-with Database.Storage.File_IO;
-with Ada.Strings.Wide_Wide_Unbounded;
+with Database.State_Registry;
 
 package body Database.Full_Text is
    use type Database.MVCC.Transaction_Lifecycle;
    use type Database.Full_Text.Queries.Query_Kind;
    use type Ada.Containers.Count_Type;
-   use Ada.Strings.Wide_Wide_Unbounded;
 
    type Full_Text_State is record
-      Key     : Natural := 0;
       FT_Indexes : Database.Full_Text.Indexes.Index_Vectors.Vector;
    end record;
+   type Full_Text_State_Access is access all Full_Text_State;
 
-   package State_Vectors is new Ada.Containers.Indefinite_Vectors
-     (Index_Type => Natural, Element_Type => Full_Text_State);
+   package State_Reg is new Database.State_Registry
+     (Full_Text_State, Full_Text_State_Access);
+   procedure Free_State is new Ada.Unchecked_Deallocation
+     (Object => Full_Text_State, Name => Full_Text_State_Access);
 
-   --  The currently selected handle's indexes are kept in FT_Indexes for the
-   --  existing implementation paths. Before selecting another handle the
-   --  vector is stored in States;
-   --  selecting a handle restores only that
-   --  handle's vector. This avoids one process-global full-text index list
-   --  shared by all open handles while preserving the established public API.
-   FT_Indexes : Database.Full_Text.Indexes.Index_Vectors.Vector;
-   States  : State_Vectors.Vector;
+   Default_State : aliased Full_Text_State;
+
+   --  Which handle this task is operating on. Thread-local so concurrent tasks
+   --  driving different handles do not clobber each other's selection; each
+   --  handle's index list lives in a protected registry keyed by it.
    Current_State_Key : Natural := 0;
+   pragma Thread_Local_Storage (Current_State_Key);
 
-   function State_Position (State_Key : Natural) return Natural is
-   begin
-      if States.Length = 0 then
-         return Natural'Last;
-      end if;
-      for I in 0 .. Natural (States.Length) - 1 loop
-         if States.Element (I).Key = State_Key then
-            return I;
-         end if;
-      end loop;
-      return Natural'Last;
-   end State_Position;
-
-   procedure Store_Current_State is
-      Pos : Natural;
-      S   : Full_Text_State;
+   function Current_State return Full_Text_State_Access is
+      S, Winner : Full_Text_State_Access;
    begin
       if Current_State_Key = 0 then
-         return;
+         return Default_State'Access;
       end if;
-
-      Pos := State_Position (Current_State_Key);
-      S.Key := Current_State_Key;
-      S.FT_Indexes := FT_Indexes;
-
-      if Pos = Natural'Last then
-         States.Append (S);
-      else
-         States.Replace_Element (Pos, S);
+      S := State_Reg.Find (Current_State_Key);
+      if S /= null then
+         return S;
       end if;
-   end Store_Current_State;
-
-   procedure Load_State (State_Key : Natural) is
-      Pos : constant Natural := State_Position (State_Key);
-      S   : Full_Text_State;
-   begin
-      FT_Indexes.Clear;
-      if Pos = Natural'Last then
-         S.Key := State_Key;
-         States.Append (S);
-      else
-         FT_Indexes := States.Element (Pos).FT_Indexes;
+      S := new Full_Text_State;              --  allocate outside the lock
+      State_Reg.Insert (Current_State_Key, S, Winner);
+      if Winner /= S then
+         Free_State (S);
+         S := Winner;
       end if;
-   end Load_State;
+      return S;
+   end Current_State;
 
    procedure Select_Database (State_Key : Natural) is
    begin
-      if State_Key = Current_State_Key then
-         return;
-      end if;
-
-      Store_Current_State;
       Current_State_Key := State_Key;
-      Load_State (State_Key);
+      if State_Key /= 0 then
+         declare
+            Ignore : constant Full_Text_State_Access := Current_State;
+            pragma Unreferenced (Ignore);
+         begin
+            null;
+         end;
+      end if;
    end Select_Database;
 
    procedure Select_From_Transaction (Tx : in out Database.Transactions.Transaction) is
-      DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
    begin
       if DB /= null then
          Select_Database (Database.Full_Text_State_Key (DB.all));
@@ -110,12 +84,12 @@ package body Database.Full_Text is
 
    function Find_Index (Name : Wide_Wide_String) return Natural is
    begin
-      if FT_Indexes.Length = 0 then
+      if Current_State.all.FT_Indexes.Length = 0 then
          return Natural'Last;
       end if;
-      for I in 0 .. Natural (FT_Indexes.Length) - 1 loop
-         if FT_Indexes.Element (I).Metadata.Owner_Key = Current_State_Key
-           and then To_Wide_Wide_String (FT_Indexes.Element (I).Metadata.Name) = Name
+      for I in 0 .. Natural (Current_State.all.FT_Indexes.Length) - 1 loop
+         if Current_State.all.FT_Indexes.Element (I).Metadata.Owner_Key = Current_State_Key
+           and then To_Wide_Wide_String (Current_State.all.FT_Indexes.Element (I).Metadata.Name) = Name
          then
             return I;
          end if;
@@ -126,8 +100,6 @@ package body Database.Full_Text is
    function Index_Visible
      (Tx : Database.Transactions.Transaction;
       IX : Database.Full_Text.Indexes.Full_Text_Index) return Boolean is
-      use type Database.Versioning.Transaction_Id;
-      use type Database.Versioning.Commit_Version;
    begin
       if IX.Metadata.Created_By /= Database.Versioning.No_Transaction
         and then IX.Metadata.Created_By /= Database.Transactions.Id (Tx)
@@ -155,7 +127,6 @@ package body Database.Full_Text is
 
    function Index_Committed_Visible
      (IX : Database.Full_Text.Indexes.Full_Text_Index) return Boolean is
-      use type Database.Versioning.Transaction_Id;
    begin
       return IX.Metadata.Created_By = Database.Versioning.No_Transaction
         and then IX.Metadata.Deleted_By = Database.Versioning.No_Transaction;
@@ -217,35 +188,35 @@ package body Database.Full_Text is
             Mix_Text (H, To_Wide_Wide_String (V.Enum_Text));
          when Database.Types.Date_Value => Mix_Text  (H,
            Integer'Wide_Wide_Image (V.Date.Year));
-           Mix (H,
+            Mix (H,
            V.Date.Month);
-           Mix (H,
+            Mix (H,
            V.Date.Day);
          when Database.Types.Time_Value => Mix  (H,
            V.Clock_Time.Hour);
-           Mix (H,
+            Mix (H,
            V.Clock_Time.Minute);
-           Mix (H,
+            Mix (H,
            V.Clock_Time.Second);
-           Mix (H,
+            Mix (H,
            V.Clock_Time.Nanosecond);
          when Database.Types.Date_Time_Value => Mix_Text  (H,
            Integer'Wide_Wide_Image (V.Date_Time.Date_Part.Year));
-           Mix (H,
+            Mix (H,
            V.Date_Time.Date_Part.Month);
-           Mix (H,
+            Mix (H,
            V.Date_Time.Date_Part.Day);
-           Mix (H,
+            Mix (H,
            V.Date_Time.Time_Part.Hour);
-           Mix (H,
+            Mix (H,
            V.Date_Time.Time_Part.Minute);
-           Mix (H,
+            Mix (H,
            V.Date_Time.Time_Part.Second);
-           Mix (H,
+            Mix (H,
            V.Date_Time.Time_Part.Nanosecond);
          when Database.Types.Duration_Value => Mix_Text  (H,
            Long_Long_Integer'Wide_Wide_Image (V.Time_Span.Seconds));
-           Mix (H,
+            Mix (H,
            V.Time_Span.Nanoseconds);
          when Database.Types.UUID_Value => for B of V.UUID loop Mix (H, B);
          end loop;
@@ -413,7 +384,7 @@ package body Database.Full_Text is
      (Tx  : in out Database.Transactions.Transaction;
       Hit : Search_Result;
       Row : out Database.Rows.Row) return Database.Status.Result is
-      DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
       Schema : Database.Schema.Table_Schema;
       R : Database.Status.Result;
       Cursor : Database.Storage.Table_Heap.Heap_Cursor;
@@ -507,7 +478,7 @@ package body Database.Full_Text is
       Tokenizer  : Database.Full_Text.Tokenizers.Tokenizer_Config;
       Normalizer : Database.Full_Text.Normalization.Normalization_Config)
       return Database.Status.Result is
-      DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
       Schema : Database.Schema.Table_Schema;
       R : Database.Status.Result;
       IX : Database.Full_Text.Indexes.Full_Text_Index;
@@ -536,7 +507,7 @@ package body Database.Full_Text is
       IX.Metadata.Tokenizer := Tokenizer;
       IX.Metadata.Normalizer := Normalizer;
       IX.Metadata.Owner_Key := Current_State_Key;
-      IX.Metadata.Id := Database.Full_Text.Indexes.Full_Text_Index_Id (Natural (FT_Indexes.Length) + 1);
+      IX.Metadata.Id := Database.Full_Text.Indexes.Full_Text_Index_Id (Natural (Current_State.all.FT_Indexes.Length) + 1);
       IX.Metadata.Created_By := Database.Transactions.Id (Tx);
       IX.Metadata.Created_At := Database.Transactions.Commit_Version (Tx);
       if DB /= null and then Database.Backend (DB.all) = Database.Persistent_Backend then
@@ -577,14 +548,14 @@ package body Database.Full_Text is
             end loop;
          end if;
       end if;
-      FT_Indexes.Append (IX);
+      Current_State.all.FT_Indexes.Append (IX);
       return Database.Status.Success;
    end Create_Full_Text_Index;
 
    function Drop_Full_Text_Index
      (Tx   : in out Database.Transactions.Transaction;
       Name : Wide_Wide_String) return Database.Status.Result is
-      DB : access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
       Pos : Natural;
       R : Database.Status.Result;
    begin
@@ -604,11 +575,11 @@ package body Database.Full_Text is
          end if;
       end if;
       declare
-         IX : Database.Full_Text.Indexes.Full_Text_Index := FT_Indexes.Element (Pos);
+         IX : Database.Full_Text.Indexes.Full_Text_Index := Current_State.all.FT_Indexes.Element (Pos);
       begin
          IX.Metadata.Deleted_By := Database.Transactions.Id (Tx);
          IX.Metadata.Deleted_At := Database.Transactions.Snapshot_Version (Tx) + 1;
-         FT_Indexes.Replace_Element (Pos, IX);
+         Current_State.all.FT_Indexes.Replace_Element (Pos, IX);
       end;
       return Database.Status.Success;
    end Drop_Full_Text_Index;
@@ -847,13 +818,13 @@ package body Database.Full_Text is
       Cursor.Index := 0;
       Select_From_Transaction (Tx);
       Pos := Find_Index (Index);
-      if Pos = Natural'Last or else not Index_Visible (Tx, FT_Indexes.Element (Pos)) then
+      if Pos = Natural'Last or else not Index_Visible (Tx, Current_State.all.FT_Indexes.Element (Pos)) then
          return Database.Status.Failure
            (Database.Status.Not_Found, "full-text index not found");
       end if;
       declare
          P : constant Database.Full_Text.Postings.Posting_Vectors.Vector  :=
-           Eval_Visible (Tx, FT_Indexes.Element (Pos), Query);
+           Eval_Visible (Tx, Current_State.all.FT_Indexes.Element (Pos), Query);
       begin
          for E of P loop
             Cursor.Results.Append
@@ -864,16 +835,16 @@ package body Database.Full_Text is
                 Score => Long_Float (Database.Full_Text.Ranking.Query_Score
                   (Posting => E,
                    Total_Documents => Natural'Max  (1,
-                     Database.Full_Text.Indexes.Document_Count (FT_Indexes.Element (Pos))),
+                     Database.Full_Text.Indexes.Document_Count (Current_State.all.FT_Indexes.Element (Pos))),
                    Document_Frequency => Natural'Max  (1,
-                     Database.Full_Text.Indexes.Document_Frequency (FT_Indexes.Element (Pos),
+                     Database.Full_Text.Indexes.Document_Frequency (Current_State.all.FT_Indexes.Element (Pos),
                      Representative_Term (Query))),
                    Average_Document_Length =>
                      Database.Full_Text.Ranking.Score
                        (Database.Full_Text.Indexes.Average_Document_Length
-                          (FT_Indexes.Element (Pos))),
+                          (Current_State.all.FT_Indexes.Element (Pos))),
                    Document_Length => Natural'Max  (1,
-                     Database.Full_Text.Indexes.Document_Length (FT_Indexes.Element (Pos),
+                     Database.Full_Text.Indexes.Document_Length (Current_State.all.FT_Indexes.Element (Pos),
                      To_Wide_Wide_String (E.Ref.Row_Key))),
                    Matched_Terms => 1,
                    Phrase_Bonus =>
@@ -927,15 +898,17 @@ package body Database.Full_Text is
       Schema   : Database.Schema.Table_Schema;
       Row_Id   : Natural;
       Row      : Database.Rows.Row) is
+      pragma Unreferenced (Row_Id);
    begin
       Select_From_Transaction (Tx);
-      if FT_Indexes.Length > 0 then
-         for I in 0 .. Natural (FT_Indexes.Length) - 1 loop
+      if Current_State.all.FT_Indexes.Length > 0 then
+         for I in 0 .. Natural (Current_State.all.FT_Indexes.Length) - 1 loop
             declare
-               IX : Database.Full_Text.Indexes.Full_Text_Index := FT_Indexes.Element (I);
+               IX : Database.Full_Text.Indexes.Full_Text_Index := Current_State.all.FT_Indexes.Element (I);
             begin
                if IX.Metadata.Owner_Key = Current_State_Key and then IX.Metadata.Table_Id = Schema.Table_Id
-                 and then Index_Visible (Tx, IX) then
+                 and then Index_Visible (Tx, IX)
+               then
                   Database.Full_Text.Indexes.Index_Row  (IX,
                     Tx,
                     Row_Identity (Schema,
@@ -943,7 +916,7 @@ package body Database.Full_Text is
                     Row_Identity_Key (Schema,
                     Row),
                     Row);
-                  FT_Indexes.Replace_Element (I, IX);
+                  Current_State.all.FT_Indexes.Replace_Element (I, IX);
                end if;
             end;
          end loop;
@@ -958,15 +931,16 @@ package body Database.Full_Text is
       Stable_Key : constant Wide_Wide_String := Row_Identity_Key (Schema, Row);
    begin
       Select_From_Transaction (Tx);
-      if FT_Indexes.Length > 0 then
-         for I in 0 .. Natural (FT_Indexes.Length) - 1 loop
+      if Current_State.all.FT_Indexes.Length > 0 then
+         for I in 0 .. Natural (Current_State.all.FT_Indexes.Length) - 1 loop
             declare
-               IX : Database.Full_Text.Indexes.Full_Text_Index := FT_Indexes.Element (I);
+               IX : Database.Full_Text.Indexes.Full_Text_Index := Current_State.all.FT_Indexes.Element (I);
             begin
                if IX.Metadata.Owner_Key = Current_State_Key and then IX.Metadata.Table_Id = Schema.Table_Id
-                 and then Index_Visible (Tx, IX) then
+                 and then Index_Visible (Tx, IX)
+               then
                   Database.Full_Text.Indexes.Delete_Row (IX, Tx, Stable_Id, Stable_Key);
-                  FT_Indexes.Replace_Element (I, IX);
+                  Current_State.all.FT_Indexes.Replace_Element (I, IX);
                end if;
             end;
          end loop;
@@ -982,46 +956,46 @@ package body Database.Full_Text is
      (Tx_Id          : Database.Versioning.Transaction_Id;
       Commit_Version : Database.Versioning.Commit_Version) is
    begin
-      if FT_Indexes.Length = 0 then
+      if Current_State.all.FT_Indexes.Length = 0 then
          return;
       end if;
-      for II in reverse 0 .. Natural (FT_Indexes.Length) - 1 loop
+      for II in reverse 0 .. Natural (Current_State.all.FT_Indexes.Length) - 1 loop
          declare
-            IX : Database.Full_Text.Indexes.Full_Text_Index := FT_Indexes.Element (II);
+            IX : Database.Full_Text.Indexes.Full_Text_Index := Current_State.all.FT_Indexes.Element (II);
          begin
             if IX.Metadata.Owner_Key = Current_State_Key then
                if IX.Metadata.Deleted_By = Tx_Id then
-                  FT_Indexes.Delete (II);
+                  Current_State.all.FT_Indexes.Delete (II);
                else
                   if IX.Metadata.Created_By = Tx_Id then
                      IX.Metadata.Created_By := Database.Versioning.No_Transaction;
                      IX.Metadata.Created_At := Commit_Version;
                   end if;
                   if IX.Terms.Length > 0 then
-                  for TI in 0 .. Natural (IX.Terms.Length) - 1 loop
-                     declare
-                        TE : Database.Full_Text.Indexes.Term_Entry := IX.Terms.Element (TI);
-                     begin
-                        if TE.Postings.Length > 0 then
-                        for PI in 0 .. Natural (TE.Postings.Length) - 1 loop
-                           declare
-                              P : Database.Full_Text.Postings.Posting := TE.Postings.Element (PI);
-                           begin
-                              if P.Created_By = Tx_Id then
-                                 P.Created_At := Commit_Version;
-                              end if;
-                              if P.Deleted_By = Tx_Id then
-                                 P.Deleted_At := Commit_Version;
-                              end if;
-                              TE.Postings.Replace_Element (PI, P);
-                           end;
-                        end loop;
-                        end if;
-                        IX.Terms.Replace_Element (TI, TE);
-                     end;
-                  end loop;
+                     for TI in 0 .. Natural (IX.Terms.Length) - 1 loop
+                        declare
+                           TE : Database.Full_Text.Indexes.Term_Entry := IX.Terms.Element (TI);
+                        begin
+                           if TE.Postings.Length > 0 then
+                              for PI in 0 .. Natural (TE.Postings.Length) - 1 loop
+                                 declare
+                                    P : Database.Full_Text.Postings.Posting := TE.Postings.Element (PI);
+                                 begin
+                                    if P.Created_By = Tx_Id then
+                                       P.Created_At := Commit_Version;
+                                    end if;
+                                    if P.Deleted_By = Tx_Id then
+                                       P.Deleted_At := Commit_Version;
+                                    end if;
+                                    TE.Postings.Replace_Element (PI, P);
+                                 end;
+                              end loop;
+                           end if;
+                              IX.Terms.Replace_Element (TI, TE);
+                        end;
+                     end loop;
                   end if;
-                  FT_Indexes.Replace_Element (II, IX);
+                  Current_State.all.FT_Indexes.Replace_Element (II, IX);
                end if;
             end if;
          end;
@@ -1031,53 +1005,53 @@ package body Database.Full_Text is
    procedure Rollback_Transaction
      (Tx_Id : Database.Versioning.Transaction_Id) is
    begin
-      if FT_Indexes.Length = 0 then
+      if Current_State.all.FT_Indexes.Length = 0 then
          return;
       end if;
-      for II in reverse 0 .. Natural (FT_Indexes.Length) - 1 loop
+      for II in reverse 0 .. Natural (Current_State.all.FT_Indexes.Length) - 1 loop
          declare
-            IX : Database.Full_Text.Indexes.Full_Text_Index := FT_Indexes.Element (II);
+            IX : Database.Full_Text.Indexes.Full_Text_Index := Current_State.all.FT_Indexes.Element (II);
          begin
             if IX.Metadata.Owner_Key = Current_State_Key then
                if IX.Metadata.Created_By = Tx_Id then
-                  FT_Indexes.Delete (II);
+                  Current_State.all.FT_Indexes.Delete (II);
                else
                   if IX.Metadata.Deleted_By = Tx_Id then
                      IX.Metadata.Deleted_By := Database.Versioning.No_Transaction;
                      IX.Metadata.Deleted_At := Database.Versioning.No_Version;
                   end if;
                   if IX.Terms.Length > 0 then
-                  for TI in reverse 0 .. Natural (IX.Terms.Length) - 1 loop
-                     declare
-                        TE : Database.Full_Text.Indexes.Term_Entry := IX.Terms.Element (TI);
-                     begin
-                        if TE.Postings.Length > 0 then
-                        for PI in reverse 0 .. Natural (TE.Postings.Length) - 1 loop
-                           declare
-                              P : Database.Full_Text.Postings.Posting := TE.Postings.Element (PI);
-                           begin
-                              if P.Created_By = Tx_Id then
-                                 TE.Postings.Delete (PI);
-                              elsif P.Deleted_By = Tx_Id then
-                                 P.Deleted_By := Database.Versioning.No_Transaction;
-                                 P.Deleted_At := Database.Versioning.No_Version;
-                                 TE.Postings.Replace_Element (PI, P);
-                                 if IX.Deleted_Posting_Count > 0 then
-                                    IX.Deleted_Posting_Count := IX.Deleted_Posting_Count - 1;
+                     for TI in reverse 0 .. Natural (IX.Terms.Length) - 1 loop
+                        declare
+                           TE : Database.Full_Text.Indexes.Term_Entry := IX.Terms.Element (TI);
+                        begin
+                           if TE.Postings.Length > 0 then
+                              for PI in reverse 0 .. Natural (TE.Postings.Length) - 1 loop
+                                 declare
+                                    P : Database.Full_Text.Postings.Posting := TE.Postings.Element (PI);
+                                 begin
+                                    if P.Created_By = Tx_Id then
+                                       TE.Postings.Delete (PI);
+                                    elsif P.Deleted_By = Tx_Id then
+                                       P.Deleted_By := Database.Versioning.No_Transaction;
+                                       P.Deleted_At := Database.Versioning.No_Version;
+                                       TE.Postings.Replace_Element (PI, P);
+                                       if IX.Deleted_Posting_Count > 0 then
+                                          IX.Deleted_Posting_Count := IX.Deleted_Posting_Count - 1;
+                                       end if;
+                                    end if;
+                                 end;
+                              end loop;
+                           end if;
+                                 if TE.Postings.Is_Empty then
+                                    IX.Terms.Delete (TI);
+                                 else
+                                    IX.Terms.Replace_Element (TI, TE);
                                  end if;
-                              end if;
-                           end;
-                        end loop;
-                        end if;
-                        if TE.Postings.Is_Empty then
-                           IX.Terms.Delete (TI);
-                        else
-                           IX.Terms.Replace_Element (TI, TE);
-                        end if;
-                     end;
-                  end loop;
+                        end;
+                     end loop;
                   end if;
-                  FT_Indexes.Replace_Element (II, IX);
+                  Current_State.all.FT_Indexes.Replace_Element (II, IX);
                end if;
             end if;
          end;
@@ -1087,7 +1061,7 @@ package body Database.Full_Text is
    function Owned_Index_Count return Natural is
       C : Natural := 0;
    begin
-      for IX of FT_Indexes loop
+      for IX of Current_State.all.FT_Indexes loop
          if IX.Metadata.Owner_Key = Current_State_Key and then Index_Committed_Visible (IX) then
             C := C + 1;
          end if;
@@ -1102,20 +1076,20 @@ package body Database.Full_Text is
       Create (F, Out_File, Sidecar_Path (Path));
       Put_Line (F, "DATABASE_FULL_TEXT_V2");
       Put_Line (F, Natural'Wide_Wide_Image (Owned_Index_Count));
-      for IX of FT_Indexes loop
+      for IX of Current_State.all.FT_Indexes loop
          if IX.Metadata.Owner_Key = Current_State_Key and then Index_Committed_Visible (IX) then
-         Put_Line (F, "INDEX");
-         Put_Line (F, Natural'Wide_Wide_Image (Natural (IX.Metadata.Id)));
-         Put_Line (F, To_Wide_Wide_String (IX.Metadata.Name));
-         Put_Line (F, Natural'Wide_Wide_Image (IX.Metadata.Table_Id));
-         Put_Line (F, To_Wide_Wide_String (IX.Metadata.Table_Name));
-         Put_Line (F, Natural'Wide_Wide_Image (IX.Metadata.Column_Id));
-         Put_Line (F, Natural'Wide_Wide_Image (Natural (IX.Terms.Length)));
-         for TE of IX.Terms loop
-            Put_Line (F, To_Wide_Wide_String (TE.Term));
-            Put_Line (F, Natural'Wide_Wide_Image (Natural (TE.Postings.Length)));
-            for P of TE.Postings loop
-               Put_Line (F,
+            Put_Line (F, "INDEX");
+            Put_Line (F, Natural'Wide_Wide_Image (Natural (IX.Metadata.Id)));
+            Put_Line (F, To_Wide_Wide_String (IX.Metadata.Name));
+            Put_Line (F, Natural'Wide_Wide_Image (IX.Metadata.Table_Id));
+            Put_Line (F, To_Wide_Wide_String (IX.Metadata.Table_Name));
+            Put_Line (F, Natural'Wide_Wide_Image (IX.Metadata.Column_Id));
+            Put_Line (F, Natural'Wide_Wide_Image (Natural (IX.Terms.Length)));
+            for TE of IX.Terms loop
+               Put_Line (F, To_Wide_Wide_String (TE.Term));
+               Put_Line (F, Natural'Wide_Wide_Image (Natural (TE.Postings.Length)));
+               for P of TE.Postings loop
+                  Put_Line (F,
                  Natural'Wide_Wide_Image (P.Ref.Table_Id) & " " &
                  Natural'Wide_Wide_Image (P.Ref.Row_Id) & " " &
                  Natural'Wide_Wide_Image (P.Ref.Column_Id) & " " &
@@ -1125,22 +1099,22 @@ package body Database.Full_Text is
                  Natural'Wide_Wide_Image (Natural (P.Deleted_By)) & " " &
                  Natural'Wide_Wide_Image (Natural (P.Deleted_At)) & " " &
                  Natural'Wide_Wide_Image (Natural (P.Positions.Length)));
-               Put_Line (F, To_Wide_Wide_String (P.Ref.Row_Key));
-               if P.Positions.Length = 0 then
-                  Put_Line (F, "");
-               else
-                  declare
-                     Line : Unbounded_Wide_Wide_String;
-                  begin
-                     for Pos of P.Positions loop
-                        Append (Line, Natural'Wide_Wide_Image (Pos));
-                        Append (Line, " ");
-                     end loop;
-                     Put_Line (F, To_Wide_Wide_String (Line));
-                  end;
-               end if;
+                  Put_Line (F, To_Wide_Wide_String (P.Ref.Row_Key));
+                  if P.Positions.Length = 0 then
+                     Put_Line (F, "");
+                  else
+                     declare
+                        Line : Unbounded_Wide_Wide_String;
+                     begin
+                        for Pos of P.Positions loop
+                           Append (Line, Natural'Wide_Wide_Image (Pos));
+                           Append (Line, " ");
+                        end loop;
+                        Put_Line (F, To_Wide_Wide_String (Line));
+                     end;
+                  end if;
+               end loop;
             end loop;
-         end loop;
          end if;
       end loop;
       Close (F);
@@ -1194,7 +1168,7 @@ package body Database.Full_Text is
    function Rebuild_From_Catalog
      (DB   : in out Database.Handle;
       Path : Wide_Wide_String) return Database.Status.Result is
-      Definitions : Database.Full_Text.Indexes.Index_Vectors.Vector := Load_Definitions (Path);
+      Definitions : constant Database.Full_Text.Indexes.Index_Vectors.Vector := Load_Definitions (Path);
       Schema : Database.Schema.Table_Schema;
       Schema_R : Database.Status.Result;
       Cursor : Database.Storage.Table_Heap.Heap_Cursor;
@@ -1207,7 +1181,7 @@ package body Database.Full_Text is
       end if;
       for I in 0 .. Natural (Definitions.Length) - 1 loop
          declare
-            IX : Database.Full_Text.Indexes.Full_Text_Index := Definitions.Element (I);
+            IX : constant Database.Full_Text.Indexes.Full_Text_Index := Definitions.Element (I);
          begin
             Schema_R := Database.Catalog.Find_By_Id (IX.Metadata.Table_Id, Schema);
             if not Database.Status.Is_Ok (Schema_R) then
@@ -1247,7 +1221,7 @@ package body Database.Full_Text is
                         end loop;
                      end;
                   end if;
-                  FT_Indexes.Append (Rebuilt);
+                  Current_State.all.FT_Indexes.Append (Rebuilt);
                end;
             end if;
          end;
@@ -1334,32 +1308,32 @@ package body Database.Full_Text is
                         Next_Number  (Line (1 .. Last),
                           Parse_Pos,
                           P.Ref.Table_Id);
-                          Next_Number (Line (1 .. Last),
+                        Next_Number (Line (1 .. Last),
                           Parse_Pos,
                           P.Ref.Row_Id);
-                          Next_Number (Line (1 .. Last),
+                        Next_Number (Line (1 .. Last),
                           Parse_Pos,
                           P.Ref.Column_Id);
-                          Next_Number (Line (1 .. Last),
+                        Next_Number (Line (1 .. Last),
                           Parse_Pos,
                           P.Frequency);
-                          Next_Number (Line (1 .. Last),
+                        Next_Number (Line (1 .. Last),
                           Parse_Pos,
                           N);
-                          P.Created_By := Database.Versioning.Transaction_Id (N);
-                          Next_Number (Line (1 .. Last),
+                        P.Created_By := Database.Versioning.Transaction_Id (N);
+                        Next_Number (Line (1 .. Last),
                           Parse_Pos,
                           N);
-                          P.Created_At := Database.Versioning.Commit_Version (N);
-                          Next_Number (Line (1 .. Last),
+                        P.Created_At := Database.Versioning.Commit_Version (N);
+                        Next_Number (Line (1 .. Last),
                           Parse_Pos,
                           N);
-                          P.Deleted_By := Database.Versioning.Transaction_Id (N);
-                          Next_Number (Line (1 .. Last),
+                        P.Deleted_By := Database.Versioning.Transaction_Id (N);
+                        Next_Number (Line (1 .. Last),
                           Parse_Pos,
                           N);
-                          P.Deleted_At := Database.Versioning.Commit_Version (N);
-                          Next_Number (Line (1 .. Last),
+                        P.Deleted_At := Database.Versioning.Commit_Version (N);
+                        Next_Number (Line (1 .. Last),
                           Parse_Pos,
                           N);
                         if Header_Is_V2 then
@@ -1383,7 +1357,7 @@ package body Database.Full_Text is
             end loop;
             IX.Metadata.Owner_Key := Current_State_Key;
             Database.Full_Text.Indexes.Recompute_Document_Statistics_From_Postings (IX);
-            FT_Indexes.Append (IX);
+            Current_State.all.FT_Indexes.Append (IX);
          end;
       end loop;
       Close (F);
@@ -1410,7 +1384,7 @@ package body Database.Full_Text is
          return Database.Status.Failure (Database.Status.Not_Found, "full-text index not found");
       end if;
       declare
-         IX : constant Database.Full_Text.Indexes.Full_Text_Index := FT_Indexes.Element (Pos);
+         IX : constant Database.Full_Text.Indexes.Full_Text_Index := Current_State.all.FT_Indexes.Element (Pos);
       begin
          for TE of IX.Terms loop
             if Length (TE.Term) = 0 then
@@ -1454,7 +1428,7 @@ package body Database.Full_Text is
          return Database.Status.Failure (Database.Status.Not_Found, "full-text index not found");
       end if;
       declare
-         IX : constant Database.Full_Text.Indexes.Full_Text_Index := FT_Indexes.Element (Pos);
+         IX : constant Database.Full_Text.Indexes.Full_Text_Index := Current_State.all.FT_Indexes.Element (Pos);
       begin
          for TE of IX.Terms loop
             if Length (TE.Term) = 0 then
@@ -1462,7 +1436,8 @@ package body Database.Full_Text is
             end if;
             for P of TE.Postings loop
                if P.Ref.Table_Id /= IX.Metadata.Table_Id or else P.Ref.Column_Id /= IX.Metadata.Column_Id
-                 or else P.Ref.Row_Id = 0 then
+                 or else P.Ref.Row_Id = 0
+               then
                   return Database.Status.Failure (Database.Status.Corrupt_File, "invalid full-text posting reference");
                end if;
                if Length (P.Ref.Row_Key) = 0 then
@@ -1508,35 +1483,35 @@ package body Database.Full_Text is
          return;
       end if;
       declare
-         IX : Database.Full_Text.Indexes.Full_Text_Index := FT_Indexes.Element (Pos);
+         IX : Database.Full_Text.Indexes.Full_Text_Index := Current_State.all.FT_Indexes.Element (Pos);
          Removed : Natural;
       begin
          Removed := Database.Full_Text.Indexes.Compact_Reclaimable_Postings (IX);
          pragma Unreferenced (Removed);
-         FT_Indexes.Replace_Element (Pos, IX);
+         Current_State.all.FT_Indexes.Replace_Element (Pos, IX);
       end;
    end Vacuum_Index;
 
    procedure Vacuum_All is
    begin
-      if FT_Indexes.Length = 0 then
+      if Current_State.all.FT_Indexes.Length = 0 then
          return;
       end if;
-      for I in 0 .. Natural (FT_Indexes.Length) - 1 loop
-         if FT_Indexes.Element (I).Metadata.Owner_Key = Current_State_Key then
-            Vacuum_Index (To_Wide_Wide_String (FT_Indexes.Element (I).Metadata.Name));
+      for I in 0 .. Natural (Current_State.all.FT_Indexes.Length) - 1 loop
+         if Current_State.all.FT_Indexes.Element (I).Metadata.Owner_Key = Current_State_Key then
+            Vacuum_Index (To_Wide_Wide_String (Current_State.all.FT_Indexes.Element (I).Metadata.Name));
          end if;
       end loop;
    end Vacuum_All;
 
    procedure Clear is
    begin
-      if FT_Indexes.Length = 0 then
+      if Current_State.all.FT_Indexes.Length = 0 then
          return;
       end if;
-      for I in reverse 0 .. Natural (FT_Indexes.Length) - 1 loop
-         if FT_Indexes.Element (I).Metadata.Owner_Key = Current_State_Key then
-            FT_Indexes.Delete (I);
+      for I in reverse 0 .. Natural (Current_State.all.FT_Indexes.Length) - 1 loop
+         if Current_State.all.FT_Indexes.Element (I).Metadata.Owner_Key = Current_State_Key then
+            Current_State.all.FT_Indexes.Delete (I);
          end if;
       end loop;
    end Clear;
@@ -1545,30 +1520,30 @@ package body Database.Full_Text is
    function Exists (Name : Wide_Wide_String) return Boolean is
       Pos : constant Natural := Find_Index (Name);
    begin
-      return Pos /= Natural'Last and then Index_Committed_Visible (FT_Indexes.Element (Pos));
+      return Pos /= Natural'Last and then Index_Committed_Visible (Current_State.all.FT_Indexes.Element (Pos));
    end Exists;
    function Term_Count (Name : Wide_Wide_String) return Natural is
       Pos : constant Natural := Find_Index (Name);
    begin
-      if Pos = Natural'Last or else not Index_Committed_Visible (FT_Indexes.Element (Pos)) then
+      if Pos = Natural'Last or else not Index_Committed_Visible (Current_State.all.FT_Indexes.Element (Pos)) then
          return 0;
       else
-         return Database.Full_Text.Indexes.Term_Count (FT_Indexes.Element (Pos));
+         return Database.Full_Text.Indexes.Term_Count (Current_State.all.FT_Indexes.Element (Pos));
       end if;
    end Term_Count;
    function Posting_Count (Name : Wide_Wide_String) return Natural is
       Pos : constant Natural := Find_Index (Name);
    begin
-      if Pos = Natural'Last or else not Index_Committed_Visible (FT_Indexes.Element (Pos)) then
+      if Pos = Natural'Last or else not Index_Committed_Visible (Current_State.all.FT_Indexes.Element (Pos)) then
          return 0;
       else
-         return Database.Full_Text.Indexes.Posting_Count (FT_Indexes.Element (Pos));
+         return Database.Full_Text.Indexes.Posting_Count (Current_State.all.FT_Indexes.Element (Pos));
       end if;
    end Posting_Count;
    function Max_Commit_Version return Database.Versioning.Commit_Version is
       Max : Database.Versioning.Commit_Version := Database.Versioning.No_Version;
    begin
-      for IX of FT_Indexes loop
+      for IX of Current_State.all.FT_Indexes loop
          if IX.Metadata.Owner_Key = Current_State_Key then
             for TE of IX.Terms loop
                for P of TE.Postings loop
@@ -1588,10 +1563,10 @@ package body Database.Full_Text is
    function Obsolete_Posting_Count (Name : Wide_Wide_String) return Natural is
       Pos : constant Natural := Find_Index (Name);
    begin
-      if Pos = Natural'Last or else not Index_Committed_Visible (FT_Indexes.Element (Pos)) then
+      if Pos = Natural'Last or else not Index_Committed_Visible (Current_State.all.FT_Indexes.Element (Pos)) then
          return 0;
       else
-         return FT_Indexes.Element (Pos).Deleted_Posting_Count;
+         return Current_State.all.FT_Indexes.Element (Pos).Deleted_Posting_Count;
       end if;
    end Obsolete_Posting_Count;
 end Database.Full_Text;

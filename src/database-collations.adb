@@ -1,12 +1,9 @@
 with Ada.Containers;
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
 with Ada.Unchecked_Deallocation;
-with Database.Extension_Metadata;
-with Database.Status;
+with Database.State_Registry;
 
 package body Database.Collations is
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Ada.Containers.Count_Type;
 
    type Collation_Entry is record
@@ -16,37 +13,31 @@ package body Database.Collations is
 
    package Vectors is new Ada.Containers.Indefinite_Vectors (Natural, Collation_Entry);
    type Registry_Access is access all Vectors.Vector;
-   type Registry_State_Entry is record
-      Key      : Natural := 0;
-      Registry : Registry_Access := null;
-   end record;
-   package Registry_State_Vectors is new Ada.Containers.Indefinite_Vectors (Natural, Registry_State_Entry);
+   package State_Reg is new Database.State_Registry
+     (Vectors.Vector, Registry_Access);
    procedure Free_Registry is new Ada.Unchecked_Deallocation (Object => Vectors.Vector, Name => Registry_Access);
 
    Default_Registry : aliased Vectors.Vector;
-   States           : Registry_State_Vectors.Vector;
    Current_Key      : Natural := 0;
+   pragma Thread_Local_Storage (Current_Key);
 
    function Current_Registry return Registry_Access is
+      S, Winner : Registry_Access;
    begin
       if Current_Key = 0 then
          return Default_Registry'Access;
       end if;
-      if States.Length > 0 then
-         for I in 0 .. Natural (States.Length) - 1 loop
-            if States.Element (I).Key = Current_Key then
-               return States.Element (I).Registry;
-            end if;
-         end loop;
+      S := State_Reg.Find (Current_Key);
+      if S /= null then
+         return S;
       end if;
-      declare
-         E : Registry_State_Entry;
-      begin
-         E.Key := Current_Key;
-         E.Registry := new Vectors.Vector;
-         States.Append (E);
-         return E.Registry;
-      end;
+      S := new Vectors.Vector;
+      State_Reg.Insert (Current_Key, S, Winner);
+      if Winner /= S then
+         Free_Registry (S);
+         S := Winner;
+      end if;
+      return S;
    end Current_Registry;
 
    procedure Select_Database (State_Key : Natural) is
@@ -62,23 +53,14 @@ package body Database.Collations is
    end Select_Database;
 
    procedure Drop_Database (State_Key : Natural) is
+      Freed : Registry_Access;
    begin
       if State_Key = 0 then
          return;
       end if;
-      if States.Length > 0 then
-         for I in reverse 0 .. Natural (States.Length) - 1 loop
-            if States.Element (I).Key = State_Key then
-               declare
-                  E : Registry_State_Entry := States.Element (I);
-               begin
-                  if E.Registry /= null then
-                     Free_Registry (E.Registry);
-                  end if;
-                  States.Delete (I);
-               end;
-            end if;
-         end loop;
+      State_Reg.Remove (State_Key, Freed);
+      if Freed /= null then
+         Free_Registry (Freed);
       end if;
       if Current_Key = State_Key then
          Current_Key := 0;
@@ -140,7 +122,8 @@ package body Database.Collations is
          return Database.Status.Failure (Database.Status.Missing_Extension, "missing collation: " & Name);
       end if;
       if not Current_Registry.all.Element (Pos).Metadata.Deterministic
-        or else not Current_Registry.all.Element (Pos).Metadata.Index_Compatible then
+        or else not Current_Registry.all.Element (Pos).Metadata.Index_Compatible
+      then
          return Database.Status.Failure (Database.Status.Extension_Error, "collation is not index-compatible");
       end if;
       return Database.Status.Success;

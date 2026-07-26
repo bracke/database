@@ -1,15 +1,11 @@
 with Ada.Containers;
-with Database.Extension_Metadata;
 with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Wide_Wide_Unbounded;
-with Database.Status;
 with Database.Metrics;
+with Database.State_Registry;
 with Database.Tracing;
-with Database.Types;
 with Ada.Unchecked_Deallocation;
 
 package body Database.Functions is
-   use Ada.Strings.Wide_Wide_Unbounded;
    use type Ada.Containers.Count_Type;
    use type Database.Types.Value_Kind;
 
@@ -22,49 +18,34 @@ package body Database.Functions is
      (Index_Type => Natural, Element_Type => Function_Entry);
 
    type Registry_Access is access all Function_Vectors.Vector;
-   type Registry_State_Entry is record
-      Key      : Natural := 0;
-      Registry : Registry_Access := null;
-   end record;
-
-   package Registry_State_Vectors is new Ada.Containers.Indefinite_Vectors
-     (Index_Type => Natural, Element_Type => Registry_State_Entry);
+   package State_Reg is new Database.State_Registry
+     (Function_Vectors.Vector, Registry_Access);
 
    procedure Free_Registry is new Ada.Unchecked_Deallocation
      (Object => Function_Vectors.Vector, Name => Registry_Access);
 
-   Default_Registry : Registry_Access := new Function_Vectors.Vector;
-   States      : Registry_State_Vectors.Vector;
+   Default_Registry : constant Registry_Access := new Function_Vectors.Vector;
+
    Current_Key : Natural := 0;
+   pragma Thread_Local_Storage (Current_Key);
 
    function Current_Registry return Registry_Access is
+      S, Winner : Registry_Access;
    begin
       if Current_Key = 0 then
          return Default_Registry;
       end if;
-      if States.Length > 0 then
-         for I in 0 .. Natural (States.Length) - 1 loop
-            if States.Element (I).Key = Current_Key then
-               if States.Element (I).Registry = null then
-                  declare
-                     E : Registry_State_Entry := States.Element (I);
-                  begin
-                     E.Registry := new Function_Vectors.Vector;
-                     States.Replace_Element (I, E);
-                  end;
-               end if;
-               return States.Element (I).Registry;
-            end if;
-         end loop;
+      S := State_Reg.Find (Current_Key);
+      if S /= null then
+         return S;
       end if;
-      declare
-         E : Registry_State_Entry;
-      begin
-         E.Key := Current_Key;
-         E.Registry := new Function_Vectors.Vector;
-         States.Append (E);
-         return States.Element (Natural (States.Length) - 1).Registry;
-      end;
+      S := new Function_Vectors.Vector;    --  allocate outside the lock
+      State_Reg.Insert (Current_Key, S, Winner);
+      if Winner /= S then
+         Free_Registry (S);                --  lost the race; free ours
+         S := Winner;
+      end if;
+      return S;
    end Current_Registry;
 
    procedure Select_Database (State_Key : Natural) is
@@ -80,23 +61,14 @@ package body Database.Functions is
    end Select_Database;
 
    procedure Drop_Database (State_Key : Natural) is
+      Freed : Registry_Access;
    begin
       if State_Key = 0 then
          return;
       end if;
-      if States.Length > 0 then
-         for I in reverse 0 .. Natural (States.Length) - 1 loop
-            if States.Element (I).Key = State_Key then
-               declare
-                  E : Registry_State_Entry := States.Element (I);
-               begin
-                  if E.Registry /= null then
-                     Free_Registry (E.Registry);
-                  end if;
-                  States.Delete (I);
-               end;
-            end if;
-         end loop;
+      State_Reg.Remove (State_Key, Freed);
+      if Freed /= null then
+         Free_Registry (Freed);            --  free outside the lock
       end if;
       if Current_Key = State_Key then
          Current_Key := 0;

@@ -1,5 +1,3 @@
-with Database.Schema;
-with Database.Status;
 with Database.Catalog.Rules;
 with Database.Fault_Hooks;
 with Ada.Containers;
@@ -7,19 +5,11 @@ with Ada.Containers.Indefinite_Vectors;
 with Ada.Unchecked_Deallocation;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Storage.Pages;
-with Database.Storage.Record_Format;
 with Database.Storage.Table_Heap;
 with Database.Storage.File_IO;
 with Database.Types;
 with Database.Indexes;
-with Database.Foreign_Keys;
-with Database.Check_Constraints;
-with Database.Generated_Columns;
-with Database.Views;
-with Database.Materialized_Views;
-with Database.Rows;
 with Database.Values;
-with Database.Full_Text.Indexes;
 with Database.Expressions;
 with Database.Queries;
 
@@ -29,7 +19,6 @@ package body Database.Catalog is
    use type Database.Full_Text.Indexes.Full_Text_Index_Id;
    use type Database.Schema.Table_Schema;
    use type Ada.Containers.Count_Type;
-   use Ada.Strings.Wide_Wide_Unbounded;
    package Schema_Vectors is new Ada.Containers.Indefinite_Vectors
      (Index_Type => Natural, Element_Type => Database.Schema.Table_Schema);
 
@@ -72,36 +61,107 @@ package body Database.Catalog is
       State : Catalog_State_Access := null;
    end record;
 
-   package Catalog_State_Entry_Vectors is new Ada.Containers.Indefinite_Vectors
-     (Index_Type => Natural, Element_Type => Catalog_State_Entry);
-
    procedure Free_State is new Ada.Unchecked_Deallocation
      (Object => Catalog_State, Name => Catalog_State_Access);
 
-   States : Catalog_State_Entry_Vectors.Vector;
+   --  Registry of per-database catalog states, guarded by a protected object so
+   --  tasks operating different database handles concurrently stay isolated.
+   --  It deliberately does NO allocation or deallocation while holding the lock
+   --  (that is what deadlocked an earlier attempt): the caller allocates and
+   --  frees states *outside* the protected action, and the registry only
+   --  stores/looks up pointers in a fixed, packed plain array -- no container
+   --  tampering, no reallocation. Find is a function (concurrent readers);
+   --  Insert/Remove are procedures (exclusive).
+   Max_Open_Databases : constant := 256;
+   type Slot_Count is range 0 .. Max_Open_Databases;
+   subtype Slot_Index is Slot_Count range 1 .. Max_Open_Databases;
+   type Slot_Array is array (Slot_Index) of Catalog_State_Entry;
+
+   protected Registry is
+      function Find (Key : Natural) return Catalog_State_Access;
+      procedure Insert
+        (Key    : Natural;
+         State  : Catalog_State_Access;
+         Winner : out Catalog_State_Access);
+      procedure Remove (Key : Natural; Freed : out Catalog_State_Access);
+   private
+      Slots : Slot_Array;
+      Count : Slot_Count := 0;
+   end Registry;
+
+   protected body Registry is
+      function Find (Key : Natural) return Catalog_State_Access is
+      begin
+         for I in 1 .. Count loop
+            if Slots (I).Key = Key then
+               return Slots (I).State;
+            end if;
+         end loop;
+         return null;
+      end Find;
+
+      procedure Insert
+        (Key    : Natural;
+         State  : Catalog_State_Access;
+         Winner : out Catalog_State_Access) is
+      begin
+         for I in 1 .. Count loop
+            if Slots (I).Key = Key then
+               Winner := Slots (I).State;   --  another task created it first
+               return;
+            end if;
+         end loop;
+         if Count < Max_Open_Databases then
+            Count := Count + 1;
+            Slots (Count) := (Key => Key, State => State);
+         end if;
+         --  On overflow the state is used unregistered (soft cap; not reached
+         --  in practice with 256 concurrently-open databases).
+         Winner := State;
+      end Insert;
+
+      procedure Remove (Key : Natural; Freed : out Catalog_State_Access) is
+      begin
+         Freed := null;
+         for I in 1 .. Count loop
+            if Slots (I).Key = Key then
+               Freed := Slots (I).State;
+               Slots (I) := Slots (Count);   --  swap-remove keeps it packed
+               Slots (Count) := (Key => 0, State => null);
+               Count := Count - 1;
+               return;
+            end if;
+         end loop;
+      end Remove;
+   end Registry;
+
+   --  Which database this task is operating on. Thread-local so concurrent tasks
+   --  driving different handles do not clobber each other's selection between
+   --  Select_Database and use.
    Current_Key : Natural := 0;
+   pragma Thread_Local_Storage (Current_Key);
+
    Default_State : aliased Catalog_State;
 
    function Current_State return Catalog_State_Access is
+      S, Winner : Catalog_State_Access;
    begin
       if Current_Key = 0 then
          return Default_State'Access;
       end if;
-      if States.Length > 0 then
-         for I in 0 .. Natural (States.Length) - 1 loop
-            if States.Element (I).Key = Current_Key then
-               return States.Element (I).State;
-            end if;
-         end loop;
+      S := Registry.Find (Current_Key);
+      if S /= null then
+         return S;
       end if;
-      declare
-         E : Catalog_State_Entry;
-      begin
-         E.Key := Current_Key;
-         E.State := new Catalog_State;
-         States.Append (E);
-         return E.State;
-      end;
+      --  Allocate outside the lock, then register the pointer; if another task
+      --  won the race, use theirs and free ours.
+      S := new Catalog_State;
+      Registry.Insert (Current_Key, S, Winner);
+      if Winner /= S then
+         Free_State (S);
+         S := Winner;
+      end if;
+      return S;
    end Current_State;
 
    procedure Select_Database (State_Key : Natural) is
@@ -117,23 +177,14 @@ package body Database.Catalog is
    end Select_Database;
 
    procedure Drop_Database (State_Key : Natural) is
+      Freed : Catalog_State_Access;
    begin
       if State_Key = 0 then
          return;
       end if;
-      if States.Length > 0 then
-         for I in reverse 0 .. Natural (States.Length) - 1 loop
-            if States.Element (I).Key = State_Key then
-               declare
-                  E : Catalog_State_Entry := States.Element (I);
-               begin
-                  if E.State /= null then
-                     Free_State (E.State);
-                  end if;
-                  States.Delete (I);
-               end;
-            end if;
-         end loop;
+      Registry.Remove (State_Key, Freed);
+      if Freed /= null then
+         Free_State (Freed);   --  free outside the protected action
       end if;
       if Current_Key = State_Key then
          Current_Key := 0;
@@ -167,7 +218,7 @@ package body Database.Catalog is
       if Database.Backend (DB) = Database.Persistent_Backend and then Schema.Heap_First_Page = 0 then
          declare
             First : Database.Storage.Pages.Page_Id;
-         R : Database.Status.Result;
+            R : Database.Status.Result;
          begin
             R := Database.Storage.Table_Heap.Create_Heap (DB.File, DB.Page_Allocator, First);
             if not Database.Status.Is_Ok (R) then
@@ -236,16 +287,16 @@ package body Database.Catalog is
 
    procedure Put_U32 (B : in out Database.Storage.Pages.Byte_Array; Pos : in out Natural; V : Natural) is
    begin
-      B (Pos) := Database.Storage.Pages.Byte ((V/16#1000000#)mod 256);
-      B (Pos + 1) := Database.Storage.Pages.Byte ((V/16#10000#)mod 256);
-      B (Pos + 2) := Database.Storage.Pages.Byte ((V/16#100#)mod 256);
+      B (Pos) := Database.Storage.Pages.Byte ((V / 16#1000000#) mod 256);
+      B (Pos + 1) := Database.Storage.Pages.Byte ((V / 16#10000#) mod 256);
+      B (Pos + 2) := Database.Storage.Pages.Byte ((V / 16#100#) mod 256);
       B (Pos + 3) := Database.Storage.Pages.Byte (V mod 256);
       Pos := Pos + 4;
    end Put_U32;
    procedure Put_Text (B : in out Database.Storage.Pages.Byte_Array; Pos : in out Natural; S : Wide_Wide_String) is
    begin
-      Put_U32 (B,Pos,S'Length);
-      for Ch of S loop Put_U32 (B,Pos,Wide_Wide_Character'Pos (Ch));
+      Put_U32 (B, Pos, S'Length);
+      for Ch of S loop Put_U32 (B, Pos, Wide_Wide_Character'Pos (Ch));
       end loop;
    end Put_Text;
    function Get_U32
@@ -254,11 +305,11 @@ package body Database.Catalog is
       Last : Natural;
       V    : out Natural) return Boolean is
    begin
-      if Pos + 4>Last then
+      if Pos + 4 > Last then
          return False;
       end if;
-      V := Natural (B (Pos))*16#1000000#+Natural (B (Pos + 1))*16#10000#+Natural (B (Pos
-        + 2))*16#100#+Natural (B (Pos + 3));
+      V := Natural (B (Pos)) * 16#1000000# + Natural (B (Pos + 1)) * 16#10000# + Natural (B (Pos
+        + 2)) * 16#100# + Natural (B (Pos + 3));
       Pos := Pos + 4;
       return True;
    end Get_U32;
@@ -269,19 +320,19 @@ package body Database.Catalog is
       S    : out Unbounded_Wide_Wide_String) return Boolean is
       Len, C : Natural;
    begin
-      if not Get_U32 (B,Pos,Last,Len) then
+      if not Get_U32 (B, Pos, Last, Len) then
          return False;
       end if;
       declare
-         T : Wide_Wide_String(1..Len);
+         T : Wide_Wide_String (1 .. Len);
       begin
          for I in T'Range loop
-            if not Get_U32 (B,Pos,Last,C) then
+            if not Get_U32 (B, Pos, Last, C) then
                return False;
             end if;
-            T(I) := Wide_Wide_Character'Val(C);
+            T (I) := Wide_Wide_Character'Val (C);
          end loop;
-         S := To_Unbounded_Wide_Wide_String(T);
+         S := To_Unbounded_Wide_Wide_String (T);
          return True;
       end;
    end Get_Text;
@@ -289,7 +340,7 @@ package body Database.Catalog is
    function Save (DB : in out Database.Handle) return Database.Status.Result is
       use Database.Storage.Pages;
       P : Page;
-      B : Byte_Array (0 .. Payload_Capacity - 1) := (others => 0);
+      B : Byte_Array (0 .. Payload_Capacity - 1) := [others => 0];
       Pos : Natural := 0;
    begin
       Select_Database (Database.Catalog_State_Key (DB));
@@ -308,19 +359,19 @@ package body Database.Catalog is
          Put_U32  (B,
            Pos,
            S.Table_Id);
-           Put_U32 (B,
+         Put_U32 (B,
            Pos,
            S.Schema_Version);
-           Put_U32 (B,
+         Put_U32 (B,
            Pos,
            Database.Schema.Next_Id (S));
-           Put_Text (B,
+         Put_Text (B,
            Pos,
            To_Wide_Wide_String (S.Name));
-           Put_U32 (B,
+         Put_U32 (B,
            Pos,
            S.Heap_First_Page);
-           Put_U32 (B,
+         Put_U32 (B,
            Pos,
            S.Primary_Index_Root);
          Put_U32 (B, Pos, Natural (S.Indexes.Length));
@@ -328,19 +379,19 @@ package body Database.Catalog is
             Put_U32  (B,
               Pos,
               Natural (IX.Id));
-              Put_U32 (B,
+            Put_U32 (B,
               Pos,
               IX.Table_Id);
-              Put_Text (B,
+            Put_Text (B,
               Pos,
               To_Wide_Wide_String (IX.Name));
             Put_U32  (B,
               Pos,
               Database.Indexes.Index_Kind'Pos (IX.Kind));
-              Put_U32 (B,
+            Put_U32 (B,
               Pos,
               Natural (IX.Root_Page));
-              Put_U32 (B,
+            Put_U32 (B,
               Pos,
               (if IX.Unique then 1 else 0));
             Put_U32 (B, Pos, IX.Column_Id);
@@ -351,16 +402,16 @@ package body Database.Catalog is
             Put_U32  (B,
               Pos,
               C.Id);
-              Put_Text (B,
+            Put_Text (B,
               Pos,
               To_Wide_Wide_String (C.Name));
-              Put_U32 (B,
+            Put_U32 (B,
               Pos,
               Database.Types.Value_Kind'Pos (C.Kind));
-              Put_U32 (B,
+            Put_U32 (B,
               Pos,
               (if C.Nullable then 1 else 0));
-              Put_U32 (B,
+            Put_U32 (B,
               Pos,
               (if C.Primary_Key then 1 else 0));
          end loop;
@@ -501,7 +552,7 @@ package body Database.Catalog is
       end if;
       R := Database.Storage.File_IO.Read_Page (DB.File, 1, Catalog_Page, P);
       if not Database.Status.Is_Ok (R) then
-         -- Newly-created files may not yet have a catalog page.
+         --  Newly-created files may not yet have a catalog page.
          Initialize (P, 1, Catalog_Page);
          return Database.Storage.File_IO.Write_Page (DB.File, P);
       end if;
@@ -513,13 +564,13 @@ package body Database.Catalog is
          end if;
          Pos := B'First;
          Last := B'First + B'Length;
-         if not Get_U32 (B,Pos,Last,Count) then
-            return Database.Status.Failure(Database.Status.Corrupt_File,"bad catalog");
+         if not Get_U32 (B, Pos, Last, Count) then
+            return Database.Status.Failure (Database.Status.Corrupt_File, "bad catalog");
          end if;
          for T in 1 .. Count loop
             declare
                S : Database.Schema.Table_Schema;
-            Name : Unbounded_Wide_Wide_String;
+               Name : Unbounded_Wide_Wide_String;
             begin
                if not Get_U32 (B,
                  Pos,
@@ -542,17 +593,18 @@ package body Database.Catalog is
                  S.Primary_Index_Root) or else not Get_U32 (B,
                  Pos,
                  Last,
-                 Index_Count) then
-                  return Database.Status.Failure(Database.Status.Corrupt_File,"truncated table catalog");
+                 Index_Count)
+               then
+                  return Database.Status.Failure (Database.Status.Corrupt_File, "truncated table catalog");
                end if;
                S.Name := Name;
                for J in 1 .. Index_Count loop
                   declare
                      IX : Database.Indexes.Index_Metadata;
-                  IX_Name : Unbounded_Wide_Wide_String;
-                  Kind, Unique_Flag, Key_Kind : Natural;
-                  Root_Page_N : Natural;
-                  Id_N : Natural;
+                     IX_Name : Unbounded_Wide_Wide_String;
+                     Kind, Unique_Flag, Key_Kind : Natural;
+                     Root_Page_N : Natural;
+                     Id_N : Natural;
                   begin
                      if not Get_U32 (B,
                        Pos,
@@ -578,8 +630,9 @@ package body Database.Catalog is
                        IX.Column_Id) or else not Get_U32 (B,
                        Pos,
                        Last,
-                       Key_Kind) then
-                        return Database.Status.Failure(Database.Status.Corrupt_File,"truncated index catalog");
+                       Key_Kind)
+                     then
+                        return Database.Status.Failure (Database.Status.Corrupt_File, "truncated index catalog");
                      end if;
                      IX.Id := Database.Indexes.Index_Id (Id_N);
                      IX.Name := IX_Name;
@@ -590,15 +643,15 @@ package body Database.Catalog is
                      S.Indexes.Append (IX);
                   end;
                end loop;
-               if not Get_U32 (B,Pos,Last,Cols) then
-                  return Database.Status.Failure(Database.Status.Corrupt_File,"truncated table catalog");
+               if not Get_U32 (B, Pos, Last, Cols) then
+                  return Database.Status.Failure (Database.Status.Corrupt_File, "truncated table catalog");
                end if;
                for I in 1 .. Cols loop
                   declare
                      C : Database.Schema.Column;
-                  CName : Unbounded_Wide_Wide_String;
-                  Kind : Natural;
-                  N, PK : Natural;
+                     CName : Unbounded_Wide_Wide_String;
+                     Kind : Natural;
+                     N, PK : Natural;
                   begin
                      if not Get_U32 (B,
                        Pos,
@@ -615,17 +668,18 @@ package body Database.Catalog is
                        N) or else not Get_U32 (B,
                        Pos,
                        Last,
-                       PK) then
-                        return Database.Status.Failure(Database.Status.Corrupt_File,"truncated column catalog");
+                       PK)
+                     then
+                        return Database.Status.Failure (Database.Status.Corrupt_File, "truncated column catalog");
                      end if;
                      C.Name := CName;
-                     C.Kind := Database.Types.Value_Kind'Val(Kind);
-                     C.Nullable := N/=0;
-                     C.Primary_Key := PK/=0;
-                     S.Columns.Append(C);
+                     C.Kind := Database.Types.Value_Kind'Val (Kind);
+                     C.Nullable := N /= 0;
+                     C.Primary_Key := PK /= 0;
+                     S.Columns.Append (C);
                   end;
                end loop;
-               Current_State.all.Tables.Append(S);
+               Current_State.all.Tables.Append (S);
             end;
          end loop;
          --  Full-text definitions are optional for
@@ -752,7 +806,7 @@ package body Database.Catalog is
                for G in 1 .. Group_Count loop
                   declare
                      TC : Table_Checks;
-                  Check_Count : Natural;
+                     Check_Count : Natural;
                   begin
                      if not Get_U32 (B, Pos, Last, TC.Table_Id) or else not Get_U32 (B, Pos, Last, Check_Count) then
                         return Database.Status.Failure (Database.Status.Corrupt_File, "truncated check catalog");
@@ -774,7 +828,8 @@ package body Database.Catalog is
                              Image) or else not Get_U32 (B,
                              Pos,
                              Last,
-                             Flag) then
+                             Flag)
+                           then
                               return Database.Status.Failure (Database.Status.Corrupt_File,
                                 "truncated check constraint metadata");
                            end if;
@@ -805,7 +860,7 @@ package body Database.Catalog is
                for G in 1 .. Group_Count loop
                   declare
                      TG : Table_Generated;
-                  Column_Count : Natural;
+                     Column_Count : Natural;
                   begin
                      if not Get_U32 (B, Pos, Last, TG.Table_Id) or else not Get_U32 (B, Pos, Last, Column_Count) then
                         return Database.Status.Failure (Database.Status.Corrupt_File,
@@ -867,10 +922,10 @@ package body Database.Catalog is
                for I in 1 .. View_Count loop
                   declare
                      V : Database.Views.View_Definition;
-                  Name : Unbounded_Wide_Wide_String;
-                  Id_N : Natural;
-                  Image : Unbounded_Wide_Wide_String;
-                  QR : Database.Status.Result;
+                     Name : Unbounded_Wide_Wide_String;
+                     Id_N : Natural;
+                     Image : Unbounded_Wide_Wide_String;
+                     QR : Database.Status.Result;
                   begin
                      if not Get_U32 (B, Pos, Last, Id_N) or else not Get_Text (B, Pos, Last, Name) then
                         return Database.Status.Failure (Database.Status.Corrupt_File, "truncated view metadata");
@@ -905,10 +960,10 @@ package body Database.Catalog is
                for I in 1 .. View_Count loop
                   declare
                      MV : Database.Materialized_Views.Materialized_View_Definition;
-                  Name : Unbounded_Wide_Wide_String;
-                  Id_N : Natural;
-                  Image : Unbounded_Wide_Wide_String;
-                  QR : Database.Status.Result;
+                     Name : Unbounded_Wide_Wide_String;
+                     Id_N : Natural;
+                     Image : Unbounded_Wide_Wide_String;
+                     QR : Database.Status.Result;
                   begin
                      if not Get_U32 (B, Pos, Last, Id_N) or else not Get_Text (B, Pos, Last, Name) then
                         return Database.Status.Failure (Database.Status.Corrupt_File,
@@ -928,7 +983,8 @@ package body Database.Catalog is
                        MV.Storage_Table) or else not Get_U32 (B,
                        Pos,
                        Last,
-                       MV.Last_Refresh_Commit) then
+                       MV.Last_Refresh_Commit)
+                     then
                         return Database.Status.Failure (Database.Status.Corrupt_File,
                           "truncated materialized-view storage metadata");
                      end if;
@@ -961,7 +1017,8 @@ package body Database.Catalog is
                        Index_Id_N) or else not Get_U32 (B,
                        Pos,
                        Last,
-                       Column_Count) then
+                       Column_Count)
+                     then
                         return Database.Status.Failure (Database.Status.Corrupt_File,
                           "truncated index extension metadata");
                      end if;
@@ -1025,6 +1082,10 @@ package body Database.Catalog is
               (DB.Version,
                Database.Storage.Table_Heap.Max_Commit_Version
                  (DB.File, Database.Storage.Pages.Page_Id (S.Heap_First_Page)));
+            DB.Max_Persisted_Tx := Natural'Max
+              (DB.Max_Persisted_Tx,
+               Database.Storage.Table_Heap.Max_Transaction_Id
+                 (DB.File, Database.Storage.Pages.Page_Id (S.Heap_First_Page)));
          end if;
       end loop;
       return Database.Status.Success;
@@ -1060,7 +1121,8 @@ package body Database.Catalog is
       end if;
       for Existing of Current_State.all.Foreign_Keys loop
          if Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (Existing.Name)
-           = Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (Definition.Name) then
+           = Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (Definition.Name)
+         then
             return Database.Status.Failure (Database.Status.Already_Exists, "foreign key already exists");
          end if;
       end loop;
@@ -1109,17 +1171,17 @@ package body Database.Catalog is
          return R;
       end if;
       if Current_State.all.Table_Checks_List.Length > 0 then
-      for I in 0 .. Natural (Current_State.all.Table_Checks_List.Length) - 1 loop
-         if Current_State.all.Table_Checks_List.Element (I).Table_Id = Table_Id then
-            declare
-               T : Table_Checks := Current_State.all.Table_Checks_List.Element (I);
-            begin
-               T.Checks.Append (Constraint);
-               Current_State.all.Table_Checks_List.Replace_Element (I, T);
-               return Save (DB);
-            end;
-         end if;
-      end loop;
+         for I in 0 .. Natural (Current_State.all.Table_Checks_List.Length) - 1 loop
+            if Current_State.all.Table_Checks_List.Element (I).Table_Id = Table_Id then
+               declare
+                  T : Table_Checks := Current_State.all.Table_Checks_List.Element (I);
+               begin
+                  T.Checks.Append (Constraint);
+                  Current_State.all.Table_Checks_List.Replace_Element (I, T);
+                  return Save (DB);
+               end;
+            end if;
+         end loop;
       end if;
       declare
          T : Table_Checks;
@@ -1200,7 +1262,7 @@ package body Database.Catalog is
    function Add_View
      (DB   : in out Database.Handle;
       View : in out Database.Views.View_Definition) return Database.Status.Result is
-      R : Database.Status.Result := Database.Views.Validate (View);
+      R : constant Database.Status.Result := Database.Views.Validate (View);
    begin
       Select_Database (Database.Catalog_State_Key (DB));
       if not Database.Status.Is_Ok (R) then
@@ -1208,7 +1270,8 @@ package body Database.Catalog is
       end if;
       for V of Current_State.all.Views loop
          if Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (V.Name)
-           = Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (View.Name) then
+           = Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (View.Name)
+         then
             return Database.Status.Failure (Database.Status.Already_Exists, "view already exists");
          end if;
       end loop;
@@ -1243,7 +1306,7 @@ package body Database.Catalog is
    function Update_View
      (DB   : in out Database.Handle;
       View : Database.Views.View_Definition) return Database.Status.Result is
-      R : Database.Status.Result := Database.Views.Validate (View);
+      R : constant Database.Status.Result := Database.Views.Validate (View);
    begin
       Select_Database (Database.Catalog_State_Key (DB));
       if not Database.Status.Is_Ok (R) then
@@ -1263,7 +1326,7 @@ package body Database.Catalog is
    function Add_Materialized_View
      (DB   : in out Database.Handle;
       View : in out Database.Materialized_Views.Materialized_View_Definition) return Database.Status.Result is
-      R : Database.Status.Result := Database.Materialized_Views.Validate (View);
+      R : constant Database.Status.Result := Database.Materialized_Views.Validate (View);
    begin
       Select_Database (Database.Catalog_State_Key (DB));
       if not Database.Status.Is_Ok (R) then
@@ -1271,7 +1334,8 @@ package body Database.Catalog is
       end if;
       for V of Current_State.all.Materialized_Views loop
          if Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (V.Name)
-           = Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (View.Name) then
+           = Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (View.Name)
+         then
             return Database.Status.Failure (Database.Status.Already_Exists, "materialized view already exists");
          end if;
       end loop;
@@ -1394,7 +1458,8 @@ package body Database.Catalog is
       for I in reverse 0 .. Natural (Current_State.all.Cached_Rows.Length) - 1 loop
          if Current_State.all.Cached_Rows.Element  (I).Table_Id = Table_Id and then Same_Key (Schema,
            Current_State.all.Cached_Rows.Element (I).Row,
-           Key_Row) then
+           Key_Row)
+         then
             Current_State.all.Cached_Rows.Delete (I);
          end if;
       end loop;

@@ -170,6 +170,22 @@ prebuilt GNAT runtime, so some reports have runtime frames; the app-side frames
       expected — documents the bug).
 - [x] Phase 0: ThreadSanitizer build (`-XSANITIZE=thread`) + baseline captured
       (17 races + 1 UAF, pinpointing the subsystem state registries).
-- [ ] Phase 0: wire the soak + TSan run into CI as a dedicated (currently-red)
-      job so the gate is enforced automatically.
-- [ ] Phase 1 … 4.
+- [x] Phase 0: soak + TSan wired into CI as a dedicated non-blocking
+      `concurrency-baseline` job (currently red by design; flip
+      `continue-on-error` to false once green).
+- [x] **Phase 1 (Catalog): done and verified.** `Current_Key` is thread-local;
+      the catalog state registry is a protected object over a fixed, packed
+      plain array with **no allocation/deallocation under the lock** (states are
+      allocated/freed by the caller outside the protected action). This is the
+      design that avoids the earlier deadlock.
+      - No deadlock, no regression: AUnit **235/235**, full stack ALL GREEN.
+      - TSan: **catalog races eliminated (0)**; total races 17 → 13, all
+        remaining ones in the other 8 subsystems (extensions, functions,
+        aggregate_functions, collations, full_text + tokenizers + ranking,
+        validation_hooks) — the Phase 2 targets.
+      - Design lesson applied: fixed array (no container tampering, no growth) +
+        allocate-outside-lock + Find is a protected function / Insert/Remove are
+        protected procedures.
+- [ ] Phase 2: apply the Phase-1 pattern to the other 8 subsystems; soak + TSan
+      fully green; flip the CI gate to blocking.
+- [ ] Phase 3 … 4.

@@ -5,19 +5,38 @@ project Tests is
    for Object_Dir use "obj/" & Tests_Config.Build_Profile;
    for Create_Missing_Dirs use "True";
    for Exec_Dir use "bin";
-   for Main use ("tests.adb", "lock_holder.adb");
+   for Main use
+     ("tests.adb", "lock_holder.adb", "wal_reuse_child.adb",
+      "concurrency_soak.adb");
+
+   --  ThreadSanitizer build: `gprbuild -P tests.gpr -XSANITIZE=thread` (or
+   --  `alr build -- -XSANITIZE=thread`). Used to run concurrency_soak under
+   --  TSan as the Phase-0 concurrency baseline.
+   type Sanitize_Kind is ("none", "thread");
+   Sanitize : Sanitize_Kind := external ("SANITIZE", "none");
+
+   Sanitize_Switches := ();
+   case Sanitize is
+      when "none"   => Sanitize_Switches := ();
+      when "thread" => Sanitize_Switches := ("-fsanitize=thread", "-g");
+   end case;
 
    package Compiler is
       for Default_Switches ("Ada") use
         Tests_Config.Ada_Compiler_Switches
         & ("-gnat2022", "-gnatyM120", "-gnatX", "-gnata",
            "-gnatwJ", "-gnatw_A", "-gnatwK", "-gnatwM",
-           "-gnatwU", "-gnatwC");
+           "-gnatwU", "-gnatwC")
+        & Sanitize_Switches;
    end Compiler;
 
    package Binder is
       for Switches ("Ada") use ("-Es"); --  Symbolic traceback
    end Binder;
+
+   package Linker is
+      for Switches ("Ada") use Sanitize_Switches;
+   end Linker;
 
    package Install is
       for Artifacts (".") use ("share");

@@ -136,9 +136,40 @@ separately.
 Phase 0 ≈ 0.5–1 day · Phase 1 ≈ 1 day (solves the deadlock) · Phase 2 ≈ 1–2 days
 · Phase 3 ≈ 0.5 day · Phase 4 separate/larger. **Do not compress Phase 0.**
 
+## Phase 0 baseline (captured)
+
+Runnable: `tests/src/concurrency_soak.adb` (main `concurrency_soak`, not part of
+the AUnit suite). Each worker drives its own in-memory database; exit 0 = all
+isolated, 1 = corruption.
+
+```sh
+# functional baseline (fails today)
+alr build && ./bin/concurrency_soak 8
+#   -> "SOAK FAIL: concurrent databases were not isolated" (and intermittently
+#      "double free or corruption" -> SIGABRT)
+
+# ThreadSanitizer baseline (races today). -R disables ASLR, which TSan needs.
+alr exec -- gprbuild -P tests.gpr -XSANITIZE=thread
+TSAN_OPTIONS="halt_on_error=0 exitcode=66" setarch "$(uname -m)" -R ./bin/concurrency_soak 2
+```
+
+TSan result at baseline: **17 data races + 1 heap-use-after-free**, all in the
+per-subsystem state registries — concurrent `Insert` into the unsynchronized
+`States` vectors of `Catalog`, `Extensions`, `Functions`, … and concurrent
+`__gnat_free` of state objects. This is exactly the root cause above, and is the
+acceptance target: after the fix, both runs must be clean, repeatedly.
+
+Note: `-fsanitize=thread` instruments only Ada code compiled here, not the
+prebuilt GNAT runtime, so some reports have runtime frames; the app-side frames
+(the `database__*__*_vectors__insert` entries) are the actionable ones.
+
 ## Status
 
-- [x] Plan written.
-- [ ] Phase 0: standalone concurrent soak/isolation runnable.
-- [ ] Phase 0: ThreadSanitizer build + baseline captured.
+- [x] Plan written and committed.
+- [x] Phase 0: standalone concurrent soak/isolation runnable (fails today, as
+      expected — documents the bug).
+- [x] Phase 0: ThreadSanitizer build (`-XSANITIZE=thread`) + baseline captured
+      (17 races + 1 UAF, pinpointing the subsystem state registries).
+- [ ] Phase 0: wire the soak + TSan run into CI as a dedicated (currently-red)
+      job so the gate is enforced automatically.
 - [ ] Phase 1 … 4.

@@ -229,7 +229,8 @@ package body Database.Stress is
          Report.Verification_Failures := Report.Verification_Failures + 1;
          return;
       end if;
-      R := Database.Catalog.Find_By_Name ("stress_items", Schema);
+      R := Database.Catalog.Find_By_Name
+        (Database.Catalog_State_Key (Reopened), "stress_items", Schema);
       if Database.Status.Is_Ok (R) then
          Database.Transactions.Begin_Read (Reopened, Tx);
          R := App_Table.Find (Tx, Reopened, Schema, 1, Found);

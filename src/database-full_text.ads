@@ -144,51 +144,59 @@ package Database.Full_Text is
       Schema   : Database.Schema.Table_Schema;
       Row      : Database.Rows.Row);
 
+   --  The following non-transactional operations take the owning handle's
+   --  full-text state key explicitly (via Database.Full_Text_State_Key). They
+   --  were previously scoped by a thread-local "current database" selection.
    --  Return full text index count for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @return Number of items represented by the queried object.
-   function Full_Text_Index_Count return Natural;
+   function Full_Text_Index_Count (State_Key : Natural) return Natural;
    --  Return exists for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @param Name logical name of the object.
    --  @return Result produced by the function.
-   function Exists (Name : Wide_Wide_String) return Boolean;
+   function Exists (State_Key : Natural; Name : Wide_Wide_String) return Boolean;
    --  Return term count for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @param Name logical name of the object.
    --  @return Number of items represented by the queried object.
-   function Term_Count (Name : Wide_Wide_String) return Natural;
+   function Term_Count (State_Key : Natural; Name : Wide_Wide_String) return Natural;
    --  Return posting count for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @param Name logical name of the object.
    --  @return Number of items represented by the queried object.
-   function Posting_Count (Name : Wide_Wide_String) return Natural;
+   function Posting_Count (State_Key : Natural; Name : Wide_Wide_String) return Natural;
    --  Return obsolete posting count for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @param Name logical name of the object.
    --  @return Number of items represented by the queried object.
-   function Obsolete_Posting_Count (Name : Wide_Wide_String) return Natural;
+   function Obsolete_Posting_Count (State_Key : Natural; Name : Wide_Wide_String) return Natural;
    --  Return max commit version for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @return Result produced by the function.
-   function Max_Commit_Version return Database.Versioning.Commit_Version;
+   function Max_Commit_Version (State_Key : Natural) return Database.Versioning.Commit_Version;
 
-   --  Select the database-handle-local full-text namespace used by
-   --  non-transactional diagnostics/check/vacuum/save/load calls. Transactional
-   --  operations select their owning handle automatically.
-   --  @param State_Key state key argument supplied to the operation.
-   procedure Select_Database (State_Key : Natural);
-
-   --  Clear full-text state for the currently selected database handle only.
+   --  Commit full-text state for the given handle state key.
+   --  @param State_Key handle-owned full-text state key.
    --  @param Tx_Id tx id argument supplied to the operation.
    --  @param Commit_Version commit version argument supplied to the operation.
    procedure Commit_Transaction
-     (Tx_Id          : Database.Versioning.Transaction_Id;
+     (State_Key      : Natural;
+      Tx_Id          : Database.Versioning.Transaction_Id;
       Commit_Version : Database.Versioning.Commit_Version);
 
    --  Perform rollback transaction for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @param Tx_Id tx id argument supplied to the operation.
    procedure Rollback_Transaction
-     (Tx_Id : Database.Versioning.Transaction_Id);
+     (State_Key : Natural;
+      Tx_Id     : Database.Versioning.Transaction_Id);
 
    --  Return save for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @param Path filesystem path or artifact location used by the operation.
    --  @return Result produced by the function.
-   function Save (Path : Wide_Wide_String) return Database.Status.Result;
+   function Save (State_Key : Natural; Path : Wide_Wide_String) return Database.Status.Result;
    --  Return load for the supplied database state or arguments.
    --  @param DB database handle used by the operation.
    --  @param Path filesystem path or artifact location used by the operation.
@@ -208,9 +216,14 @@ package Database.Full_Text is
       Path : Wide_Wide_String) return Database.Status.Result;
 
    --  Return check index for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
+   --  @param Catalog_Key handle-owned catalog state key (row/schema lookups).
    --  @param Name logical name of the object.
    --  @return Result produced by the function.
-   function Check_Index (Name : Wide_Wide_String) return Database.Status.Result;
+   function Check_Index
+     (State_Key   : Natural;
+      Catalog_Key : Natural;
+      Name        : Wide_Wide_String) return Database.Status.Result;
    --  Return check index for the supplied database state or arguments.
    --  @param Tx transaction object that scopes the operation.
    --  @param Name logical name of the object.
@@ -219,13 +232,16 @@ package Database.Full_Text is
      (Tx   : in out Database.Transactions.Transaction;
       Name : Wide_Wide_String) return Database.Status.Result;
    --  Perform vacuum index for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @param Name logical name of the object.
-   procedure Vacuum_Index (Name : Wide_Wide_String);
+   procedure Vacuum_Index (State_Key : Natural; Name : Wide_Wide_String);
    --  Perform vacuum all for the supplied database state or arguments.
-   procedure Vacuum_All;
+   --  @param State_Key handle-owned full-text state key.
+   procedure Vacuum_All (State_Key : Natural);
 
    --  Perform clear for the supplied database state or arguments.
-   procedure Clear;
+   --  @param State_Key handle-owned full-text state key.
+   procedure Clear (State_Key : Natural);
 
 private
    --  Search_Cursor stores the public fields for this database abstraction.

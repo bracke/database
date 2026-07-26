@@ -155,14 +155,16 @@ package body Extension_Tests is
            Trimmed_Lower'Access);
       Assert (Database.Status.Is_Ok (R), "scalar function registered");
       Args.Append (Database.Values.From_Text ("ABC"));
-      R := Database.Functions.Evaluate ("lower_custom", Args, V);
+      R := Database.Functions.Evaluate
+             (Database.Catalog_State_Key (DB), "lower_custom", Args, V);
       Assert (Database.Status.Is_Ok (R), "scalar function evaluates");
       Assert (To_Wide_Wide_String (V.Text) = "abc", "scalar function result");
       Exprs.Append
         (Database.Expressions.Literal (Database.Values.From_Text ("ADA")));
       R :=
         Database.Expressions.Evaluate
-          (Database.Expressions.Registered_Function_Call
+          (Database.Catalog_State_Key (DB),
+           Database.Expressions.Registered_Function_Call
              ("lower_custom", Exprs),
            S,
            Row,
@@ -207,7 +209,8 @@ package body Extension_Tests is
       Assert (Database.Status.Is_Ok (R), "aggregate registered");
       Values.Append (Database.Values.From_Integer (2));
       Values.Append (Database.Values.From_Integer (3));
-      R := Database.Aggregate_Functions.Evaluate ("sum_custom", Values, V);
+      R := Database.Aggregate_Functions.Evaluate
+             (Database.Catalog_State_Key (DB), "sum_custom", Values, V);
       Assert
         (Database.Status.Is_Ok (R) and then V.Int = 5, "aggregate computes");
       R :=
@@ -221,7 +224,8 @@ package body Extension_Tests is
             Index_Compatible => True),
            Reverse_Collation'Access);
       Assert (Database.Status.Is_Ok (R), "collation registered");
-      R := Database.Collations.Compare ("reverse", "b", "a", Cmp);
+      R := Database.Collations.Compare
+             (Database.Catalog_State_Key (DB), "reverse", "b", "a", Cmp);
       Assert
         (Database.Status.Is_Ok (R) and then Cmp < 0,
          "custom collation orders text");
@@ -237,7 +241,8 @@ package body Extension_Tests is
       Assert (Database.Status.Is_Ok (R), "tokenizer registered");
       Config.Kind := Database.Full_Text.Tokenizers.Custom_Tokenizer;
       Config.Custom_Name := To_Unbounded_Wide_Wide_String ("pairs");
-      Tokens := Database.Full_Text.Tokenizers.Tokenize ("abcd", Config);
+      Tokens := Database.Full_Text.Tokenizers.Tokenize
+                  (Database.Catalog_State_Key (DB), "abcd", Config);
       Assert
         (Natural (Tokens.Length) = 1
          and then To_Wide_Wide_String (Tokens.Element (0).Text) = "ab",
@@ -254,7 +259,8 @@ package body Extension_Tests is
       Assert (Database.Status.Is_Ok (R), "ranking registered");
       R :=
         Database.Full_Text.Ranking.Score_With
-          ("linear",
+          (Database.Catalog_State_Key (DB),
+           "linear",
            (Term_Frequency => 2, Matched_Terms => 3, Document_Length => 0),
            Score);
       Assert
@@ -285,7 +291,8 @@ package body Extension_Tests is
            Reject_Negative'Access);
       Assert (Database.Status.Is_Ok (R), "validation hook registered");
       Database.Rows.Append (Row, Database.Values.From_Integer (-1));
-      R := Database.Validation_Hooks.Validate ("reject_negative", S, Row);
+      R := Database.Validation_Hooks.Validate
+             (Database.Catalog_State_Key (DB), "reject_negative", S, Row);
       Assert
         (R.Code = Database.Status.Constraint_Error,
          "validation hook rejects row");
@@ -295,12 +302,13 @@ package body Extension_Tests is
       Dep.Compatibility_Id := To_Unbounded_Wide_Wide_String ("missing_1");
       R := Database.Extensions.Add_Dependency (DB, Dep);
       Assert (Database.Status.Is_Ok (R), "scalar dependency recorded");
-      R := Database.Extensions.Validate_Dependencies;
+      R := Database.Extensions.Validate_Dependencies
+             (Database.Catalog_State_Key (DB));
       Assert
         (R.Code = Database.Status.Missing_Extension,
          "missing scalar dependency detected");
 
-      Database.Extensions.Clear;
+      Database.Extensions.Clear (Database.Catalog_State_Key (DB));
       R :=
         Database.Validation_Hooks.Register_Validation_Hook
           (DB,
@@ -320,16 +328,19 @@ package body Extension_Tests is
       Dep.Compatibility_Id := To_Unbounded_Wide_Wide_String ("rules_1");
       R := Database.Extensions.Add_Dependency (DB, Dep);
       Assert (Database.Status.Is_Ok (R), "validation dependency recorded");
-      R := Database.Extensions.Validate_Dependencies;
+      R := Database.Extensions.Validate_Dependencies
+             (Database.Catalog_State_Key (DB));
       Assert
         (Database.Status.Is_Ok (R), "validation hook dependency validated");
 
-      Database.Extensions.Clear;
+      Database.Extensions.Clear (Database.Catalog_State_Key (DB));
       Assert
-        (not Database.Validation_Hooks.Exists ("reject_negative"),
+        (not Database.Validation_Hooks.Exists
+               (Database.Catalog_State_Key (DB), "reject_negative"),
          "clear removes validation hooks");
       Assert
-        (not Database.Functions.Exists ("lower_custom"),
+        (not Database.Functions.Exists
+               (Database.Catalog_State_Key (DB), "lower_custom"),
          "clear removes scalar functions");
    end Validation_And_Dependency_Checks;
 

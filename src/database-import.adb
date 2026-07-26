@@ -814,16 +814,14 @@ package body Database.Import is
            (Database.Status.Import_Error, "invalid database-native logical export");
       end if;
 
-      Database.Catalog.Select_Database (Database.Catalog_State_Key (DB.all));
-      if Database.Catalog.Table_Count /= 0 then
+      if Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) /= 0 then
          Ada.Streams.Stream_IO.Close (F);
          return Database.Status.Failure
            (Database.Status.Import_Error, "logical import destination must be empty");
       end if;
 
-      Database.Catalog.Clear;
-      Database.Full_Text.Select_Database (Database.Full_Text_State_Key (DB.all));
-      Database.Full_Text.Clear;
+      Database.Catalog.Clear (Database.Catalog_State_Key (DB.all));
+      Database.Full_Text.Clear (Database.Full_Text_State_Key (DB.all));
 
       for T in 1 .. Table_Count loop
          declare
@@ -932,7 +930,8 @@ package body Database.Import is
                      end if;
                   end;
                end loop;
-               Database.Catalog.Register_Row (S.Table_Id, Row);
+               Database.Catalog.Register_Row
+                 (Database.Catalog_State_Key (DB.all), S.Table_Id, Row);
             end loop;
 
             if Natural (First) /= S.Heap_First_Page then

@@ -54,20 +54,27 @@ package Database.Diagnostics is
       Index : Database.Indexes.Index_Metadata) return Natural;
 
    --  Return full text index count for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @return Number of items represented by the queried object.
-   function Full_Text_Index_Count return Natural;
+   function Full_Text_Index_Count (State_Key : Natural) return Natural;
    --  Return full text term count for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @param Name logical name of the object.
    --  @return Number of items represented by the queried object.
-   function Full_Text_Term_Count (Name : Wide_Wide_String) return Natural;
+   function Full_Text_Term_Count
+     (State_Key : Natural; Name : Wide_Wide_String) return Natural;
    --  Return full text posting count for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @param Name logical name of the object.
    --  @return Number of items represented by the queried object.
-   function Full_Text_Posting_Count (Name : Wide_Wide_String) return Natural;
+   function Full_Text_Posting_Count
+     (State_Key : Natural; Name : Wide_Wide_String) return Natural;
    --  Return full text obsolete posting count for the supplied database state or arguments.
+   --  @param State_Key handle-owned full-text state key.
    --  @param Name logical name of the object.
    --  @return Number of items represented by the queried object.
-   function Full_Text_Obsolete_Posting_Count (Name : Wide_Wide_String) return Natural;
+   function Full_Text_Obsolete_Posting_Count
+     (State_Key : Natural; Name : Wide_Wide_String) return Natural;
 
    --  Safe encryption diagnostics. These expose only mode/version
    --  metadata and never expose key bytes, derived secrets, nonces, tags, or

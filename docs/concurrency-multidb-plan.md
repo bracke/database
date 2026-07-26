@@ -222,4 +222,31 @@ prebuilt GNAT runtime, so some reports have runtime frames; the app-side frames
         capped at 256, and under ThreadSanitizer **0 races / 0 warnings**.
         `concurrency_soak` still TSan-clean (no regression); full stack
         (`check_all`, incl. all 13 SPARK proofs) green.
-- [ ] Phase 4 (optional): Model B (handle-anchored state) cleanup.
+- [x] **Phase 4: done and verified (handle-keyed variant).** After measuring the
+      blast radius, the chosen target was *handle-keyed state* rather than full
+      global-free Model B: the thread-local `Current_Key` + `Select_Database`
+      were removed from all 9 subsystems, and every operation now takes the
+      owning handle's state key explicitly (catalog ops the catalog key,
+      full-text ops the full-text key). The protected per-database registries
+      are kept (already race-free). This removes the last cross-task fragility
+      (a task could no longer select a database and have another task's
+      selection clobber it) without the Ada with-topology / SPARK hazards of
+      handle-carried typed pointers.
+      - Threaded through the expression → check-constraint → generated-column
+        chain, the transaction hub (two keys in scope: catalog vs full-text),
+        lifecycle, the `database_inspect` tool, one worked example, and the test
+        suite (~115 call sites; the compiler enumerated every one).
+      - Two subtleties handled explicitly: full-text ops derive BOTH the
+        full-text key (their own state + index `Owner_Key` tag) and the catalog
+        key (for catalog row/schema lookups); and `Index_Row`/`Index_Row_Committed`
+        take the catalog key to resolve custom tokenizers.
+      - Verified: AUnit **235/235** (incl. the reworked per-handle
+        `registry_ownership` isolation test), ThreadSanitizer **0 races** on both
+        soaks, wrong-key audit clean (no key-0 sentinels in src; catalog-vs-FT
+        routing checked), and `check_all` green (build + inspect + examples +
+        GNATdoc + all 13 SPARK proofs).
+      - Not done (deliberately): full global-free Model B (retiring the
+        protected registries and carrying typed state pointers on the handle).
+        Model A + handle-keyed selection is already correct and race-free; that
+        remaining step is pure architectural cleanup and can be scheduled
+        separately.

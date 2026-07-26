@@ -126,7 +126,8 @@ package body Secondary_Index_Tests is
       Database.Open (DB, Path);
       Assert
         (Database.Status.Is_Ok (Database.Last_Result (DB)), "reopen failed");
-      R := Database.Catalog.Find_By_Name ("users", S);
+      R := Database.Catalog.Find_By_Name
+             (Database.Catalog_State_Key (DB), "users", S);
       Assert (Database.Status.Is_Ok (R), "catalog read failed");
       Assert
         (Natural (S.Indexes.Length) = 2,
@@ -193,7 +194,8 @@ package body Secondary_Index_Tests is
       Database.Open (DB, Path);
       Assert
         (Database.Status.Is_Ok (Database.Last_Result (DB)), "reopen failed");
-      R := Database.Catalog.Find_By_Name ("users", S);
+      R := Database.Catalog.Find_By_Name
+             (Database.Catalog_State_Key (DB), "users", S);
       Assert (Database.Status.Is_Ok (R), "catalog reopen failed");
       Database.Transactions.Begin_Write (DB, Tx);
       R :=
@@ -264,7 +266,8 @@ package body Secondary_Index_Tests is
       R := Users.Create_Index (Tx, DB, S, "email_unique", 2, True);
       Assert
         (Database.Status.Is_Ok (R), "create index over existing row failed");
-      R := Database.Catalog.Find_By_Name ("users", S);
+      R := Database.Catalog.Find_By_Name
+             (Database.Catalog_State_Key (DB), "users", S);
       Assert (Database.Status.Is_Ok (R), "catalog refresh failed");
       R := Users.Rebuild_Index (Tx, DB, S, S.Indexes.Element (0).Id);
       Assert (Database.Status.Is_Ok (R), "rebuild failed");

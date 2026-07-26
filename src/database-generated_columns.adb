@@ -14,11 +14,12 @@ package body Database.Generated_Columns is
         Kind => Kind);
    end Create;
 
-   function Validate_Definition (Column : Generated_Column) return Database.Status.Result is
+   function Validate_Definition
+     (State_Key : Natural; Column : Generated_Column) return Database.Status.Result is
    begin
       if Length (Column.Name) = 0 then
          return Database.Status.Failure (Database.Status.Invalid_Schema, "generated column name must not be empty");
-      elsif not Database.Expressions.Is_Deterministic (Column.Expression) then
+      elsif not Database.Expressions.Is_Deterministic (State_Key, Column.Expression) then
          return Database.Status.Failure (Database.Status.Invalid_Schema,
            "generated column expression must be deterministic");
       elsif Database.Expressions.Depends_On_Column (Column.Expression, Column.Column_Id) then
@@ -29,7 +30,8 @@ package body Database.Generated_Columns is
    end Validate_Definition;
 
    function Recompute_Stored
-     (Columns : Generated_Column_Vectors.Vector;
+     (State_Key : Natural;
+      Columns : Generated_Column_Vectors.Vector;
       Schema  : Database.Schema.Table_Schema;
       Row     : in out Database.Rows.Row) return Database.Status.Result is
       R : Database.Status.Result;
@@ -37,12 +39,12 @@ package body Database.Generated_Columns is
       Pos : Natural;
    begin
       for C of Columns loop
-         R := Validate_Definition (C);
+         R := Validate_Definition (State_Key, C);
          if not Database.Status.Is_Ok (R) then
             return R;
          end if;
          if C.Kind = Stored then
-            R := Database.Expressions.Evaluate  (C.Expression,
+            R := Database.Expressions.Evaluate  (State_Key, C.Expression,
               Schema,
               Row,
               V);
@@ -61,7 +63,8 @@ package body Database.Generated_Columns is
    end Recompute_Stored;
 
    function Validate_Stored
-     (Columns : Generated_Column_Vectors.Vector;
+     (State_Key : Natural;
+      Columns : Generated_Column_Vectors.Vector;
       Schema  : Database.Schema.Table_Schema;
       Row     : Database.Rows.Row) return Database.Status.Result is
       R : Database.Status.Result;
@@ -70,7 +73,7 @@ package body Database.Generated_Columns is
    begin
       for C of Columns loop
          if C.Kind = Stored then
-            R := Database.Expressions.Evaluate  (C.Expression,
+            R := Database.Expressions.Evaluate  (State_Key, C.Expression,
               Schema,
               Row,
               V);

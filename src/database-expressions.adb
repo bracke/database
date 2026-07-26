@@ -141,7 +141,7 @@ package body Database.Expressions is
       return Expr.Node.Kind;
    end Kind_Of;
 
-   function Is_Deterministic (Expr : Expression) return Boolean is
+   function Is_Deterministic (State_Key : Natural; Expr : Expression) return Boolean is
    begin
       if Expr.Node = null then
          return True;
@@ -150,28 +150,28 @@ package body Database.Expressions is
          when Literal_Expr | Column_Expr => return True;
          when Function_Expr =>
             for A of Expr.Node.Args loop
-               if not Is_Deterministic (A) then
+               if not Is_Deterministic (State_Key, A) then
                   return False;
                end if;
             end loop;
             return True;
          when Registered_Function_Expr =>
             if not Database.Status.Is_Ok (Database.Functions.Validate_Persistent_Use (
-              To_Wide_Wide_String (Expr.Node.Function_Name)))
+              State_Key, To_Wide_Wide_String (Expr.Node.Function_Name)))
             then
                return False;
             end if;
             for A of Expr.Node.Registered_Args loop
-               if not Is_Deterministic (A) then
+               if not Is_Deterministic (State_Key, A) then
                   return False;
                end if;
             end loop;
             return True;
          when Not_Expr | Is_Null_Expr | Is_Not_Null_Expr =>
-            return Is_Deterministic ((Node => Expr.Node.Operand));
+            return Is_Deterministic (State_Key, (Node => Expr.Node.Operand));
          when others =>
-            return Is_Deterministic ((Node => Expr.Node.Left)) and then
-                   Is_Deterministic ((Node => Expr.Node.Right));
+            return Is_Deterministic (State_Key, (Node => Expr.Node.Left)) and then
+                   Is_Deterministic (State_Key, (Node => Expr.Node.Right));
       end case;
    end Is_Deterministic;
 
@@ -224,7 +224,8 @@ package body Database.Expressions is
    end Compare_Int;
 
    function Evaluate
-     (Expr   : Expression;
+     (State_Key : Natural;
+      Expr   : Expression;
       Schema : Database.Schema.Table_Schema;
       Row    : Database.Rows.Row;
       Value  : out Database.Values.Value) return Database.Status.Result is
@@ -253,14 +254,14 @@ package body Database.Expressions is
                return Database.Status.Success;
             end;
          when Add_Expr | Subtract_Expr | Multiply_Expr | Divide_Expr =>
-            Res := Evaluate  ((Node => Expr.Node.Left),
+            Res := Evaluate  (State_Key, (Node => Expr.Node.Left),
               Schema,
               Row,
               L);
             if not Database.Status.Is_Ok (Res) then
                return Res;
             end if;
-            Res := Evaluate  ((Node => Expr.Node.Right),
+            Res := Evaluate  (State_Key, (Node => Expr.Node.Right),
               Schema,
               Row,
               R);
@@ -295,14 +296,14 @@ package body Database.Expressions is
             end if;
             return Database.Status.Success;
          when Equal_Expr | Not_Equal_Expr | Less_Expr | Less_Or_Equal_Expr | Greater_Expr | Greater_Or_Equal_Expr =>
-            Res := Evaluate  ((Node => Expr.Node.Left),
+            Res := Evaluate  (State_Key, (Node => Expr.Node.Left),
               Schema,
               Row,
               L);
             if not Database.Status.Is_Ok (Res) then
                return Res;
             end if;
-            Res := Evaluate  ((Node => Expr.Node.Right),
+            Res := Evaluate  (State_Key, (Node => Expr.Node.Right),
               Schema,
               Row,
               R);
@@ -330,14 +331,14 @@ package body Database.Expressions is
             end if;
             return Database.Status.Success;
          when And_Expr | Or_Expr =>
-            Res := Evaluate_Boolean  ((Node => Expr.Node.Left),
+            Res := Evaluate_Boolean  (State_Key, (Node => Expr.Node.Left),
               Schema,
               Row,
               B1);
             if not Database.Status.Is_Ok (Res) then
                return Res;
             end if;
-            Res := Evaluate_Boolean  ((Node => Expr.Node.Right),
+            Res := Evaluate_Boolean  (State_Key, (Node => Expr.Node.Right),
               Schema,
               Row,
               B2);
@@ -351,7 +352,7 @@ package body Database.Expressions is
             end if;
             return Database.Status.Success;
          when Not_Expr =>
-            Res := Evaluate_Boolean  ((Node => Expr.Node.Operand),
+            Res := Evaluate_Boolean  (State_Key, (Node => Expr.Node.Operand),
               Schema,
               Row,
               B1);
@@ -361,7 +362,7 @@ package body Database.Expressions is
             Value := Database.Values.From_Boolean (not B1);
             return Database.Status.Success;
          when Is_Null_Expr | Is_Not_Null_Expr =>
-            Res := Evaluate  ((Node => Expr.Node.Operand),
+            Res := Evaluate  (State_Key, (Node => Expr.Node.Operand),
               Schema,
               Row,
               L);
@@ -377,13 +378,14 @@ package body Database.Expressions is
                AVal : Database.Values.Value;
             begin
                for A of Expr.Node.Registered_Args loop
-                  Res := Evaluate (A, Schema, Row, AVal);
+                  Res := Evaluate (State_Key, A, Schema, Row, AVal);
                   if not Database.Status.Is_Ok (Res) then
                      return Res;
                   end if;
                   Args.Append (AVal);
                end loop;
-               return Database.Functions.Evaluate (To_Wide_Wide_String (Expr.Node.Function_Name), Args, Value);
+               return Database.Functions.Evaluate
+                 (State_Key, To_Wide_Wide_String (Expr.Node.Function_Name), Args, Value);
             end;
          when Function_Expr =>
             case Expr.Node.Func is
@@ -393,7 +395,7 @@ package body Database.Expressions is
                      return Database.Status.Failure (Database.Status.Invalid_Argument,
                        "lowercase expects one argument");
                   end if;
-                  Res := Evaluate  (Expr.Node.Args.Element (0),
+                  Res := Evaluate  (State_Key, Expr.Node.Args.Element (0),
                     Schema,
                     Row,
                     L);
@@ -415,7 +417,7 @@ package body Database.Expressions is
                      Value := Database.Values.From_Text (S);
                   end;
                when Text_Length =>
-                  Res := Evaluate  (Expr.Node.Args.Element (0),
+                  Res := Evaluate  (State_Key, Expr.Node.Args.Element (0),
                     Schema,
                     Row,
                     L);
@@ -428,7 +430,7 @@ package body Database.Expressions is
                   end if;
                   Value := Database.Values.From_Integer (To_Wide_Wide_String (L.Text)'Length);
                when Integer_Abs =>
-                  Res := Evaluate  (Expr.Node.Args.Element (0),
+                  Res := Evaluate  (State_Key, Expr.Node.Args.Element (0),
                     Schema,
                     Row,
                     L);
@@ -441,14 +443,14 @@ package body Database.Expressions is
                   end if;
                   Value := Database.Values.From_Integer (abs L.Int);
                when Concat_Text =>
-                  Res := Evaluate  (Expr.Node.Args.Element (0),
+                  Res := Evaluate  (State_Key, Expr.Node.Args.Element (0),
                     Schema,
                     Row,
                     L);
                   if not Database.Status.Is_Ok (Res) then
                      return Res;
                   end if;
-                  Res := Evaluate  (Expr.Node.Args.Element (1),
+                  Res := Evaluate  (State_Key, Expr.Node.Args.Element (1),
                     Schema,
                     Row,
                     R);
@@ -466,14 +468,15 @@ package body Database.Expressions is
    end Evaluate;
 
    function Evaluate_Boolean
-     (Expr   : Expression;
+     (State_Key : Natural;
+      Expr   : Expression;
       Schema : Database.Schema.Table_Schema;
       Row    : Database.Rows.Row;
       Result : out Boolean) return Database.Status.Result is
       V : Database.Values.Value;
       R : Database.Status.Result;
    begin
-      R := Evaluate (Expr, Schema, Row, V);
+      R := Evaluate (State_Key, Expr, Schema, Row, V);
       if not Database.Status.Is_Ok (R) then
          Result := False;
          return R;

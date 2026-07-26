@@ -26,39 +26,24 @@ package body Database.Functions is
 
    Default_Registry : constant Registry_Access := new Function_Vectors.Vector;
 
-   Current_Key : Natural := 0;
-   pragma Thread_Local_Storage (Current_Key);
-
-   function Current_Registry return Registry_Access is
+   function Registry_For (State_Key : Natural) return Registry_Access is
       S, Winner : Registry_Access;
    begin
-      if Current_Key = 0 then
+      if State_Key = 0 then
          return Default_Registry;
       end if;
-      S := State_Reg.Find (Current_Key);
+      S := State_Reg.Find (State_Key);
       if S /= null then
          return S;
       end if;
       S := new Function_Vectors.Vector;    --  allocate outside the lock
-      State_Reg.Insert (Current_Key, S, Winner);
+      State_Reg.Insert (State_Key, S, Winner);
       if Winner /= S then
          Free_Registry (S);                --  lost the race; free ours
          S := Winner;
       end if;
       return S;
-   end Current_Registry;
-
-   procedure Select_Database (State_Key : Natural) is
-   begin
-      Current_Key := State_Key;
-      if State_Key /= 0 then
-         declare
-            Ignore : constant Registry_Access := Current_Registry;
-         begin
-            null;
-         end;
-      end if;
-   end Select_Database;
+   end Registry_For;
 
    procedure Drop_Database (State_Key : Natural) is
       Freed : Registry_Access;
@@ -70,13 +55,10 @@ package body Database.Functions is
       if Freed /= null then
          Free_Registry (Freed);            --  free outside the lock
       end if;
-      if Current_Key = State_Key then
-         Current_Key := 0;
-      end if;
    end Drop_Database;
 
-   function Find (Name : Wide_Wide_String) return Natural is
-      Registry : constant Registry_Access := Current_Registry;
+   function Find (State_Key : Natural; Name : Wide_Wide_String) return Natural is
+      Registry : constant Registry_Access := Registry_For (State_Key);
    begin
       if Registry = null or else Registry.all.Length = 0 then
          return Natural'Last;
@@ -98,12 +80,11 @@ package body Database.Functions is
      (DB       : in out Database.Handle;
       Metadata : Function_Metadata;
       Fn       : Scalar_Function) return Database.Status.Result is
+      Key : constant Natural := Database.Catalog_State_Key (DB);
       Pos : Natural;
-      Registry : Registry_Access;
+      Registry : constant Registry_Access := Registry_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      Registry := Current_Registry;
-      Pos := Find (To_Wide_Wide_String (Metadata.Name));
+      Pos := Find (Key, To_Wide_Wide_String (Metadata.Name));
       if Length (Metadata.Name) = 0 or else Fn = null then
          return Database.Status.Failure (Database.Status.Invalid_Argument, "invalid scalar function registration");
       end if;
@@ -127,12 +108,11 @@ package body Database.Functions is
    function Unregister_Function
      (DB   : in out Database.Handle;
       Name : Wide_Wide_String) return Database.Status.Result is
+      Key : constant Natural := Database.Catalog_State_Key (DB);
       Pos : Natural;
-      Registry : Registry_Access;
+      Registry : constant Registry_Access := Registry_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      Registry := Current_Registry;
-      Pos := Find (Name);
+      Pos := Find (Key, Name);
       if Pos = Natural'Last then
          return Database.Status.Failure (Database.Status.Not_Found, "scalar function is not registered");
       end if;
@@ -140,16 +120,17 @@ package body Database.Functions is
       return Database.Status.Success;
    end Unregister_Function;
 
-   function Exists (Name : Wide_Wide_String) return Boolean is
+   function Exists (State_Key : Natural; Name : Wide_Wide_String) return Boolean is
    begin
-      return Find (Name) /= Natural'Last;
+      return Find (State_Key, Name) /= Natural'Last;
    end Exists;
 
    function Metadata_Of
-     (Name     : Wide_Wide_String;
+     (State_Key : Natural;
+      Name     : Wide_Wide_String;
       Metadata : out Function_Metadata) return Database.Status.Result is
-      Pos : constant Natural := Find (Name);
-      Registry : constant Registry_Access := Current_Registry;
+      Pos : constant Natural := Find (State_Key, Name);
+      Registry : constant Registry_Access := Registry_For (State_Key);
    begin
       if Pos = Natural'Last then
          return Database.Status.Failure (Database.Status.Missing_Extension, "missing scalar function: " & Name);
@@ -159,11 +140,12 @@ package body Database.Functions is
    end Metadata_Of;
 
    function Evaluate
-     (Name      : Wide_Wide_String;
+     (State_Key : Natural;
+      Name      : Wide_Wide_String;
       Arguments : Database.Values.Value_Vector;
       Value     : out Database.Values.Value) return Database.Status.Result is
-      Pos : constant Natural := Find (Name);
-      Registry : constant Registry_Access := Current_Registry;
+      Pos : constant Natural := Find (State_Key, Name);
+      Registry : constant Registry_Access := Registry_For (State_Key);
    begin
       Value := Database.Values.Null_Value;
       if Pos = Natural'Last then
@@ -204,9 +186,10 @@ package body Database.Functions is
       return Database.Status.Success;
    end Evaluate;
 
-   function Validate_Persistent_Use (Name : Wide_Wide_String) return Database.Status.Result is
-      Pos : constant Natural := Find (Name);
-      Registry : constant Registry_Access := Current_Registry;
+   function Validate_Persistent_Use
+     (State_Key : Natural; Name : Wide_Wide_String) return Database.Status.Result is
+      Pos : constant Natural := Find (State_Key, Name);
+      Registry : constant Registry_Access := Registry_For (State_Key);
    begin
       if Pos = Natural'Last then
          return Database.Status.Failure (Database.Status.Missing_Extension, "missing scalar function: " & Name);
@@ -218,10 +201,12 @@ package body Database.Functions is
       return Database.Status.Success;
    end Validate_Persistent_Use;
 
-   function Registered_Metadata return Database.Extension_Metadata.Metadata_Vectors.Vector is
+   function Registered_Metadata
+     (State_Key : Natural)
+      return Database.Extension_Metadata.Metadata_Vectors.Vector is
       V : Database.Extension_Metadata.Metadata_Vectors.Vector;
       M : Database.Extension_Metadata.Extension_Object_Metadata;
-      Registry : constant Registry_Access := Current_Registry;
+      Registry : constant Registry_Access := Registry_For (State_Key);
    begin
       if Registry = null or else Registry.all.Length = 0 then
          return V;
@@ -247,8 +232,8 @@ package body Database.Functions is
       return V;
    end Registered_Metadata;
 
-   procedure Clear is
+   procedure Clear (State_Key : Natural) is
    begin
-      Current_Registry.all.Clear;
+      Registry_For (State_Key).all.Clear;
    end Clear;
 end Database.Functions;

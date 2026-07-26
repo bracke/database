@@ -135,46 +135,31 @@ package body Database.Catalog is
       end Remove;
    end Registry;
 
-   --  Which database this task is operating on. Thread-local so concurrent tasks
-   --  driving different handles do not clobber each other's selection between
-   --  Select_Database and use.
-   Current_Key : Natural := 0;
-   pragma Thread_Local_Storage (Current_Key);
-
    Default_State : aliased Catalog_State;
 
-   function Current_State return Catalog_State_Access is
+   --  Resolve the catalog state for an explicit handle-owned state key. Keying
+   --  is now an explicit parameter (was a thread-local "current database"); the
+   --  allocate-outside-lock winner-race is unchanged.
+   function State_For (State_Key : Natural) return Catalog_State_Access is
       S, Winner : Catalog_State_Access;
    begin
-      if Current_Key = 0 then
+      if State_Key = 0 then
          return Default_State'Access;
       end if;
-      S := Registry.Find (Current_Key);
+      S := Registry.Find (State_Key);
       if S /= null then
          return S;
       end if;
       --  Allocate outside the lock, then register the pointer; if another task
       --  won the race, use theirs and free ours.
       S := new Catalog_State;
-      Registry.Insert (Current_Key, S, Winner);
+      Registry.Insert (State_Key, S, Winner);
       if Winner /= S then
          Free_State (S);
          S := Winner;
       end if;
       return S;
-   end Current_State;
-
-   procedure Select_Database (State_Key : Natural) is
-   begin
-      Current_Key := State_Key;
-      if State_Key /= 0 then
-         declare
-            Ignore : constant Catalog_State_Access := Current_State;
-         begin
-            null;
-         end;
-      end if;
-   end Select_Database;
+   end State_For;
 
    procedure Drop_Database (State_Key : Natural) is
       Freed : Catalog_State_Access;
@@ -186,35 +171,34 @@ package body Database.Catalog is
       if Freed /= null then
          Free_State (Freed);   --  free outside the protected action
       end if;
-      if Current_Key = State_Key then
-         Current_Key := 0;
-      end if;
    end Drop_Database;
 
-   procedure Clear is
+   procedure Clear (State_Key : Natural) is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      Current_State.all.Tables.Clear;
-      Current_State.all.Foreign_Keys.Clear;
-      Current_State.all.Table_Checks_List.Clear;
-      Current_State.all.Table_Generated_List.Clear;
-      Current_State.all.Views.Clear;
-      Current_State.all.Materialized_Views.Clear;
-      Current_State.all.Full_Text_Indexes.Clear;
-      Current_State.all.Cached_Rows.Clear;
+      State.all.Tables.Clear;
+      State.all.Foreign_Keys.Clear;
+      State.all.Table_Checks_List.Clear;
+      State.all.Table_Generated_List.Clear;
+      State.all.Views.Clear;
+      State.all.Materialized_Views.Clear;
+      State.all.Full_Text_Indexes.Clear;
+      State.all.Cached_Rows.Clear;
    end Clear;
 
    function Register
      (DB     : in out Database.Handle;
       Schema : in out Database.Schema.Table_Schema) return Database.Status.Result is
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      for S of Current_State.all.Tables loop
+      for S of State.all.Tables loop
          if To_Wide_Wide_String (S.Name) = To_Wide_Wide_String (Schema.Name) then
             return Database.Status.Failure (Database.Status.Already_Exists, "table already registered");
          end if;
       end loop;
       Schema.Table_Id :=
-        Database.Catalog.Rules.Next_Table_Id (Natural (Current_State.all.Tables.Length));
+        Database.Catalog.Rules.Next_Table_Id (Natural (State.all.Tables.Length));
       if Database.Backend (DB) = Database.Persistent_Backend and then Schema.Heap_First_Page = 0 then
          declare
             First : Database.Storage.Pages.Page_Id;
@@ -227,15 +211,17 @@ package body Database.Catalog is
             Schema.Heap_First_Page := Natural (First);
          end;
       end if;
-      Current_State.all.Tables.Append (Schema);
+      State.all.Tables.Append (Schema);
       return Save (DB);
    end Register;
 
    function Find_By_Name
-     (Name   : Wide_Wide_String;
+     (State_Key : Natural;
+      Name   : Wide_Wide_String;
       Schema : out Database.Schema.Table_Schema) return Database.Status.Result is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      for S of Current_State.all.Tables loop
+      for S of State.all.Tables loop
          if To_Wide_Wide_String (S.Name) = Name then
             Schema := S;
             return Database.Status.Success;
@@ -245,10 +231,12 @@ package body Database.Catalog is
    end Find_By_Name;
 
    function Find_By_Id
-     (Table_Id : Natural;
+     (State_Key : Natural;
+      Table_Id : Natural;
       Schema   : out Database.Schema.Table_Schema) return Database.Status.Result is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      for S of Current_State.all.Tables loop
+      for S of State.all.Tables loop
          if S.Table_Id = Table_Id then
             Schema := S;
             return Database.Status.Success;
@@ -272,12 +260,13 @@ package body Database.Catalog is
    function Stage_Update_Table
      (DB     : in out Database.Handle;
       Schema : Database.Schema.Table_Schema) return Database.Status.Result is
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      if Current_State.all.Tables.Length > 0 then
-         for I in 0 .. Natural (Current_State.all.Tables.Length) - 1 loop
-            if Current_State.all.Tables.Element (I).Table_Id = Schema.Table_Id then
-               Current_State.all.Tables.Replace_Element (I, Schema);
+      if State.all.Tables.Length > 0 then
+         for I in 0 .. Natural (State.all.Tables.Length) - 1 loop
+            if State.all.Tables.Element (I).Table_Id = Schema.Table_Id then
+               State.all.Tables.Replace_Element (I, Schema);
                return Database.Status.Success;
             end if;
          end loop;
@@ -342,8 +331,9 @@ package body Database.Catalog is
       P : Page;
       B : Byte_Array (0 .. Payload_Capacity - 1) := [others => 0];
       Pos : Natural := 0;
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
       if Database.Backend (DB) /= Database.Persistent_Backend then
          return Database.Status.Success;
       end if;
@@ -354,8 +344,8 @@ package body Database.Catalog is
          return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Allocation_Failure);
       end if;
       Initialize (P, 1, Catalog_Page);
-      Put_U32 (B, Pos, Natural (Current_State.all.Tables.Length));
-      for S of Current_State.all.Tables loop
+      Put_U32 (B, Pos, Natural (State.all.Tables.Length));
+      for S of State.all.Tables loop
          Put_U32  (B,
            Pos,
            S.Table_Id);
@@ -416,8 +406,8 @@ package body Database.Catalog is
               (if C.Primary_Key then 1 else 0));
          end loop;
       end loop;
-      Put_U32 (B, Pos, Natural (Current_State.all.Full_Text_Indexes.Length));
-      for FTX of Current_State.all.Full_Text_Indexes loop
+      Put_U32 (B, Pos, Natural (State.all.Full_Text_Indexes.Length));
+      for FTX of State.all.Full_Text_Indexes loop
          Put_U32 (B, Pos, Natural (FTX.Id));
          Put_Text (B, Pos, To_Wide_Wide_String (FTX.Name));
          Put_U32 (B, Pos, FTX.Table_Id);
@@ -429,8 +419,8 @@ package body Database.Catalog is
       --  loadable. Every definition is encoded explicitly;
       --  no Ada record memory
       --  layout is persisted.
-      Put_U32 (B, Pos, Natural (Current_State.all.Foreign_Keys.Length));
-      for FK of Current_State.all.Foreign_Keys loop
+      Put_U32 (B, Pos, Natural (State.all.Foreign_Keys.Length));
+      for FK of State.all.Foreign_Keys loop
          Put_Text (B, Pos, To_Wide_Wide_String (FK.Name));
          Put_U32 (B, Pos, FK.Referencing_Table);
          Put_U32 (B, Pos, FK.Referenced_Table);
@@ -447,8 +437,8 @@ package body Database.Catalog is
          Put_U32 (B, Pos, (if FK.Deferred then 1 else 0));
       end loop;
 
-      Put_U32 (B, Pos, Natural (Current_State.all.Table_Checks_List.Length));
-      for TC of Current_State.all.Table_Checks_List loop
+      Put_U32 (B, Pos, Natural (State.all.Table_Checks_List.Length));
+      for TC of State.all.Table_Checks_List loop
          Put_U32 (B, Pos, TC.Table_Id);
          Put_U32 (B, Pos, Natural (TC.Checks.Length));
          for C of TC.Checks loop
@@ -458,8 +448,8 @@ package body Database.Catalog is
          end loop;
       end loop;
 
-      Put_U32 (B, Pos, Natural (Current_State.all.Table_Generated_List.Length));
-      for TG of Current_State.all.Table_Generated_List loop
+      Put_U32 (B, Pos, Natural (State.all.Table_Generated_List.Length));
+      for TG of State.all.Table_Generated_List loop
          Put_U32 (B, Pos, TG.Table_Id);
          Put_U32 (B, Pos, Natural (TG.Columns.Length));
          for C of TG.Columns loop
@@ -470,15 +460,15 @@ package body Database.Catalog is
          end loop;
       end loop;
 
-      Put_U32 (B, Pos, Natural (Current_State.all.Views.Length));
-      for V of Current_State.all.Views loop
+      Put_U32 (B, Pos, Natural (State.all.Views.Length));
+      for V of State.all.Views loop
          Put_U32 (B, Pos, Natural (V.Id));
          Put_Text (B, Pos, To_Wide_Wide_String (V.Name));
          Put_Text (B, Pos, Database.Queries.Persistent_Image (V.Query));
       end loop;
 
-      Put_U32 (B, Pos, Natural (Current_State.all.Materialized_Views.Length));
-      for MV of Current_State.all.Materialized_Views loop
+      Put_U32 (B, Pos, Natural (State.all.Materialized_Views.Length));
+      for MV of State.all.Materialized_Views loop
          Put_U32 (B, Pos, Natural (MV.Id));
          Put_Text (B, Pos, To_Wide_Wide_String (MV.Name));
          Put_Text (B, Pos, Database.Queries.Persistent_Image (MV.Query));
@@ -493,7 +483,7 @@ package body Database.Catalog is
       declare
          Extra_Count : Natural := 0;
       begin
-         for S of Current_State.all.Tables loop
+         for S of State.all.Tables loop
             for IX of S.Indexes loop
                if IX.Column_Ids.Length > 0 or else IX.Has_Predicate or else IX.Has_Expression then
                   Extra_Count := Extra_Count + 1;
@@ -501,7 +491,7 @@ package body Database.Catalog is
             end loop;
          end loop;
          Put_U32 (B, Pos, Extra_Count);
-         for S of Current_State.all.Tables loop
+         for S of State.all.Tables loop
             for IX of S.Indexes loop
                if IX.Column_Ids.Length > 0 or else IX.Has_Predicate or else IX.Has_Expression then
                   Put_U32 (B, Pos, S.Table_Id);
@@ -544,9 +534,10 @@ package body Database.Catalog is
       Count, Cols, Tmp, Index_Count : Natural;
       Pos : Natural;
       Last : Natural;
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      Clear;
+      Clear (Key);
       if Database.Backend (DB) /= Database.Persistent_Backend then
          return Database.Status.Success;
       end if;
@@ -679,7 +670,7 @@ package body Database.Catalog is
                      S.Columns.Append (C);
                   end;
                end loop;
-               Current_State.all.Tables.Append (S);
+               State.all.Tables.Append (S);
             end;
          end loop;
          --  Full-text definitions are optional for
@@ -708,7 +699,7 @@ package body Database.Catalog is
                         M.Id := Database.Full_Text.Indexes.Full_Text_Index_Id (Id_N);
                         M.Name := Name;
                         M.Table_Name := Table_Name;
-                        Current_State.all.Full_Text_Indexes.Append (M);
+                        State.all.Full_Text_Indexes.Append (M);
                      end;
                   end loop;
                end if;
@@ -790,7 +781,7 @@ package body Database.Catalog is
                      FK.On_Delete := Database.Foreign_Keys.Foreign_Key_Action'Val (Action);
                      FK.On_Update := Database.Foreign_Keys.Foreign_Key_Action'Val (Flag);
                      FK.Deferred := Ref_Count /= 0;
-                     Current_State.all.Foreign_Keys.Append (FK);
+                     State.all.Foreign_Keys.Append (FK);
                   end;
                end loop;
             end;
@@ -844,7 +835,7 @@ package body Database.Catalog is
                            TC.Checks.Append (C);
                         end;
                      end loop;
-                     Current_State.all.Table_Checks_List.Append (TC);
+                     State.all.Table_Checks_List.Append (TC);
                   end;
                end loop;
             end;
@@ -906,7 +897,7 @@ package body Database.Catalog is
                            TG.Columns.Append (C);
                         end;
                      end loop;
-                     Current_State.all.Table_Generated_List.Append (TG);
+                     State.all.Table_Generated_List.Append (TG);
                   end;
                end loop;
             end;
@@ -944,7 +935,7 @@ package body Database.Catalog is
                      end if;
                      V.Id := Database.Views.View_Id (Id_N);
                      V.Name := Name;
-                     Current_State.all.Views.Append (V);
+                     State.all.Views.Append (V);
                   end;
                end loop;
             end;
@@ -990,7 +981,7 @@ package body Database.Catalog is
                      end if;
                      MV.Id := Database.Materialized_Views.Materialized_View_Id (Id_N);
                      MV.Name := Name;
-                     Current_State.all.Materialized_Views.Append (MV);
+                     State.all.Materialized_Views.Append (MV);
                   end;
                end loop;
             end;
@@ -1022,11 +1013,11 @@ package body Database.Catalog is
                         return Database.Status.Failure (Database.Status.Corrupt_File,
                           "truncated index extension metadata");
                      end if;
-                     if Current_State.all.Tables.Length > 0 then
-                        for TI in 0 .. Natural (Current_State.all.Tables.Length) - 1 loop
-                           if Current_State.all.Tables.Element (TI).Table_Id = Table_Id then
+                     if State.all.Tables.Length > 0 then
+                        for TI in 0 .. Natural (State.all.Tables.Length) - 1 loop
+                           if State.all.Tables.Element (TI).Table_Id = Table_Id then
                               declare
-                                 S : Database.Schema.Table_Schema := Current_State.all.Tables.Element (TI);
+                                 S : Database.Schema.Table_Schema := State.all.Tables.Element (TI);
                               begin
                                  if S.Indexes.Length > 0 then
                                     for II in 0 .. Natural (S.Indexes.Length) - 1 loop
@@ -1057,7 +1048,7 @@ package body Database.Catalog is
                                              end if;
                                              IX.Has_Expression := Flag /= 0;
                                              S.Indexes.Replace_Element (II, IX);
-                                             Current_State.all.Tables.Replace_Element (TI, S);
+                                             State.all.Tables.Replace_Element (TI, S);
                                              Found := True;
                                           end;
                                        end if;
@@ -1076,7 +1067,7 @@ package body Database.Catalog is
             end;
          end if;
       end;
-      for S of Current_State.all.Tables loop
+      for S of State.all.Tables loop
          if S.Heap_First_Page /= 0 then
             DB.Version := Natural'Max
               (DB.Version,
@@ -1093,11 +1084,12 @@ package body Database.Catalog is
       when others => return Database.Status.Failure (Database.Status.Corrupt_File, "malformed catalog");
    end Load;
 
-   function Table_Count return Natural is (Natural (Current_State.all.Tables.Length));
+   function Table_Count (State_Key : Natural) return Natural is (Natural (State_For (State_Key).all.Tables.Length));
 
-   function Table_At (Index : Natural) return Database.Schema.Table_Schema is
+   function Table_At (State_Key : Natural; Index : Natural) return Database.Schema.Table_Schema is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      return Current_State.all.Tables.Element (Index);
+      return State.all.Tables.Element (Index);
    end Table_At;
 
    function Add_Foreign_Key
@@ -1105,13 +1097,14 @@ package body Database.Catalog is
       Definition : Database.Foreign_Keys.Foreign_Key_Definition) return Database.Status.Result is
       Referencing_Schema, Referenced_Schema : Database.Schema.Table_Schema;
       R : Database.Status.Result;
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      R := Find_By_Id (Definition.Referencing_Table, Referencing_Schema);
+      R := Find_By_Id (Key, Definition.Referencing_Table, Referencing_Schema);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      R := Find_By_Id (Definition.Referenced_Table, Referenced_Schema);
+      R := Find_By_Id (Key, Definition.Referenced_Table, Referenced_Schema);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
@@ -1119,22 +1112,24 @@ package body Database.Catalog is
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      for Existing of Current_State.all.Foreign_Keys loop
+      for Existing of State.all.Foreign_Keys loop
          if Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (Existing.Name)
            = Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (Definition.Name)
          then
             return Database.Status.Failure (Database.Status.Already_Exists, "foreign key already exists");
          end if;
       end loop;
-      Current_State.all.Foreign_Keys.Append (Definition);
+      State.all.Foreign_Keys.Append (Definition);
       return Save (DB);
    end Add_Foreign_Key;
 
    function Foreign_Keys_For_Referencing_Table
-     (Table_Id : Natural) return Database.Foreign_Keys.Foreign_Key_Vectors.Vector is
+     (State_Key : Natural;
+      Table_Id : Natural) return Database.Foreign_Keys.Foreign_Key_Vectors.Vector is
+      State : constant Catalog_State_Access := State_For (State_Key);
       Result : Database.Foreign_Keys.Foreign_Key_Vectors.Vector;
    begin
-      for FK of Current_State.all.Foreign_Keys loop
+      for FK of State.all.Foreign_Keys loop
          if FK.Referencing_Table = Table_Id then
             Result.Append (FK);
          end if;
@@ -1143,10 +1138,12 @@ package body Database.Catalog is
    end Foreign_Keys_For_Referencing_Table;
 
    function Foreign_Keys_For_Referenced_Table
-     (Table_Id : Natural) return Database.Foreign_Keys.Foreign_Key_Vectors.Vector is
+     (State_Key : Natural;
+      Table_Id : Natural) return Database.Foreign_Keys.Foreign_Key_Vectors.Vector is
+      State : constant Catalog_State_Access := State_For (State_Key);
       Result : Database.Foreign_Keys.Foreign_Key_Vectors.Vector;
    begin
-      for FK of Current_State.all.Foreign_Keys loop
+      for FK of State.all.Foreign_Keys loop
          if FK.Referenced_Table = Table_Id then
             Result.Append (FK);
          end if;
@@ -1160,24 +1157,25 @@ package body Database.Catalog is
       Constraint : Database.Check_Constraints.Check_Constraint) return Database.Status.Result is
       S : Database.Schema.Table_Schema;
       R : Database.Status.Result;
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      R := Find_By_Id (Table_Id, S);
+      R := Find_By_Id (Key, Table_Id, S);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      R := Database.Check_Constraints.Validate_Definition (Constraint);
+      R := Database.Check_Constraints.Validate_Definition (Key, Constraint);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      if Current_State.all.Table_Checks_List.Length > 0 then
-         for I in 0 .. Natural (Current_State.all.Table_Checks_List.Length) - 1 loop
-            if Current_State.all.Table_Checks_List.Element (I).Table_Id = Table_Id then
+      if State.all.Table_Checks_List.Length > 0 then
+         for I in 0 .. Natural (State.all.Table_Checks_List.Length) - 1 loop
+            if State.all.Table_Checks_List.Element (I).Table_Id = Table_Id then
                declare
-                  T : Table_Checks := Current_State.all.Table_Checks_List.Element (I);
+                  T : Table_Checks := State.all.Table_Checks_List.Element (I);
                begin
                   T.Checks.Append (Constraint);
-                  Current_State.all.Table_Checks_List.Replace_Element (I, T);
+                  State.all.Table_Checks_List.Replace_Element (I, T);
                   return Save (DB);
                end;
             end if;
@@ -1188,16 +1186,18 @@ package body Database.Catalog is
       begin
          T.Table_Id := Table_Id;
          T.Checks.Append (Constraint);
-         Current_State.all.Table_Checks_List.Append (T);
+         State.all.Table_Checks_List.Append (T);
       end;
       return Save (DB);
    end Add_Check_Constraint;
 
    function Check_Constraints_For_Table
-     (Table_Id : Natural) return Database.Check_Constraints.Check_Constraint_Vectors.Vector is
+     (State_Key : Natural;
+      Table_Id : Natural) return Database.Check_Constraints.Check_Constraint_Vectors.Vector is
+      State : constant Catalog_State_Access := State_For (State_Key);
       Empty : Database.Check_Constraints.Check_Constraint_Vectors.Vector;
    begin
-      for T of Current_State.all.Table_Checks_List loop
+      for T of State.all.Table_Checks_List loop
          if T.Table_Id = Table_Id then
             return T.Checks;
          end if;
@@ -1211,27 +1211,28 @@ package body Database.Catalog is
       Column   : Database.Generated_Columns.Generated_Column) return Database.Status.Result is
       S : Database.Schema.Table_Schema;
       R : Database.Status.Result;
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      R := Find_By_Id (Table_Id, S);
+      R := Find_By_Id (Key, Table_Id, S);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      R := Database.Generated_Columns.Validate_Definition (Column);
+      R := Database.Generated_Columns.Validate_Definition (Key, Column);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
       if Database.Schema.Find_Column_Id_Position (S, Column.Column_Id) = Natural'Last then
          return Database.Status.Failure (Database.Status.Invalid_Schema, "generated column id is not in table schema");
       end if;
-      if Current_State.all.Table_Generated_List.Length > 0 then
-         for I in 0 .. Natural (Current_State.all.Table_Generated_List.Length) - 1 loop
-            if Current_State.all.Table_Generated_List.Element (I).Table_Id = Table_Id then
+      if State.all.Table_Generated_List.Length > 0 then
+         for I in 0 .. Natural (State.all.Table_Generated_List.Length) - 1 loop
+            if State.all.Table_Generated_List.Element (I).Table_Id = Table_Id then
                declare
-                  T : Table_Generated := Current_State.all.Table_Generated_List.Element (I);
+                  T : Table_Generated := State.all.Table_Generated_List.Element (I);
                begin
                   T.Columns.Append (Column);
-                  Current_State.all.Table_Generated_List.Replace_Element (I, T);
+                  State.all.Table_Generated_List.Replace_Element (I, T);
                   return Save (DB);
                end;
             end if;
@@ -1242,16 +1243,18 @@ package body Database.Catalog is
       begin
          T.Table_Id := Table_Id;
          T.Columns.Append (Column);
-         Current_State.all.Table_Generated_List.Append (T);
+         State.all.Table_Generated_List.Append (T);
       end;
       return Save (DB);
    end Add_Generated_Column;
 
    function Generated_Columns_For_Table
-     (Table_Id : Natural) return Database.Generated_Columns.Generated_Column_Vectors.Vector is
+     (State_Key : Natural;
+      Table_Id : Natural) return Database.Generated_Columns.Generated_Column_Vectors.Vector is
+      State : constant Catalog_State_Access := State_For (State_Key);
       Empty : Database.Generated_Columns.Generated_Column_Vectors.Vector;
    begin
-      for T of Current_State.all.Table_Generated_List loop
+      for T of State.all.Table_Generated_List loop
          if T.Table_Id = Table_Id then
             return T.Columns;
          end if;
@@ -1263,28 +1266,31 @@ package body Database.Catalog is
      (DB   : in out Database.Handle;
       View : in out Database.Views.View_Definition) return Database.Status.Result is
       R : constant Database.Status.Result := Database.Views.Validate (View);
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      for V of Current_State.all.Views loop
+      for V of State.all.Views loop
          if Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (V.Name)
            = Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (View.Name)
          then
             return Database.Status.Failure (Database.Status.Already_Exists, "view already exists");
          end if;
       end loop;
-      View.Id := Database.Views.View_Id (Natural (Current_State.all.Views.Length) + 1);
-      Current_State.all.Views.Append (View);
+      View.Id := Database.Views.View_Id (Natural (State.all.Views.Length) + 1);
+      State.all.Views.Append (View);
       return Save (DB);
    end Add_View;
 
    function Find_View
-     (Name : Wide_Wide_String;
+     (State_Key : Natural;
+      Name : Wide_Wide_String;
       View : out Database.Views.View_Definition) return Database.Status.Result is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      for V of Current_State.all.Views loop
+      for V of State.all.Views loop
          if Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (V.Name) = Name then
             View := V;
             return Database.Status.Success;
@@ -1293,29 +1299,32 @@ package body Database.Catalog is
       return Database.Status.Failure (Database.Status.Not_Found, "view not found");
    end Find_View;
 
-   function View_Count return Natural is
+   function View_Count (State_Key : Natural) return Natural is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      return Natural (Current_State.all.Views.Length);
+      return Natural (State.all.Views.Length);
    end View_Count;
 
-   function View_At (Index : Natural) return Database.Views.View_Definition is
+   function View_At (State_Key : Natural; Index : Natural) return Database.Views.View_Definition is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      return Current_State.all.Views.Element (Index);
+      return State.all.Views.Element (Index);
    end View_At;
 
    function Update_View
      (DB   : in out Database.Handle;
       View : Database.Views.View_Definition) return Database.Status.Result is
       R : constant Database.Status.Result := Database.Views.Validate (View);
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      if Current_State.all.Views.Length > 0 then
-         for I in 0 .. Natural (Current_State.all.Views.Length) - 1 loop
-            if Current_State.all.Views.Element (I).Id = View.Id then
-               Current_State.all.Views.Replace_Element (I, View);
+      if State.all.Views.Length > 0 then
+         for I in 0 .. Natural (State.all.Views.Length) - 1 loop
+            if State.all.Views.Element (I).Id = View.Id then
+               State.all.Views.Replace_Element (I, View);
                return Save (DB);
             end if;
          end loop;
@@ -1327,12 +1336,13 @@ package body Database.Catalog is
      (DB   : in out Database.Handle;
       View : in out Database.Materialized_Views.Materialized_View_Definition) return Database.Status.Result is
       R : constant Database.Status.Result := Database.Materialized_Views.Validate (View);
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      for V of Current_State.all.Materialized_Views loop
+      for V of State.all.Materialized_Views loop
          if Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (V.Name)
            = Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (View.Name)
          then
@@ -1340,16 +1350,18 @@ package body Database.Catalog is
          end if;
       end loop;
       View.Id  :=
-        Database.Materialized_Views.Materialized_View_Id (Natural (Current_State.all.Materialized_Views.Length) + 1);
-      Current_State.all.Materialized_Views.Append (View);
+        Database.Materialized_Views.Materialized_View_Id (Natural (State.all.Materialized_Views.Length) + 1);
+      State.all.Materialized_Views.Append (View);
       return Save (DB);
    end Add_Materialized_View;
 
    function Find_Materialized_View
-     (Name : Wide_Wide_String;
+     (State_Key : Natural;
+      Name : Wide_Wide_String;
       View : out Database.Materialized_Views.Materialized_View_Definition) return Database.Status.Result is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      for V of Current_State.all.Materialized_Views loop
+      for V of State.all.Materialized_Views loop
          if Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (V.Name) = Name then
             View := V;
             return Database.Status.Success;
@@ -1358,26 +1370,30 @@ package body Database.Catalog is
       return Database.Status.Failure (Database.Status.Not_Found, "materialized view not found");
    end Find_Materialized_View;
 
-   function Materialized_View_Count return Natural is
+   function Materialized_View_Count (State_Key : Natural) return Natural is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      return Natural (Current_State.all.Materialized_Views.Length);
+      return Natural (State.all.Materialized_Views.Length);
    end Materialized_View_Count;
 
    function Materialized_View_At
-     (Index : Natural) return Database.Materialized_Views.Materialized_View_Definition is
+     (State_Key : Natural;
+      Index : Natural) return Database.Materialized_Views.Materialized_View_Definition is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      return Current_State.all.Materialized_Views.Element (Index);
+      return State.all.Materialized_Views.Element (Index);
    end Materialized_View_At;
 
    function Update_Materialized_View
      (DB   : in out Database.Handle;
       View : Database.Materialized_Views.Materialized_View_Definition) return Database.Status.Result is
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      if Current_State.all.Materialized_Views.Length > 0 then
-         for I in 0 .. Natural (Current_State.all.Materialized_Views.Length) - 1 loop
-            if Current_State.all.Materialized_Views.Element (I).Id = View.Id then
-               Current_State.all.Materialized_Views.Replace_Element (I, View);
+      if State.all.Materialized_Views.Length > 0 then
+         for I in 0 .. Natural (State.all.Materialized_Views.Length) - 1 loop
+            if State.all.Materialized_Views.Element (I).Id = View.Id then
+               State.all.Materialized_Views.Replace_Element (I, View);
                return Save (DB);
             end if;
          end loop;
@@ -1408,31 +1424,33 @@ package body Database.Catalog is
      (DB       : in out Database.Handle;
       Metadata : Database.Full_Text.Indexes.Full_Text_Index_Metadata) return Database.Status.Result is
       M : Database.Full_Text.Indexes.Full_Text_Index_Metadata := Metadata;
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      for Existing of Current_State.all.Full_Text_Indexes loop
+      for Existing of State.all.Full_Text_Indexes loop
          if To_Wide_Wide_String (Existing.Name) = To_Wide_Wide_String (M.Name) then
             return Database.Status.Failure (Database.Status.Already_Exists, "full-text index already exists");
          end if;
       end loop;
       if M.Id = 0 then
          M.Id  :=
-           Database.Full_Text.Indexes.Full_Text_Index_Id (Natural (Current_State.all.Full_Text_Indexes.Length) + 1);
+           Database.Full_Text.Indexes.Full_Text_Index_Id (Natural (State.all.Full_Text_Indexes.Length) + 1);
       end if;
       M.Owner_Key := 0;
-      Current_State.all.Full_Text_Indexes.Append (M);
+      State.all.Full_Text_Indexes.Append (M);
       return Save (DB);
    end Add_Full_Text_Index;
 
    function Remove_Full_Text_Index
      (DB   : in out Database.Handle;
       Name : Wide_Wide_String) return Database.Status.Result is
+      Key   : constant Natural := Database.Catalog_State_Key (DB);
+      State : constant Catalog_State_Access := State_For (Key);
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      if Current_State.all.Full_Text_Indexes.Length > 0 then
-         for I in 0 .. Natural (Current_State.all.Full_Text_Indexes.Length) - 1 loop
-            if To_Wide_Wide_String (Current_State.all.Full_Text_Indexes.Element (I).Name) = Name then
-               Current_State.all.Full_Text_Indexes.Delete (I);
+      if State.all.Full_Text_Indexes.Length > 0 then
+         for I in 0 .. Natural (State.all.Full_Text_Indexes.Length) - 1 loop
+            if To_Wide_Wide_String (State.all.Full_Text_Indexes.Element (I).Name) = Name then
+               State.all.Full_Text_Indexes.Delete (I);
                return Save (DB);
             end if;
          end loop;
@@ -1440,42 +1458,48 @@ package body Database.Catalog is
       return Database.Status.Failure (Database.Status.Not_Found, "full-text index not found");
    end Remove_Full_Text_Index;
 
-   function Full_Text_Index_Definitions return Database.Full_Text.Indexes.Metadata_Vectors.Vector is
+   function Full_Text_Index_Definitions
+     (State_Key : Natural) return Database.Full_Text.Indexes.Metadata_Vectors.Vector is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      return Current_State.all.Full_Text_Indexes;
+      return State.all.Full_Text_Indexes;
    end Full_Text_Index_Definitions;
 
-   procedure Register_Row (Table_Id : Natural; Row : Database.Rows.Row) is
+   procedure Register_Row (State_Key : Natural; Table_Id : Natural; Row : Database.Rows.Row) is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      Current_State.all.Cached_Rows.Append (Catalog_Row'(Table_Id => Table_Id, Row => Row));
+      State.all.Cached_Rows.Append (Catalog_Row'(Table_Id => Table_Id, Row => Row));
    end Register_Row;
 
-   procedure Remove_Row (Table_Id : Natural; Schema : Database.Schema.Table_Schema; Key_Row : Database.Rows.Row) is
+   procedure Remove_Row
+     (State_Key : Natural; Table_Id : Natural; Schema : Database.Schema.Table_Schema; Key_Row : Database.Rows.Row) is
+      State : constant Catalog_State_Access := State_For (State_Key);
    begin
-      if Current_State.all.Cached_Rows.Length = 0 then
+      if State.all.Cached_Rows.Length = 0 then
          return;
       end if;
-      for I in reverse 0 .. Natural (Current_State.all.Cached_Rows.Length) - 1 loop
-         if Current_State.all.Cached_Rows.Element  (I).Table_Id = Table_Id and then Same_Key (Schema,
-           Current_State.all.Cached_Rows.Element (I).Row,
+      for I in reverse 0 .. Natural (State.all.Cached_Rows.Length) - 1 loop
+         if State.all.Cached_Rows.Element  (I).Table_Id = Table_Id and then Same_Key (Schema,
+           State.all.Cached_Rows.Element (I).Row,
            Key_Row)
          then
-            Current_State.all.Cached_Rows.Delete (I);
+            State.all.Cached_Rows.Delete (I);
          end if;
       end loop;
    end Remove_Row;
 
-   procedure Replace_Row  (Table_Id : Natural; Schema : Database.Schema.Table_Schema; Old_Row,
+   procedure Replace_Row  (State_Key : Natural; Table_Id : Natural; Schema : Database.Schema.Table_Schema; Old_Row,
      New_Row : Database.Rows.Row) is
    begin
-      Remove_Row (Table_Id, Schema, Old_Row);
-      Register_Row (Table_Id, New_Row);
+      Remove_Row (State_Key, Table_Id, Schema, Old_Row);
+      Register_Row (State_Key, Table_Id, New_Row);
    end Replace_Row;
 
-   function Rows_For_Table (Table_Id : Natural) return Database.Foreign_Keys.Row_Vectors.Vector is
+   function Rows_For_Table (State_Key : Natural; Table_Id : Natural) return Database.Foreign_Keys.Row_Vectors.Vector is
+      State : constant Catalog_State_Access := State_For (State_Key);
       Result : Database.Foreign_Keys.Row_Vectors.Vector;
    begin
-      for R of Current_State.all.Cached_Rows loop
+      for R of State.all.Cached_Rows loop
          if R.Table_Id = Table_Id then
             Result.Append (R.Row);
          end if;

@@ -73,14 +73,14 @@ package body Database.Check is
       end if;
 
       declare
-         Seen_Table_Names : array (0 .. Database.Catalog.Table_Count) of Unbounded_Wide_Wide_String;
-         Seen_Table_Ids   : array (0 .. Database.Catalog.Table_Count) of Natural := [others => 0];
+         Seen_Table_Names : array (0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all))) of Unbounded_Wide_Wide_String;
+         Seen_Table_Ids   : array (0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all))) of Natural := [others => 0];
          Seen_Count       : Natural := 0;
       begin
-         if Database.Catalog.Table_Count > 0 then
-            for I in 0 .. Database.Catalog.Table_Count - 1 loop
+         if Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) > 0 then
+            for I in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) - 1 loop
                declare
-                  S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (I);
+                  S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (Database.Catalog_State_Key (DB.all), I);
                begin
                   if S.Table_Id = 0 then
                      Add_Error (R, Invalid_Catalog, "table has invalid id");
@@ -268,10 +268,10 @@ package body Database.Check is
       Merge (R, Check_Catalog (Tx));
       Merge (R, Check_Encryption_Metadata (Tx));
 
-      if Database.Catalog.Table_Count > 0 then
-         for I in 0 .. Database.Catalog.Table_Count - 1 loop
+      if Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) > 0 then
+         for I in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) - 1 loop
             declare
-               S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (I);
+               S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (Database.Catalog_State_Key (DB.all), I);
             begin
                Merge (R, Check_Table (Tx, S));
                if S.Primary_Index_Root /= Natural (Invalid_Page_Id) then
@@ -322,10 +322,10 @@ package body Database.Check is
             end if;
             Mark (Reachable, 0);
             Mark (Reachable, 1);
-            if Database.Catalog.Table_Count > 0 then
-               for I in 0 .. Database.Catalog.Table_Count - 1 loop
+            if Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) > 0 then
+               for I in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) - 1 loop
                   declare
-                     S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (I);
+                     S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (Database.Catalog_State_Key (DB.all), I);
                   begin
                      declare
                         Id : Page_Id := Page_Id (S.Heap_First_Page);
@@ -430,9 +430,14 @@ package body Database.Check is
      (Tx   : in out Database.Transactions.Transaction;
       Name : Wide_Wide_String) return Check_Result is
       R : Check_Result;
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
    begin
       declare
-         FT_Result : constant Database.Status.Result := Database.Full_Text.Check_Index (Tx, Name);
+         FT_Result : constant Database.Status.Result :=
+           Database.Full_Text.Check_Index
+             ((if DB /= null then Database.Full_Text_State_Key (DB.all) else 0),
+              (if DB /= null then Database.Catalog_State_Key (DB.all) else 0),
+              Name);
       begin
          if not Database.Status.Is_Ok (FT_Result) then
             Add_Error  (R,
@@ -572,8 +577,9 @@ package body Database.Check is
    function Check_Extension_Metadata
      (Tx : in out Database.Transactions.Transaction) return Check_Result is
       R : Check_Result;
-      pragma Unreferenced (Tx);
-      SR : constant Database.Status.Result := Database.Extensions.Validate_Dependencies;
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      SR : constant Database.Status.Result :=
+        Database.Extensions.Validate_Dependencies (Database.Catalog_State_Key (DB.all));
    begin
       if not Database.Status.Is_Ok (SR) then
          Add_Error (R, Invalid_Extension_Metadata, To_Wide_Wide_String (SR.Message));

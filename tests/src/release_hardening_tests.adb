@@ -128,7 +128,8 @@ package body Release_Hardening_Tests is
       Database.Open (DB, Path);
       Assert
         (Database.Status.Is_Ok (Database.Last_Result (DB)), "reopen failed");
-      R := Database.Catalog.Find_By_Name ("items", S);
+      R := Database.Catalog.Find_By_Name
+             (Database.Catalog_State_Key (DB), "items", S);
       Assert (Database.Status.Is_Ok (R), "catalog lookup failed");
       Database.Transactions.Begin_Read (DB, Tx);
       R := Items.Find (Tx, DB, S, 25, Out_Item);

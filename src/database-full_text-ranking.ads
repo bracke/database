@@ -88,30 +88,34 @@ package Database.Full_Text.Ranking is
       Fn       : Ranking_Function) return Database.Status.Result;
 
    --  Return score with for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @param Name logical name of the object.
    --  @param Context context argument supplied to the operation.
    --  @param Score_Value score value argument supplied to the operation.
    --  @return Result produced by the function.
    function Score_With
-     (Name    : Wide_Wide_String;
+     (State_Key : Natural;
+      Name    : Wide_Wide_String;
       Context : Ranking_Context;
       Score_Value : out Score) return Database.Status.Result;
 
    --  Return ranking function exists for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @param Name logical name of the object.
    --  @return Result produced by the function.
-   function Ranking_Function_Exists (Name : Wide_Wide_String) return Boolean;
+   function Ranking_Function_Exists (State_Key : Natural; Name : Wide_Wide_String) return Boolean;
    --  Return registered metadata for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @return Status result describing whether the operation succeeded.
-   function Registered_Metadata return Database.Extension_Metadata.Metadata_Vectors.Vector;
-   --  Selects the handle-owned callable registry used by legacy name-only lookup APIs.
-   --  @param State_Key state key argument supplied to the operation.
-   procedure Select_Database (State_Key : Natural);
+   function Registered_Metadata
+     (State_Key : Natural)
+      return Database.Extension_Metadata.Metadata_Vectors.Vector;
 
    --  Drops all transient callable registrations owned by one database handle.
    --  @param State_Key state key argument supplied to the operation.
    procedure Drop_Database (State_Key : Natural);
 
    --  Perform clear custom ranking for the supplied database state or arguments.
-   procedure Clear_Custom_Ranking;
+   --  @param State_Key handle-owned state key selecting the callable registry.
+   procedure Clear_Custom_Ranking (State_Key : Natural);
 end Database.Full_Text.Ranking;

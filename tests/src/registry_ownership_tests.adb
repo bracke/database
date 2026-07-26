@@ -56,25 +56,27 @@ package body Registry_Ownership_Tests is
       R := Database.Catalog.Register (DB2, S2);
       Assert (Database.Status.Is_Ok (R), "register in second handle failed");
 
-      Database.Catalog.Select_Database (Database.Catalog_State_Key (DB1));
-      R := Database.Catalog.Find_By_Name ("registry_one", Found);
+      R := Database.Catalog.Find_By_Name
+        (Database.Catalog_State_Key (DB1), "registry_one", Found);
       Assert (Database.Status.Is_Ok (R), "first handle lost its table");
-      R := Database.Catalog.Find_By_Name ("registry_two", Found);
+      R := Database.Catalog.Find_By_Name
+        (Database.Catalog_State_Key (DB1), "registry_two", Found);
       Assert
         (not Database.Status.Is_Ok (R),
          "second handle table leaked into first handle catalog");
 
-      Database.Catalog.Select_Database (Database.Catalog_State_Key (DB2));
-      R := Database.Catalog.Find_By_Name ("registry_two", Found);
+      R := Database.Catalog.Find_By_Name
+        (Database.Catalog_State_Key (DB2), "registry_two", Found);
       Assert (Database.Status.Is_Ok (R), "second handle lost its table");
-      R := Database.Catalog.Find_By_Name ("registry_one", Found);
+      R := Database.Catalog.Find_By_Name
+        (Database.Catalog_State_Key (DB2), "registry_one", Found);
       Assert
         (not Database.Status.Is_Ok (R),
          "first handle table leaked into second handle catalog");
 
       Database.Close (DB1);
-      Database.Catalog.Select_Database (Database.Catalog_State_Key (DB2));
-      R := Database.Catalog.Find_By_Name ("registry_two", Found);
+      R := Database.Catalog.Find_By_Name
+        (Database.Catalog_State_Key (DB2), "registry_two", Found);
       Assert
         (Database.Status.Is_Ok (R),
          "closing first handle disturbed second handle catalog");
@@ -102,30 +104,32 @@ package body Registry_Ownership_Tests is
       R := Database.Extensions.Register_Extension (DB2, E2);
       Assert (Database.Status.Is_Ok (R), "register second extension failed");
 
-      Database.Extensions.Select_Database (Database.Catalog_State_Key (DB1));
       Assert
-        (Natural (Database.Extensions.Registered_Extensions.Length) = 1,
+        (Natural (Database.Extensions.Registered_Extensions
+           (Database.Catalog_State_Key (DB1)).Length) = 1,
          "first handle extension count wrong");
       Assert
         (To_Wide_Wide_String
-           (Database.Extensions.Registered_Extensions.Element (0).Name)
+           (Database.Extensions.Registered_Extensions
+              (Database.Catalog_State_Key (DB1)).Element (0).Name)
          = "extension_one",
          "first handle extension registry polluted");
 
-      Database.Extensions.Select_Database (Database.Catalog_State_Key (DB2));
       Assert
-        (Natural (Database.Extensions.Registered_Extensions.Length) = 1,
+        (Natural (Database.Extensions.Registered_Extensions
+           (Database.Catalog_State_Key (DB2)).Length) = 1,
          "second handle extension count wrong");
       Assert
         (To_Wide_Wide_String
-           (Database.Extensions.Registered_Extensions.Element (0).Name)
+           (Database.Extensions.Registered_Extensions
+              (Database.Catalog_State_Key (DB2)).Element (0).Name)
          = "extension_two",
          "second handle extension registry polluted");
 
       Database.Close (DB1);
-      Database.Extensions.Select_Database (Database.Catalog_State_Key (DB2));
       Assert
-        (Natural (Database.Extensions.Registered_Extensions.Length) = 1,
+        (Natural (Database.Extensions.Registered_Extensions
+           (Database.Catalog_State_Key (DB2)).Length) = 1,
          "closing first handle disturbed second extension registry");
       Database.Close (DB2);
    end Extension_State_Is_Per_Handle;
@@ -251,13 +255,13 @@ package body Registry_Ownership_Tests is
       Assert (Database.Status.Is_Ok (R), "DB1 scalar registration failed");
 
       Args.Append (Database.Values.From_Integer (7));
-      Database.Functions.Select_Database (Database.Catalog_State_Key (DB1));
-      R := Database.Functions.Evaluate ("only_db1", Args, V);
+      R := Database.Functions.Evaluate
+        (Database.Catalog_State_Key (DB1), "only_db1", Args, V);
       Assert
         (Database.Status.Is_Ok (R) and then V.Int = 7,
          "DB1 scalar not visible to DB1");
-      Database.Functions.Select_Database (Database.Catalog_State_Key (DB2));
-      R := Database.Functions.Evaluate ("only_db1", Args, V);
+      R := Database.Functions.Evaluate
+        (Database.Catalog_State_Key (DB2), "only_db1", Args, V);
       Assert (not Database.Status.Is_Ok (R), "DB1 scalar leaked into DB2");
 
       R :=
@@ -277,8 +281,8 @@ package body Registry_Ownership_Tests is
             Estimated_Cost   => 1),
            Other_Int'Access);
       Assert (Database.Status.Is_Ok (R), "DB2 scalar registration failed");
-      Database.Functions.Select_Database (Database.Catalog_State_Key (DB1));
-      R := Database.Functions.Evaluate ("only_db2", Args, V);
+      R := Database.Functions.Evaluate
+        (Database.Catalog_State_Key (DB1), "only_db2", Args, V);
       Assert (not Database.Status.Is_Ok (R), "DB2 scalar leaked into DB1");
 
       R :=
@@ -296,15 +300,13 @@ package body Registry_Ownership_Tests is
             Step       => Step_Count'Access,
             Finalize   => Finish_Count'Access));
       Assert (Database.Status.Is_Ok (R), "DB1 aggregate registration failed");
-      Database.Aggregate_Functions.Select_Database
-        (Database.Catalog_State_Key (DB1));
-      R := Database.Aggregate_Functions.Evaluate ("db1_count", Args, V);
+      R := Database.Aggregate_Functions.Evaluate
+        (Database.Catalog_State_Key (DB1), "db1_count", Args, V);
       Assert
         (Database.Status.Is_Ok (R) and then V.Int = 1,
          "DB1 aggregate not visible to DB1");
-      Database.Aggregate_Functions.Select_Database
-        (Database.Catalog_State_Key (DB2));
-      R := Database.Aggregate_Functions.Evaluate ("db1_count", Args, V);
+      R := Database.Aggregate_Functions.Evaluate
+        (Database.Catalog_State_Key (DB2), "db1_count", Args, V);
       Assert (not Database.Status.Is_Ok (R), "DB1 aggregate leaked into DB2");
 
       R :=
@@ -318,13 +320,13 @@ package body Registry_Ownership_Tests is
             Index_Compatible => True),
            Reverse_Cmp'Access);
       Assert (Database.Status.Is_Ok (R), "DB1 collation registration failed");
-      Database.Collations.Select_Database (Database.Catalog_State_Key (DB1));
-      R := Database.Collations.Compare ("db1_reverse", "b", "a", Cmp);
+      R := Database.Collations.Compare
+        (Database.Catalog_State_Key (DB1), "db1_reverse", "b", "a", Cmp);
       Assert
         (Database.Status.Is_Ok (R) and then Cmp < 0,
          "DB1 collation not visible to DB1");
-      Database.Collations.Select_Database (Database.Catalog_State_Key (DB2));
-      R := Database.Collations.Compare ("db1_reverse", "b", "a", Cmp);
+      R := Database.Collations.Compare
+        (Database.Catalog_State_Key (DB2), "db1_reverse", "b", "a", Cmp);
       Assert (not Database.Status.Is_Ok (R), "DB1 collation leaked into DB2");
 
       R :=
@@ -340,13 +342,11 @@ package body Registry_Ownership_Tests is
       Assert (Database.Status.Is_Ok (R), "DB1 tokenizer registration failed");
       Config.Kind := Database.Full_Text.Tokenizers.Custom_Tokenizer;
       Config.Custom_Name := To_Unbounded_Wide_Wide_String ("db1_tokenizer");
-      Database.Full_Text.Tokenizers.Select_Database
-        (Database.Catalog_State_Key (DB1));
-      Tokens := Database.Full_Text.Tokenizers.Tokenize ("abc", Config);
+      Tokens := Database.Full_Text.Tokenizers.Tokenize
+        (Database.Catalog_State_Key (DB1), "abc", Config);
       Assert (Natural (Tokens.Length) = 1, "DB1 tokenizer not visible to DB1");
-      Database.Full_Text.Tokenizers.Select_Database
-        (Database.Catalog_State_Key (DB2));
-      Tokens := Database.Full_Text.Tokenizers.Tokenize ("abc", Config);
+      Tokens := Database.Full_Text.Tokenizers.Tokenize
+        (Database.Catalog_State_Key (DB2), "abc", Config);
       Assert (Natural (Tokens.Length) = 0, "DB1 tokenizer leaked into DB2");
 
       R :=
@@ -359,21 +359,19 @@ package body Registry_Ownership_Tests is
             Deterministic    => True),
            Rank_One'Access);
       Assert (Database.Status.Is_Ok (R), "DB1 ranker registration failed");
-      Database.Full_Text.Ranking.Select_Database
-        (Database.Catalog_State_Key (DB1));
       R :=
         Database.Full_Text.Ranking.Score_With
-          ("db1_rank",
+          (Database.Catalog_State_Key (DB1),
+           "db1_rank",
            (Term_Frequency => 1, Matched_Terms => 1, Document_Length => 1),
            Score);
       Assert
         (Database.Status.Is_Ok (R) and then Score = 1.0,
          "DB1 ranker not visible to DB1");
-      Database.Full_Text.Ranking.Select_Database
-        (Database.Catalog_State_Key (DB2));
       R :=
         Database.Full_Text.Ranking.Score_With
-          ("db1_rank",
+          (Database.Catalog_State_Key (DB2),
+           "db1_rank",
            (Term_Frequency => 1, Matched_Terms => 1, Document_Length => 1),
            Score);
       Assert (not Database.Status.Is_Ok (R), "DB1 ranker leaked into DB2");
@@ -389,24 +387,20 @@ package body Registry_Ownership_Tests is
            Accept_Row'Access);
       Assert
         (Database.Status.Is_Ok (R), "DB1 validation hook registration failed");
-      Database.Validation_Hooks.Select_Database
-        (Database.Catalog_State_Key (DB1));
       R :=
         Database.Validation_Hooks.Validate
-          ("db1_hook", Empty_Schema, Empty_Row);
+          (Database.Catalog_State_Key (DB1), "db1_hook", Empty_Schema, Empty_Row);
       Assert
         (Database.Status.Is_Ok (R), "DB1 validation hook not visible to DB1");
-      Database.Validation_Hooks.Select_Database
-        (Database.Catalog_State_Key (DB2));
       R :=
         Database.Validation_Hooks.Validate
-          ("db1_hook", Empty_Schema, Empty_Row);
+          (Database.Catalog_State_Key (DB2), "db1_hook", Empty_Schema, Empty_Row);
       Assert
         (not Database.Status.Is_Ok (R), "DB1 validation hook leaked into DB2");
 
       Database.Close (DB1);
-      Database.Functions.Select_Database (Database.Catalog_State_Key (DB2));
-      R := Database.Functions.Evaluate ("only_db2", Args, V);
+      R := Database.Functions.Evaluate
+        (Database.Catalog_State_Key (DB2), "only_db2", Args, V);
       Assert
         (Database.Status.Is_Ok (R) and then V.Int = 999,
          "closing DB1 disturbed DB2 callable registry");

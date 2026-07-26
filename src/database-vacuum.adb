@@ -106,14 +106,13 @@ package body Database.Vacuum is
             "vacuum requires an active transaction");
       end if;
 
-      Database.Full_Text.Select_Database (Database.Full_Text_State_Key (DB.all));
-      Database.Full_Text.Vacuum_All;
+      Database.Full_Text.Vacuum_All (Database.Full_Text_State_Key (DB.all));
 
       if Database.Backend (DB.all) = Database.Persistent_Backend then
-         Database.Catalog.Select_Database (Database.Catalog_State_Key (DB.all));
-         for I in 0 .. Database.Catalog.Table_Count - 1 loop
+         for I in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) - 1 loop
             declare
-               S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (I);
+               S : constant Database.Schema.Table_Schema :=
+                 Database.Catalog.Table_At (Database.Catalog_State_Key (DB.all), I);
             begin
                if S.Heap_First_Page /= 0 then
                   R := Database.Storage.Table_Heap.Vacuum_Deleted

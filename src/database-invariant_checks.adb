@@ -604,10 +604,10 @@ package body Database.Invariant_Checks is
       end if;
 
       --  Catalog tables and index metadata.
-      if Database.Catalog.Table_Count > 0 then
-         for T in 0 .. Database.Catalog.Table_Count - 1 loop
+      if Database.Catalog.Table_Count (Database.Catalog_State_Key (DB)) > 0 then
+         for T in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB)) - 1 loop
             declare
-               S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (T);
+               S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (Database.Catalog_State_Key (DB), T);
                Seen_Primary : Natural := 0;
             begin
                if S.Table_Id = 0 or else Length (S.Name) = 0 then
@@ -671,7 +671,7 @@ package body Database.Invariant_Checks is
 
                   declare
                      Rows : constant Database.Foreign_Keys.Row_Vectors.Vector  :=
-                    Database.Catalog.Rows_For_Table (S.Table_Id);
+                    Database.Catalog.Rows_For_Table (Database.Catalog_State_Key (DB), S.Table_Id);
                   begin
                      for Row of Rows loop
                         R := Database.Constraints.Validate_Row (S, Row);
@@ -713,7 +713,7 @@ package body Database.Invariant_Checks is
       --  Full-text metadata and posting structures reachable from the catalog.
       declare
          Defs : constant Database.Full_Text.Indexes.Metadata_Vectors.Vector  :=
-           Database.Catalog.Full_Text_Index_Definitions;
+           Database.Catalog.Full_Text_Index_Definitions (Database.Catalog_State_Key (DB));
       begin
          for FT of Defs loop
             if FT.Id = 0 or else FT.Table_Id = 0 or else FT.Column_Id = 0
@@ -721,7 +721,10 @@ package body Database.Invariant_Checks is
             then
                return Fail (Catalog_Metadata, "full-text index metadata is invalid");
             end if;
-            R := Database.Full_Text.Check_Index (To_Wide_Wide_String (FT.Name));
+            R := Database.Full_Text.Check_Index
+              (Database.Full_Text_State_Key (DB),
+               Database.Catalog_State_Key (DB),
+               To_Wide_Wide_String (FT.Name));
             if not Database.Status.Is_Ok (R)
               and then R.Code /= Database.Status.Not_Found
             then

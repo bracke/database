@@ -32,20 +32,24 @@ package Database.Check_Constraints is
    --  @param Constraint constraint argument supplied to the operation.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
-   function Validate_Definition (Constraint : Check_Constraint) return Database.Status.Result;
+   function Validate_Definition
+     (State_Key : Natural; Constraint : Check_Constraint) return Database.Status.Result;
 
    --  Return validate row for the supplied database state or arguments.
+   --  @param State_Key handle catalog state key (selects scalar functions).
    --  @param Constraint constraint argument supplied to the operation.
    --  @param Schema schema metadata used for validation or registration.
    --  @param Row row value supplied to or returned by the operation.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
    function Validate_Row
-     (Constraint : Check_Constraint;
+     (State_Key  : Natural;
+      Constraint : Check_Constraint;
       Schema     : Database.Schema.Table_Schema;
       Row        : Database.Rows.Row) return Database.Status.Result;
 
    --  Return validate all for the supplied database state or arguments.
+   --  @param State_Key handle catalog state key (selects scalar functions).
    --  @param Constraints constraints argument supplied to the operation.
    --  @param Schema schema metadata used for validation or registration.
    --  @param Row row value supplied to or returned by the operation.
@@ -53,7 +57,8 @@ package Database.Check_Constraints is
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
    function Validate_All
-     (Constraints : Check_Constraint_Vectors.Vector;
+     (State_Key   : Natural;
+      Constraints : Check_Constraint_Vectors.Vector;
       Schema      : Database.Schema.Table_Schema;
       Row         : Database.Rows.Row;
       Include_Deferred : Boolean := False) return Database.Status.Result;

@@ -96,9 +96,13 @@ package body Full_Text_Tests is
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      V : constant Database.Full_Text.Tokenizers.Token_Vectors.Vector :=
-        Database.Full_Text.Tokenizers.Tokenize ("Ada, database  engine");
+      DB : Database.Handle;
+      V  : Database.Full_Text.Tokenizers.Token_Vectors.Vector;
    begin
+      Database.Open_In_Memory (DB);
+      V :=
+        Database.Full_Text.Tokenizers.Tokenize
+          (Database.Catalog_State_Key (DB), "Ada, database  engine");
       Assert (Natural (V.Length) = 3, "wrong token count");
       Assert
         (Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String
@@ -106,6 +110,7 @@ package body Full_Text_Tests is
          = "Ada",
          "first token wrong");
       Assert (V.Element (2).Position = 2, "position tracking wrong");
+      Database.Close (DB);
    end Tokenizer_Tracks_Positions;
 
    procedure Normalization_Is_Conservative
@@ -149,8 +154,8 @@ package body Full_Text_Tests is
       R  : Database.Status.Result;
       C  : Database.Full_Text.Search_Cursor;
    begin
-      Database.Full_Text.Clear;
       Database.Open_In_Memory (DB);
+      Database.Full_Text.Clear (Database.Full_Text_State_Key (DB));
       S := Doc_Schema;
       R := Docs.Register (DB, S);
       Assert (Database.Status.Is_Ok (R), "register failed");
@@ -217,8 +222,8 @@ package body Full_Text_Tests is
       R  : Database.Status.Result;
       C  : Database.Full_Text.Search_Cursor;
    begin
-      Database.Full_Text.Clear;
       Database.Open_In_Memory (DB);
+      Database.Full_Text.Clear (Database.Full_Text_State_Key (DB));
       R := Docs.Register (DB, S);
       Assert (Database.Status.Is_Ok (R), "register failed");
       Database.Transactions.Begin_Write (DB, Tx);
@@ -285,8 +290,8 @@ package body Full_Text_Tests is
       R       : Database.Status.Result;
       C       : Database.Full_Text.Search_Cursor;
    begin
-      Database.Full_Text.Clear;
       Database.Open_In_Memory (DB);
+      Database.Full_Text.Clear (Database.Full_Text_State_Key (DB));
       R := Docs.Register (DB, S);
       Assert (Database.Status.Is_Ok (R), "register failed");
       Database.Transactions.Begin_Write (DB, Tx);
@@ -386,8 +391,8 @@ package body Full_Text_Tests is
       R       : Database.Status.Result;
       C       : Database.Full_Text.Search_Cursor;
    begin
-      Database.Full_Text.Clear;
       Database.Open_In_Memory (DB);
+      Database.Full_Text.Clear (Database.Full_Text_State_Key (DB));
       R := Docs.Register (DB, S);
       Assert (Database.Status.Is_Ok (R), "register failed");
       Database.Transactions.Begin_Write (DB, Tx);
@@ -441,8 +446,8 @@ package body Full_Text_Tests is
       C       : Database.Full_Text.Search_Cursor;
       Path    : constant Wide_Wide_String := "full_text_sidecar_test_db";
    begin
-      Database.Full_Text.Clear;
       Database.Open_In_Memory (DB);
+      Database.Full_Text.Clear (Database.Full_Text_State_Key (DB));
       R := Docs.Register (DB, S);
       Assert (Database.Status.Is_Ok (R), "register failed");
       Database.Transactions.Begin_Write (DB, Tx);
@@ -462,9 +467,9 @@ package body Full_Text_Tests is
       Assert (Database.Status.Is_Ok (R), "insert failed");
       R := Database.Transactions.Commit (Tx);
       Assert (Database.Status.Is_Ok (R), "commit failed");
-      R := Database.Full_Text.Save (Path);
+      R := Database.Full_Text.Save (Database.Full_Text_State_Key (DB), Path);
       Assert (Database.Status.Is_Ok (R), "full-text save failed");
-      Database.Full_Text.Clear;
+      Database.Full_Text.Clear (Database.Full_Text_State_Key (DB));
       R := Database.Full_Text.Load (DB, Path);
       Assert (Database.Status.Is_Ok (R), "full-text load failed");
       Database.Transactions.Begin_Read (DB, Read_Tx);
@@ -491,8 +496,8 @@ package body Full_Text_Tests is
       R  : Database.Status.Result;
       C  : Database.Full_Text.Search_Cursor;
    begin
-      Database.Full_Text.Clear;
       Database.Open_In_Memory (DB);
+      Database.Full_Text.Clear (Database.Full_Text_State_Key (DB));
       R := Docs.Register (DB, S);
       Assert (Database.Status.Is_Ok (R), "register failed");
       Database.Transactions.Begin_Write (DB, Tx);
@@ -862,12 +867,14 @@ package body Full_Text_Tests is
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      DB : Database.Handle;
-      Tx : Database.Transactions.Transaction;
-      S  : Database.Schema.Table_Schema := Doc_Schema;
-      R  : Database.Status.Result;
+      DB     : Database.Handle;
+      Tx     : Database.Transactions.Transaction;
+      S      : Database.Schema.Table_Schema := Doc_Schema;
+      R      : Database.Status.Result;
+      FT_Key : Natural;
    begin
       Database.Open_In_Memory (DB);
+      FT_Key := Database.Full_Text_State_Key (DB);
       R := Docs.Register (DB, S);
       Assert (Database.Status.Is_Ok (R), "register failed");
       Database.Transactions.Begin_Write (DB, Tx);
@@ -878,11 +885,11 @@ package body Full_Text_Tests is
       R := Database.Transactions.Commit (Tx);
       Assert (Database.Status.Is_Ok (R), "commit failed");
       Assert
-        (Database.Full_Text.Full_Text_Index_Count = 1,
+        (Database.Full_Text.Full_Text_Index_Count (FT_Key) = 1,
          "full-text index missing before close");
       Database.Close (DB);
       Assert
-        (Database.Full_Text.Full_Text_Index_Count = 0,
+        (Database.Full_Text.Full_Text_Index_Count (FT_Key) = 0,
          "close did not purge handle full-text state");
    end Close_Purges_Handle_Full_Text_State;
 
@@ -905,12 +912,14 @@ package body Full_Text_Tests is
           (Tx, "docs_body_ft_rollback_ddl", "docs", 1);
       Assert (Database.Status.Is_Ok (R), "create full-text index failed");
       Assert
-        (Database.Full_Text.Full_Text_Index_Count = 0,
+        (Database.Full_Text.Full_Text_Index_Count
+           (Database.Full_Text_State_Key (DB)) = 0,
          "uncommitted full-text index should not be counted as committed metadata");
       R := Database.Transactions.Rollback (Tx);
       Assert (Database.Status.Is_Ok (R), "rollback create failed");
       Assert
-        (not Database.Full_Text.Exists ("docs_body_ft_rollback_ddl"),
+        (not Database.Full_Text.Exists
+               (Database.Full_Text_State_Key (DB), "docs_body_ft_rollback_ddl"),
          "rolled-back full-text index creation left visible metadata");
 
       Database.Transactions.Begin_Write (DB, Tx);
@@ -923,7 +932,8 @@ package body Full_Text_Tests is
       R := Database.Transactions.Commit (Tx);
       Assert (Database.Status.Is_Ok (R), "commit create failed");
       Assert
-        (Database.Full_Text.Exists ("docs_body_ft_rollback_drop"),
+        (Database.Full_Text.Exists
+           (Database.Full_Text_State_Key (DB), "docs_body_ft_rollback_drop"),
          "committed full-text index missing before drop rollback");
 
       Database.Transactions.Begin_Write (DB, Tx);
@@ -934,7 +944,8 @@ package body Full_Text_Tests is
       R := Database.Transactions.Rollback (Tx);
       Assert (Database.Status.Is_Ok (R), "rollback drop failed");
       Assert
-        (Database.Full_Text.Exists ("docs_body_ft_rollback_drop"),
+        (Database.Full_Text.Exists
+           (Database.Full_Text_State_Key (DB), "docs_body_ft_rollback_drop"),
          "rolled-back full-text index drop was not restored");
 
       Database.Close (DB);
@@ -1200,6 +1211,7 @@ package body Full_Text_Tests is
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
+      DB     : Database.Handle;
       Config : Database.Full_Text.Tokenizers.Tokenizer_Config :=
         Database.Full_Text.Tokenizers.Default_Config;
       Tokens : Database.Full_Text.Tokenizers.Token_Vectors.Vector;
@@ -1209,11 +1221,13 @@ package body Full_Text_Tests is
       Skips  : Database.Full_Text.Postings.Skip_Entry_Vectors.Vector;
       P      : Database.Full_Text.Postings.Posting;
    begin
+      Database.Open_In_Memory (DB);
       Config.Drop_Builtin_Stop_Words := True;
       Config.Minimum_Token_Length := 3;
       Tokens :=
         Database.Full_Text.Tokenizers.Tokenize
-          ("the Ada database is in the engine", Config);
+          (Database.Catalog_State_Key (DB),
+           "the Ada database is in the engine", Config);
       Assert
         (Natural (Tokens.Length) = 3,
          "stop-word/min-length tokenizer returned wrong count");
@@ -1229,7 +1243,8 @@ package body Full_Text_Tests is
       Config.Builtin_Stop_Words := Database.Full_Text.Tokenizers.Danish_Stop_Words;
       Tokens :=
         Database.Full_Text.Tokenizers.Tokenize
-          ("det Ada indeks er hurtigt", Config);
+          (Database.Catalog_State_Key (DB),
+           "det Ada indeks er hurtigt", Config);
       Assert
         (Natural (Tokens.Length) = 3,
          "Danish stop-word profile returned wrong count");
@@ -1273,6 +1288,7 @@ package body Full_Text_Tests is
          "skip intersection returned wrong hit count");
       Assert
         (Hits.Element (0).Ref.Row_Id = 2, "skip intersection first hit wrong");
+      Database.Close (DB);
    end Tokenizer_Stop_Words_And_Posting_Skips_Work;
 
    procedure Full_Text_Segments_Merge_And_Compact_Work
@@ -1430,11 +1446,13 @@ package body Full_Text_Tests is
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
+      DB   : Database.Handle;
       IX   : Database.Full_Text.Indexes.Full_Text_Index :=
         Database.Full_Text.Indexes.Create ("stats", Doc_Schema, 1);
       Row1 : Database.Rows.Row;
       Row2 : Database.Rows.Row;
    begin
+      Database.Open_In_Memory (DB);
       Row1 :=
         To_Row
           ((Id      => 1,
@@ -1448,8 +1466,10 @@ package body Full_Text_Tests is
               Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String
                 ("ada")));
 
-      Database.Full_Text.Indexes.Index_Row_Committed (IX, 1, "1", Row1);
-      Database.Full_Text.Indexes.Index_Row_Committed (IX, 2, "2", Row2);
+      Database.Full_Text.Indexes.Index_Row_Committed
+        (IX, 1, "1", Row1, Database.Catalog_State_Key (DB));
+      Database.Full_Text.Indexes.Index_Row_Committed
+        (IX, 2, "2", Row2, Database.Catalog_State_Key (DB));
 
       Assert
         (Database.Full_Text.Indexes.Document_Count (IX) = 2,
@@ -1469,6 +1489,7 @@ package body Full_Text_Tests is
       Assert
         (Database.Full_Text.Indexes.Document_Frequency (IX, "ada") = 2,
          "shared term document frequency wrong");
+      Database.Close (DB);
    end Full_Text_Document_Statistics_Drive_Ranking;
 
    overriding

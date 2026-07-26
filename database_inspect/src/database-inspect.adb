@@ -216,13 +216,12 @@ package body Database.Inspect is
    function List_Schemas
      (DB  : in out Database.Handle;
       Put : not null Output_Procedure) return Database.Status.Result is
-      pragma Unreferenced (DB);
    begin
-      for I in 0 .. Database.Catalog.Table_Count - 1 loop
-         Put_Schema (Database.Catalog.Table_At (I), Put);
+      for I in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB)) - 1 loop
+         Put_Schema (Database.Catalog.Table_At (Database.Catalog_State_Key (DB), I), Put);
       end loop;
 
-      if Database.Catalog.Table_Count = 0 then
+      if Database.Catalog.Table_Count (Database.Catalog_State_Key (DB))= 0 then
          Put ("no tables");
       end if;
 
@@ -257,15 +256,14 @@ package body Database.Inspect is
    function List_Indexes
      (DB  : in out Database.Handle;
       Put : not null Output_Procedure) return Database.Status.Result is
-      pragma Unreferenced (DB);
    begin
-      if Database.Catalog.Table_Count = 0 then
+      if Database.Catalog.Table_Count (Database.Catalog_State_Key (DB)) = 0 then
          Put ("no tables");
          return Database.Status.Success;
       end if;
 
-      for I in 0 .. Database.Catalog.Table_Count - 1 loop
-         Put_Indexes (Database.Catalog.Table_At (I), Put);
+      for I in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB)) - 1 loop
+         Put_Indexes (Database.Catalog.Table_At (Database.Catalog_State_Key (DB), I), Put);
       end loop;
 
       return Database.Status.Success;
@@ -345,7 +343,7 @@ package body Database.Inspect is
       Schema : Database.Schema.Table_Schema;
       R      : Database.Status.Result;
    begin
-      R := Database.Catalog.Find_By_Name (Table_Name, Schema);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), Table_Name, Schema);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
@@ -358,16 +356,16 @@ package body Database.Inspect is
       Limit : Natural := Natural'Last) return Database.Status.Result is
       R : Database.Status.Result;
    begin
-      if Database.Catalog.Table_Count = 0 then
+      if Database.Catalog.Table_Count (Database.Catalog_State_Key (DB))= 0 then
          Put ("no tables");
          return Database.Status.Success;
       end if;
 
-      for I in 0 .. Database.Catalog.Table_Count - 1 loop
+      for I in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB)) - 1 loop
          if I > 0 then
             Put ("");
          end if;
-         R := Dump_Schema (DB, Database.Catalog.Table_At (I), Put, Limit);
+         R := Dump_Schema (DB, Database.Catalog.Table_At (Database.Catalog_State_Key (DB), I), Put, Limit);
          if not Database.Status.Is_Ok (R) then
             return R;
          end if;

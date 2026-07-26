@@ -27,40 +27,25 @@ package body Database.Extensions is
      (Object => Extension_State, Name => Extension_State_Access);
 
    Default_State : aliased Extension_State;
-   Current_Key   : Natural := 0;
-   pragma Thread_Local_Storage (Current_Key);
 
-   function Current return Extension_State_Access is
+   function State_For (State_Key : Natural) return Extension_State_Access is
       S, Winner : Extension_State_Access;
    begin
-      if Current_Key = 0 then
+      if State_Key = 0 then
          return Default_State'Access;
       end if;
-      S := State_Reg.Find (Current_Key);
+      S := State_Reg.Find (State_Key);
       if S /= null then
          return S;
       end if;
       S := new Extension_State;              --  allocate outside the lock
-      State_Reg.Insert (Current_Key, S, Winner);
+      State_Reg.Insert (State_Key, S, Winner);
       if Winner /= S then
          Free_State (S);                      --  lost the race; free ours
          S := Winner;
       end if;
       return S;
-   end Current;
-
-   procedure Select_Database (State_Key : Natural) is
-   begin
-      Current_Key := State_Key;
-      if State_Key /= 0 then
-         declare
-            Ignore : constant Extension_State_Access := Current;
-            pragma Unreferenced (Ignore);
-         begin
-            null;
-         end;
-      end if;
-   end Select_Database;
+   end State_For;
 
    procedure Drop_Database (State_Key : Natural) is
       Freed : Extension_State_Access;
@@ -72,27 +57,24 @@ package body Database.Extensions is
       if Freed /= null then
          Free_State (Freed);                  --  free outside the lock
       end if;
-      if Current_Key = State_Key then
-         Current_Key := 0;
-      end if;
    end Drop_Database;
 
    function Register_Extension
      (DB        : in out Database.Handle;
       Extension : Extension_Definition) return Database.Status.Result is
+      State : constant Extension_State_Access :=
+        State_For (Database.Catalog_State_Key (DB));
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      Current.all.Extensions.Append (Extension);
+      State.all.Extensions.Append (Extension);
       return Database.Status.Success;
    end Register_Extension;
 
    function Unregister_Extension
      (DB   : in out Database.Handle;
       Name : Wide_Wide_String) return Database.Status.Result is
-      State : Extension_State_Access;
+      State : constant Extension_State_Access :=
+        State_For (Database.Catalog_State_Key (DB));
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      State := Current;
       for Index in reverse 0 .. Natural (State.all.Extensions.Length) - 1 loop
          if To_Wide_Wide_String (State.all.Extensions.Element (Index).Name) = Name
          then
@@ -110,15 +92,16 @@ package body Database.Extensions is
      (DB         : in out Database.Handle;
       Dependency : Database.Extension_Metadata.Dependency)
       return Database.Status.Result is
+      State : constant Extension_State_Access :=
+        State_For (Database.Catalog_State_Key (DB));
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      Current.all.Dependencies.Append (Dependency);
+      State.all.Dependencies.Append (Dependency);
       return Database.Status.Success;
    end Add_Dependency;
 
-   function Validate_Dependencies return Database.Status.Result is
+   function Validate_Dependencies (State_Key : Natural) return Database.Status.Result is
       use Database.Extension_Metadata;
-      State : constant Extension_State_Access := Current;
+      State : constant Extension_State_Access := State_For (State_Key);
    begin
       if State.all.Dependencies.Length > 0 then
          for D of State.all.Dependencies loop
@@ -128,17 +111,17 @@ package body Database.Extensions is
             begin
                case D.Object_Kind is
                   when Scalar_Function_Object | Generated_Function_Object =>
-                     Found := Database.Functions.Exists (Name);
+                     Found := Database.Functions.Exists (State_Key, Name);
                   when Aggregate_Function_Object =>
-                     Found := Database.Aggregate_Functions.Exists (Name);
+                     Found := Database.Aggregate_Functions.Exists (State_Key, Name);
                   when Collation_Object =>
-                     Found := Database.Collations.Exists (Name);
+                     Found := Database.Collations.Exists (State_Key, Name);
                   when Tokenizer_Object =>
-                     Found := Database.Full_Text.Tokenizers.Tokenizer_Exists (Name);
+                     Found := Database.Full_Text.Tokenizers.Tokenizer_Exists (State_Key, Name);
                   when Ranking_Function_Object =>
-                     Found := Database.Full_Text.Ranking.Ranking_Function_Exists (Name);
+                     Found := Database.Full_Text.Ranking.Ranking_Function_Exists (State_Key, Name);
                   when Validation_Hook_Object =>
-                     Found := Database.Validation_Hooks.Exists (Name);
+                     Found := Database.Validation_Hooks.Exists (State_Key, Name);
                end case;
 
                if not Found then
@@ -152,15 +135,15 @@ package body Database.Extensions is
       return Database.Status.Success;
    end Validate_Dependencies;
 
-   function Registered_Extensions return Extension_Vectors.Vector is
+   function Registered_Extensions (State_Key : Natural) return Extension_Vectors.Vector is
    begin
-      return Current.all.Extensions;
+      return State_For (State_Key).all.Extensions;
    end Registered_Extensions;
 
    function Dependencies
-      return Database.Extension_Metadata.Dependency_Vectors.Vector is
+     (State_Key : Natural) return Database.Extension_Metadata.Dependency_Vectors.Vector is
    begin
-      return Current.all.Dependencies;
+      return State_For (State_Key).all.Dependencies;
    end Dependencies;
 
    function Save (Path : Wide_Wide_String) return Database.Status.Result is
@@ -175,16 +158,17 @@ package body Database.Extensions is
       return Database.Status.Success;
    end Load;
 
-   procedure Clear is
+   procedure Clear (State_Key : Natural) is
+      State : constant Extension_State_Access := State_For (State_Key);
    begin
-      Current.all.Extensions.Clear;
-      Current.all.Dependencies.Clear;
-      Database.Aggregate_Functions.Clear;
-      Database.Collations.Clear;
-      Database.Functions.Clear;
-      Database.Full_Text.Ranking.Clear_Custom_Ranking;
-      Database.Full_Text.Tokenizers.Clear_Custom_Tokenizers;
-      Database.Validation_Hooks.Clear;
+      State.all.Extensions.Clear;
+      State.all.Dependencies.Clear;
+      Database.Aggregate_Functions.Clear (State_Key);
+      Database.Collations.Clear (State_Key);
+      Database.Functions.Clear (State_Key);
+      Database.Full_Text.Ranking.Clear_Custom_Ranking (State_Key);
+      Database.Full_Text.Tokenizers.Clear_Custom_Tokenizers (State_Key);
+      Database.Validation_Hooks.Clear (State_Key);
    end Clear;
 
 end Database.Extensions;

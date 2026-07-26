@@ -17,39 +17,25 @@ package body Database.Full_Text.Ranking is
    procedure Free_Registry is new Ada.Unchecked_Deallocation  (Object => Ranking_Vectors.Vector,
      Name => Registry_Access);
    Default_Registry : aliased Ranking_Vectors.Vector;
-   Current_Key : Natural := 0;
-   pragma Thread_Local_Storage (Current_Key);
-   function Current_Registry return Registry_Access is
+
+   function Registry_For (State_Key : Natural) return Registry_Access is
       S, Winner : Registry_Access;
    begin
-      if Current_Key = 0 then
+      if State_Key = 0 then
          return Default_Registry'Access;
       end if;
-      S := State_Reg.Find (Current_Key);
+      S := State_Reg.Find (State_Key);
       if S /= null then
          return S;
       end if;
       S := new Ranking_Vectors.Vector;
-      State_Reg.Insert (Current_Key, S, Winner);
+      State_Reg.Insert (State_Key, S, Winner);
       if Winner /= S then
          Free_Registry (S);
          S := Winner;
       end if;
       return S;
-   end Current_Registry;
-
-   procedure Select_Database (State_Key : Natural) is
-   begin
-      Current_Key := State_Key;
-      if State_Key /= 0 then
-         declare
-            Ignore : constant Registry_Access := Current_Registry;
-            pragma Unreferenced (Ignore);
-         begin
-            null;
-         end;
-      end if;
-   end Select_Database;
+   end Registry_For;
 
    procedure Drop_Database (State_Key : Natural) is
       Freed : Registry_Access;
@@ -61,18 +47,16 @@ package body Database.Full_Text.Ranking is
       if Freed /= null then
          Free_Registry (Freed);
       end if;
-      if Current_Key = State_Key then
-         Current_Key := 0;
-      end if;
    end Drop_Database;
 
-   function Find_Custom (Name : Wide_Wide_String) return Natural is
+   function Find_Custom (State_Key : Natural; Name : Wide_Wide_String) return Natural is
+      Reg : constant Registry_Access := Registry_For (State_Key);
    begin
-      if Current_Registry.all.Length = 0 then
+      if Reg.all.Length = 0 then
          return Natural'Last;
       end if;
-      for I in 0 .. Natural (Current_Registry.all.Length) - 1 loop
-         if To_Wide_Wide_String (Current_Registry.all.Element (I).Metadata.Name) = Name then
+      for I in 0 .. Natural (Reg.all.Length) - 1 loop
+         if To_Wide_Wide_String (Reg.all.Element (I).Metadata.Name) = Name then
             return I;
          end if;
       end loop;
@@ -83,62 +67,69 @@ package body Database.Full_Text.Ranking is
      (DB       : in out Database.Handle;
       Metadata : Ranking_Metadata;
       Fn       : Ranking_Function) return Database.Status.Result is
+      Key : constant Natural := Database.Catalog_State_Key (DB);
+      Reg : constant Registry_Access := Registry_For (Key);
       E : Ranking_Entry;
       Pos : Natural;
    begin
-      Select_Database (Database.Catalog_State_Key (DB));
-      Pos := Find_Custom (To_Wide_Wide_String (Metadata.Name));
+      Pos := Find_Custom (Key, To_Wide_Wide_String (Metadata.Name));
       if Length (Metadata.Name) = 0 or else Fn = null or else not Metadata.Deterministic then
          return Database.Status.Failure (Database.Status.Invalid_Argument, "invalid ranking function registration");
       end if;
       E.Metadata := Metadata;
       E.Fn := Fn;
       if Pos = Natural'Last then
-         Current_Registry.all.Append (E);
+         Reg.all.Append (E);
       else
-         Current_Registry.all.Replace_Element (Pos, E);
+         Reg.all.Replace_Element (Pos, E);
       end if;
       return Database.Status.Success;
    end Register_Ranking_Function;
 
    function Score_With
-     (Name    : Wide_Wide_String;
+     (State_Key : Natural;
+      Name    : Wide_Wide_String;
       Context : Ranking_Context;
       Score_Value : out Score) return Database.Status.Result is
-      Pos : constant Natural := Find_Custom (Name);
+      Reg : constant Registry_Access := Registry_For (State_Key);
+      Pos : constant Natural := Find_Custom (State_Key, Name);
    begin
       Score_Value := 0.0;
       if Pos = Natural'Last then
          return Database.Status.Failure (Database.Status.Missing_Extension, "missing ranking function: " & Name);
       end if;
-      Score_Value := Current_Registry.all.Element (Pos).Fn.all (Context);
+      Score_Value := Reg.all.Element (Pos).Fn.all (Context);
       return Database.Status.Success;
    end Score_With;
 
-   function Ranking_Function_Exists (Name : Wide_Wide_String) return Boolean is (Find_Custom (Name) /= Natural'Last);
+   function Ranking_Function_Exists (State_Key : Natural; Name : Wide_Wide_String) return Boolean
+     is (Find_Custom (State_Key, Name) /= Natural'Last);
 
-   function Registered_Metadata return Database.Extension_Metadata.Metadata_Vectors.Vector is
+   function Registered_Metadata
+     (State_Key : Natural)
+      return Database.Extension_Metadata.Metadata_Vectors.Vector is
+      Reg : constant Registry_Access := Registry_For (State_Key);
       V : Database.Extension_Metadata.Metadata_Vectors.Vector;
       M : Database.Extension_Metadata.Extension_Object_Metadata;
    begin
-      if Current_Registry.all.Length = 0 then
+      if Reg.all.Length = 0 then
          return V;
       end if;
-      for I in 0 .. Natural (Current_Registry.all.Length) - 1 loop
-         M.Extension_Name := Current_Registry.all.Element (I).Metadata.Extension_Name;
-         M.Object_Name := Current_Registry.all.Element (I).Metadata.Name;
+      for I in 0 .. Natural (Reg.all.Length) - 1 loop
+         M.Extension_Name := Reg.all.Element (I).Metadata.Extension_Name;
+         M.Object_Name := Reg.all.Element (I).Metadata.Name;
          M.Object_Kind := Database.Extension_Metadata.Ranking_Function_Object;
-         M.Version := Current_Registry.all.Element (I).Metadata.Version;
-         M.Compatibility_Id := Current_Registry.all.Element (I).Metadata.Compatibility_Id;
+         M.Version := Reg.all.Element (I).Metadata.Version;
+         M.Compatibility_Id := Reg.all.Element (I).Metadata.Compatibility_Id;
          M.Determinism := Database.Extension_Metadata.Deterministic;
          V.Append (M);
       end loop;
       return V;
    end Registered_Metadata;
 
-   procedure Clear_Custom_Ranking is
+   procedure Clear_Custom_Ranking (State_Key : Natural) is
    begin
-      Current_Registry.all.Clear;
+      Registry_For (State_Key).all.Clear;
    end Clear_Custom_Ranking;
    function Frequency_Score (P : Database.Full_Text.Postings.Posting) return Score is
    begin

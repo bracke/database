@@ -63,10 +63,10 @@ package body Database.Tables is
          Schema : Database.Schema.Table_Schema) return Database.Schema.Table_Schema is
          S : Database.Schema.Table_Schema := Schema;
          R : Database.Status.Result;
-         pragma Unreferenced (DB);
       begin
          R := Database.Catalog.Find_By_Name
-           (Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (Schema.Name), S);
+           (Database.Catalog_State_Key (DB),
+            Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (Schema.Name), S);
          if not Database.Status.Is_Ok (R) then
             return Schema;
          end if;
@@ -79,8 +79,10 @@ package body Database.Tables is
          Existing : Database.Schema.Table_Schema;
          R : Database.Status.Result;
       begin
-         R := Database.Catalog.Find_By_Name  (Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (Schema.Name),
-           Existing);
+         R := Database.Catalog.Find_By_Name
+           (Database.Catalog_State_Key (DB),
+            Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (Schema.Name),
+            Existing);
          if Database.Status.Is_Ok (R) then
             if Database.Schema.Column_Count (Existing) /= Database.Schema.Column_Count (Schema) then
                return Database.Status.Failure (Database.Status.Schema_Mismatch,
@@ -369,9 +371,10 @@ package body Database.Tables is
          Rows : Database.Foreign_Keys.Row_Vectors.Vector;
       begin
          if Database.Backend (DB) /= Database.Persistent_Backend then
-            return Database.Catalog.Rows_For_Table (Table_Id);
+            return Database.Catalog.Rows_For_Table
+              (Database.Catalog_State_Key (DB), Table_Id);
          end if;
-         R := Database.Catalog.Find_By_Id (Table_Id, S);
+         R := Database.Catalog.Find_By_Id (Database.Catalog_State_Key (DB), Table_Id, S);
          if not Database.Status.Is_Ok (R) then
             return Rows;
          end if;
@@ -385,17 +388,20 @@ package body Database.Tables is
       end Visible_Rows_For_Table;
 
       function Apply_Generated_And_Checks
-        (S   : Database.Schema.Table_Schema;
+        (State_Key : Natural;
+         S   : Database.Schema.Table_Schema;
          Row : in out Database.Rows.Row) return Database.Status.Result is
          R : Database.Status.Result;
       begin
          R := Database.Generated_Columns.Recompute_Stored
-           (Database.Catalog.Generated_Columns_For_Table (S.Table_Id), S, Row);
+           (State_Key,
+            Database.Catalog.Generated_Columns_For_Table (State_Key, S.Table_Id), S, Row);
          if not Database.Status.Is_Ok (R) then
             return R;
          end if;
          return Database.Check_Constraints.Validate_All
-           (Database.Catalog.Check_Constraints_For_Table (S.Table_Id), S, Row, False);
+           (State_Key,
+            Database.Catalog.Check_Constraints_For_Table (State_Key, S.Table_Id), S, Row, False);
       end Apply_Generated_And_Checks;
 
       function Enforce_Foreign_Key_Insert_Update
@@ -404,7 +410,8 @@ package body Database.Tables is
          S   : Database.Schema.Table_Schema;
          Row : Database.Rows.Row) return Database.Status.Result is
          FKs : constant Database.Foreign_Keys.Foreign_Key_Vectors.Vector  :=
-           Database.Catalog.Foreign_Keys_For_Referencing_Table (S.Table_Id);
+           Database.Catalog.Foreign_Keys_For_Referencing_Table
+             (Database.Catalog_State_Key (DB), S.Table_Id);
          Parent_Schema : Database.Schema.Table_Schema;
          Parent_Rows : Database.Foreign_Keys.Row_Vectors.Vector;
          R : Database.Status.Result;
@@ -413,7 +420,8 @@ package body Database.Tables is
             if not FK.Deferred
               and then FK.Referencing_Table /= FK.Referenced_Table
             then
-               R := Database.Catalog.Find_By_Id (FK.Referenced_Table, Parent_Schema);
+               R := Database.Catalog.Find_By_Id
+                 (Database.Catalog_State_Key (DB), FK.Referenced_Table, Parent_Schema);
                if not Database.Status.Is_Ok (R) then
                   return R;
                end if;
@@ -434,13 +442,15 @@ package body Database.Tables is
          S   : Database.Schema.Table_Schema;
          Row : Database.Rows.Row) return Database.Status.Result is
          FKs : constant Database.Foreign_Keys.Foreign_Key_Vectors.Vector  :=
-           Database.Catalog.Foreign_Keys_For_Referenced_Table (S.Table_Id);
+           Database.Catalog.Foreign_Keys_For_Referenced_Table
+             (Database.Catalog_State_Key (DB), S.Table_Id);
          Child_Schema : Database.Schema.Table_Schema;
          Child_Rows : Database.Foreign_Keys.Row_Vectors.Vector;
          R : Database.Status.Result;
       begin
          for FK of FKs loop
-            R := Database.Catalog.Find_By_Id (FK.Referencing_Table, Child_Schema);
+            R := Database.Catalog.Find_By_Id
+              (Database.Catalog_State_Key (DB), FK.Referencing_Table, Child_Schema);
             if not Database.Status.Is_Ok (R) then
                return R;
             end if;
@@ -482,7 +492,8 @@ package body Database.Tables is
                            end if;
                         end;
                      else
-                        Database.Catalog.Remove_Row (FK.Referencing_Table, Child_Schema, Child);
+                        Database.Catalog.Remove_Row
+                          (Database.Catalog_State_Key (DB), FK.Referencing_Table, Child_Schema, Child);
                      end if;
                   end if;
                end loop;
@@ -495,7 +506,8 @@ package body Database.Tables is
                         New_Child : Database.Rows.Row := Child;
                      begin
                         Database.Foreign_Keys.Apply_Set_Null (FK, Child_Schema, New_Child);
-                        R := Apply_Generated_And_Checks (Child_Schema, New_Child);
+                        R := Apply_Generated_And_Checks
+                          (Database.Catalog_State_Key (DB), Child_Schema, New_Child);
                         if not Database.Status.Is_Ok (R) then
                            return R;
                         end if;
@@ -520,7 +532,8 @@ package body Database.Tables is
                               end if;
                            end;
                         else
-                           Database.Catalog.Replace_Row (FK.Referencing_Table, Child_Schema, Child, New_Child);
+                           Database.Catalog.Replace_Row
+                             (Database.Catalog_State_Key (DB), FK.Referencing_Table, Child_Schema, Child, New_Child);
                         end if;
                      end;
                   end if;
@@ -783,7 +796,7 @@ package body Database.Tables is
          if not Write_Tx_Ok (Tx) then
             return Read_Only_Write_Error;
          end if;
-         if not Database.Expressions.Is_Deterministic (Expression) then
+         if not Database.Expressions.Is_Deterministic (Database.Catalog_State_Key (DB), Expression) then
             return Database.Status.Failure (Database.Status.Invalid_Argument,
               "expression index requires deterministic expression");
          end if;
@@ -819,7 +832,7 @@ package body Database.Tables is
          if not Write_Tx_Ok (Tx) then
             return Read_Only_Write_Error;
          end if;
-         V := Apply_Generated_And_Checks (S, Row_Value);
+         V := Apply_Generated_And_Checks (Database.Catalog_State_Key (DB), S, Row_Value);
          if not Database.Status.Is_Ok (V) then
             return V;
          end if;
@@ -927,10 +940,11 @@ package body Database.Tables is
                V := Database.Catalog.Update_Table (DB, S);
             end if;
             if Database.Status.Is_Ok (V) then
-               Database.Catalog.Register_Row (S.Table_Id, Row_Value);
+               Database.Catalog.Register_Row (Database.Catalog_State_Key (DB), S.Table_Id, Row_Value);
                Database.Full_Text.Maintain_Insert  (Tx,
                  S,
-                 Natural (Database.Catalog.Rows_For_Table (S.Table_Id).Length),
+                 Natural (Database.Catalog.Rows_For_Table
+                   (Database.Catalog_State_Key (DB), S.Table_Id).Length),
                  Row_Value);
             end if;
             return V;
@@ -954,10 +968,11 @@ package body Database.Tables is
                    Metadata => Database.Versioning.New_Uncommitted
                      (Database.Transactions.Id (Tx), Future_Commit_Version (DB))));
             end;
-            Database.Catalog.Register_Row (S.Table_Id, Row_Value);
+            Database.Catalog.Register_Row (Database.Catalog_State_Key (DB), S.Table_Id, Row_Value);
             Database.Full_Text.Maintain_Insert  (Tx,
               S,
-              Natural (Database.Catalog.Rows_For_Table (S.Table_Id).Length),
+              Natural (Database.Catalog.Rows_For_Table
+                (Database.Catalog_State_Key (DB), S.Table_Id).Length),
               Row_Value);
             return Database.Status.Success;
          end if;
@@ -1064,7 +1079,7 @@ package body Database.Tables is
                return R;
             end if;
             Database.Full_Text.Maintain_Delete (Tx, S, Row_Value);
-            Database.Catalog.Remove_Row (S.Table_Id, S, Row_Value);
+            Database.Catalog.Remove_Row (Database.Catalog_State_Key (DB), S.Table_Id, S, Row_Value);
             return Database.Status.Success;
          else
             declare
@@ -1090,7 +1105,7 @@ package body Database.Tables is
                            Future_Commit_Version (DB));
                         Database.Memory_Store.Put (MK, I, SR);
                         Database.Full_Text.Maintain_Delete (Tx, S, Row_Value);
-                        Database.Catalog.Remove_Row (S.Table_Id, S, Row_Value);
+                        Database.Catalog.Remove_Row (Database.Catalog_State_Key (DB), S.Table_Id, S, Row_Value);
                         return Database.Status.Success;
                      end;
                   end if;

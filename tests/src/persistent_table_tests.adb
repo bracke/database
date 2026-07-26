@@ -105,7 +105,8 @@ package body Persistent_Table_Tests is
       Database.Open (DB, Path);
       Assert
         (Database.Status.Is_Ok (Database.Last_Result (DB)), "reopen failed");
-      R := Database.Catalog.Find_By_Name ("users", S);
+      R := Database.Catalog.Find_By_Name
+             (Database.Catalog_State_Key (DB), "users", S);
       Assert (Database.Status.Is_Ok (R), "catalog restore failed");
       Database.Transactions.Begin_Write (DB, Tx);
       R := Users.Find (Tx, DB, S, 1, Out_User);
@@ -121,7 +122,8 @@ package body Persistent_Table_Tests is
       Database.Close (DB);
 
       Database.Open (DB, Path);
-      R := Database.Catalog.Find_By_Name ("users", S);
+      R := Database.Catalog.Find_By_Name
+             (Database.Catalog_State_Key (DB), "users", S);
       Assert
         (Database.Status.Is_Ok (R), "catalog restore after delete failed");
       Database.Transactions.Begin_Write (DB, Tx);
@@ -257,7 +259,8 @@ package body Persistent_Table_Tests is
       Assert
         (Database.Status.Is_Ok (Database.Last_Result (DB)),
          "reopen indexed DB failed");
-      R := Database.Catalog.Find_By_Name ("users", S);
+      R := Database.Catalog.Find_By_Name
+             (Database.Catalog_State_Key (DB), "users", S);
       Assert (Database.Status.Is_Ok (R), "catalog index metadata missing");
       Assert
         (S.Primary_Index_Root /= 0, "primary index root was not persisted");

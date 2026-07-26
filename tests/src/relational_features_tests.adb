@@ -137,7 +137,9 @@ package body Relational_Features_Tests is
               Database.Expressions.Column (1),
               Database.Expressions.Literal
                 (Database.Values.From_Integer (0))));
-      Res := Database.Check_Constraints.Validate_Row (C, S, Rw);
+      --  No database handle in this pure-expression test; 0 selects the
+      --  default state (the expression references no registered functions).
+      Res := Database.Check_Constraints.Validate_Row (0, C, S, Rw);
       Assert
         (Res.Code = Database.Status.Constraint_Error,
          "negative age was accepted");
@@ -164,10 +166,12 @@ package body Relational_Features_Tests is
                Database.Expressions.Column (1),
                Database.Expressions.Literal
                  (Database.Values.From_Integer (2)))));
-      Res := Database.Generated_Columns.Recompute_Stored (Cols, S, Rw);
+      --  No database handle here; 0 selects the default state (built-in
+      --  arithmetic expression, no registered functions).
+      Res := Database.Generated_Columns.Recompute_Stored (0, Cols, S, Rw);
       Assert (Database.Status.Is_Ok (Res), "recompute failed");
       Assert (Database.Rows.Get (Rw, 2).Int = 42, "wrong generated value");
-      Res := Database.Generated_Columns.Validate_Stored (Cols, S, Rw);
+      Res := Database.Generated_Columns.Validate_Stored (0, Cols, S, Rw);
       Assert
         (Database.Status.Is_Ok (Res),
          "stored generated value failed validation");
@@ -501,31 +505,39 @@ package body Relational_Features_Tests is
       Assert
         (Database.Status.Is_Ok (Database.Last_Result (DB)),
          "reopen relational metadata db failed");
-      Res := Database.Catalog.Find_By_Name ("relational_people", Reopened);
+      Res :=
+        Database.Catalog.Find_By_Name
+          (Database.Catalog_State_Key (DB), "relational_people", Reopened);
       Assert
         (Database.Status.Is_Ok (Res), "relational table missing after reopen");
       Assert
         (Natural
            (Database.Catalog.Foreign_Keys_For_Referencing_Table
-              (Reopened.Table_Id)
+              (Database.Catalog_State_Key (DB), Reopened.Table_Id)
               .Length)
          = 1,
          "foreign key metadata not durable");
       Assert
         (Natural
-           (Database.Catalog.Check_Constraints_For_Table (Reopened.Table_Id)
+           (Database.Catalog.Check_Constraints_For_Table
+              (Database.Catalog_State_Key (DB), Reopened.Table_Id)
               .Length)
          = 1,
          "check metadata not durable");
       Assert
         (Natural
-           (Database.Catalog.Generated_Columns_For_Table (Reopened.Table_Id)
+           (Database.Catalog.Generated_Columns_For_Table
+              (Database.Catalog_State_Key (DB), Reopened.Table_Id)
               .Length)
          = 1,
          "generated metadata not durable");
-      Res := Database.Catalog.Find_View ("v_relational_people", V);
+      Res :=
+        Database.Catalog.Find_View
+          (Database.Catalog_State_Key (DB), "v_relational_people", V);
       Assert (Database.Status.Is_Ok (Res), "view metadata not durable");
-      Res := Database.Catalog.Find_Materialized_View ("mv_relational_people", MV);
+      Res :=
+        Database.Catalog.Find_Materialized_View
+          (Database.Catalog_State_Key (DB), "mv_relational_people", MV);
       Assert
         (Database.Status.Is_Ok (Res),
          "materialized view metadata not durable");
@@ -596,7 +608,9 @@ package body Relational_Features_Tests is
       Assert (Database.Status.Is_Ok (Res), "view delete failed");
       Res := Database.Catalog.Update_View (DB, V);
       Assert (Database.Status.Is_Ok (Res), "catalog view update failed");
-      Res := Database.Catalog.Find_View ("updatable_people_view", V);
+      Res :=
+        Database.Catalog.Find_View
+          (Database.Catalog_State_Key (DB), "updatable_people_view", V);
       Assert (Database.Status.Is_Ok (Res), "updated view missing");
       Res := Database.Views.Expand (V, Expanded);
       Assert (Database.Status.Is_Ok (Res), "updated view expand failed");

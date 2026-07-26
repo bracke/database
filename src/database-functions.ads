@@ -54,46 +54,53 @@ package Database.Functions is
       Name : Wide_Wide_String) return Database.Status.Result;
 
    --  Return exists for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @param Name logical name of the object.
    --  @return Result produced by the function.
-   function Exists (Name : Wide_Wide_String) return Boolean;
+   function Exists (State_Key : Natural; Name : Wide_Wide_String) return Boolean;
 
    --  Return metadata of for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @param Name logical name of the object.
    --  @param Metadata metadata argument supplied to the operation.
    --  @return Result produced by the function.
    function Metadata_Of
-     (Name     : Wide_Wide_String;
+     (State_Key : Natural;
+      Name     : Wide_Wide_String;
       Metadata : out Function_Metadata) return Database.Status.Result;
 
    --  Return evaluate for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @param Name logical name of the object.
    --  @param Arguments arguments argument supplied to the operation.
    --  @param Value typed value supplied to the operation.
    --  @return Result produced by the function.
    function Evaluate
-     (Name      : Wide_Wide_String;
+     (State_Key : Natural;
+      Name      : Wide_Wide_String;
       Arguments : Database.Values.Value_Vector;
       Value     : out Database.Values.Value) return Database.Status.Result;
 
    --  Return validate persistent use for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @param Name logical name of the object.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
-   function Validate_Persistent_Use (Name : Wide_Wide_String) return Database.Status.Result;
+   function Validate_Persistent_Use
+     (State_Key : Natural; Name : Wide_Wide_String) return Database.Status.Result;
 
    --  Return registered metadata for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @return Status result describing whether the operation succeeded.
-   function Registered_Metadata return Database.Extension_Metadata.Metadata_Vectors.Vector;
-
-   --  Selects the handle-owned callable registry used by legacy name-only lookup APIs.
-   --  @param State_Key state key argument supplied to the operation.
-   procedure Select_Database (State_Key : Natural);
+   function Registered_Metadata
+     (State_Key : Natural)
+      return Database.Extension_Metadata.Metadata_Vectors.Vector;
 
    --  Drops all transient callable registrations owned by one database handle.
    --  @param State_Key state key argument supplied to the operation.
    procedure Drop_Database (State_Key : Natural);
 
    --  Perform clear for the supplied database state or arguments.
-   procedure Clear;
+   --  @param State_Key handle-owned state key selecting the callable registry.
+   procedure Clear (State_Key : Natural);
 end Database.Functions;

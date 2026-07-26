@@ -30,27 +30,34 @@ package Database.Collations is
    --  @param Right right argument supplied to the operation.
    --  @param Result output value populated by the operation.
    --  @return Result produced by the function.
-   function Compare (Name, Left, Right : Wide_Wide_String; Result : out Integer) return Database.Status.Result;
+   function Compare
+     (State_Key : Natural;
+      Name, Left, Right : Wide_Wide_String;
+      Result : out Integer) return Database.Status.Result;
    --  Return exists for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @param Name logical name of the object.
    --  @return Result produced by the function.
-   function Exists (Name : Wide_Wide_String) return Boolean;
+   function Exists (State_Key : Natural; Name : Wide_Wide_String) return Boolean;
    --  Return validate index use for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @param Name logical name of the object.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
-   function Validate_Index_Use (Name : Wide_Wide_String) return Database.Status.Result;
+   function Validate_Index_Use
+     (State_Key : Natural; Name : Wide_Wide_String) return Database.Status.Result;
    --  Return registered metadata for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @return Status result describing whether the operation succeeded.
-   function Registered_Metadata return Database.Extension_Metadata.Metadata_Vectors.Vector;
-   --  Selects the handle-owned callable registry used by legacy name-only lookup APIs.
-   --  @param State_Key state key argument supplied to the operation.
-   procedure Select_Database (State_Key : Natural);
+   function Registered_Metadata
+     (State_Key : Natural)
+      return Database.Extension_Metadata.Metadata_Vectors.Vector;
 
    --  Drops all transient callable registrations owned by one database handle.
    --  @param State_Key state key argument supplied to the operation.
    procedure Drop_Database (State_Key : Natural);
 
    --  Perform clear for the supplied database state or arguments.
-   procedure Clear;
+   --  @param State_Key handle-owned state key selecting the callable registry.
+   procedure Clear (State_Key : Natural);
 end Database.Collations;

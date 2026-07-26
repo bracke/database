@@ -88,9 +88,6 @@ package body Database.Transactions is
          return;
       end if;
 
-      Database.Catalog.Select_Database (Database.Catalog_State_Key (DB));
-      Database.Full_Text.Select_Database (Database.Full_Text_State_Key (DB));
-
       if Blocking then
          case Mode_In is
             when Read_Only => DB.Lock.Begin_Read;
@@ -294,10 +291,11 @@ package body Database.Transactions is
          return Rows;
       end if;
       if Database.Backend (DB.all) /= Database.Persistent_Backend then
-         return Database.Catalog.Rows_For_Table (Table_Id);
+         return Database.Catalog.Rows_For_Table
+           (Database.Catalog_State_Key (DB.all), Table_Id);
       end if;
 
-      R := Database.Catalog.Find_By_Id (Table_Id, S);
+      R := Database.Catalog.Find_By_Id (Database.Catalog_State_Key (DB.all), Table_Id, S);
       if not Database.Status.Is_Ok (R) or else S.Heap_First_Page = 0 then
          return Rows;
       end if;
@@ -328,29 +326,31 @@ package body Database.Transactions is
          return Database.Status.Success;
       end if;
 
-      Database.Catalog.Select_Database (Database.Catalog_State_Key (Tx.DB.all));
-      if Database.Catalog.Table_Count = 0 then
+      if Database.Catalog.Table_Count (Database.Catalog_State_Key (Tx.DB.all)) = 0 then
          return Database.Status.Success;
       end if;
 
-      for I in 0 .. Database.Catalog.Table_Count - 1 loop
-         S := Database.Catalog.Table_At (I);
+      for I in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (Tx.DB.all)) - 1 loop
+         S := Database.Catalog.Table_At (Database.Catalog_State_Key (Tx.DB.all), I);
          Rows := Visible_Rows_For_Table (Tx, S.Table_Id);
-         Checks := Database.Catalog.Check_Constraints_For_Table (S.Table_Id);
+         Checks := Database.Catalog.Check_Constraints_For_Table
+           (Database.Catalog_State_Key (Tx.DB.all), S.Table_Id);
          if Checks.Length > 0 then
             for Row of Rows loop
                R := Database.Check_Constraints.Validate_All
-                 (Checks, S, Row, Include_Deferred => True);
+                 (Database.Catalog_State_Key (Tx.DB.all), Checks, S, Row, Include_Deferred => True);
                if not Database.Status.Is_Ok (R) then
                   return R;
                end if;
             end loop;
          end if;
 
-         FKs := Database.Catalog.Foreign_Keys_For_Referencing_Table (S.Table_Id);
+         FKs := Database.Catalog.Foreign_Keys_For_Referencing_Table
+           (Database.Catalog_State_Key (Tx.DB.all), S.Table_Id);
          for FK of FKs loop
             if FK.Deferred then
-               R := Database.Catalog.Find_By_Id (FK.Referenced_Table, Referenced_S);
+               R := Database.Catalog.Find_By_Id
+                 (Database.Catalog_State_Key (Tx.DB.all), FK.Referenced_Table, Referenced_S);
                if not Database.Status.Is_Ok (R) then
                   return R;
                end if;
@@ -430,12 +430,13 @@ package body Database.Transactions is
       if Tx.Current_Mode = Read_Write then
          Tx.DB.Version := Tx.DB.Version + 1;
          Database.MVCC.Mark_Committed (Tx.Transaction_Id, Tx.DB.Version);
-         Database.Full_Text.Select_Database (Database.Full_Text_State_Key (Tx.DB.all));
-         Database.Full_Text.Commit_Transaction (Tx.Transaction_Id, Tx.DB.Version);
+         Database.Full_Text.Commit_Transaction
+           (Database.Full_Text_State_Key (Tx.DB.all), Tx.Transaction_Id, Tx.DB.Version);
          Database.Migrations.Commit_Transaction (Natural (Tx.Transaction_Id));
          if Database.Backend (Tx.DB.all) = Database.Persistent_Backend then
-            Database.Full_Text.Select_Database (Database.Full_Text_State_Key (Tx.DB.all));
-            R := Database.Full_Text.Save (Database.Storage.File_IO.Path (Tx.DB.File));
+            R := Database.Full_Text.Save
+              (Database.Full_Text_State_Key (Tx.DB.all),
+               Database.Storage.File_IO.Path (Tx.DB.File));
             if not Database.Status.Is_Ok (R) then
                Tx.Current_State := Failed;
                Tx.Last := R;
@@ -522,11 +523,12 @@ package body Database.Transactions is
          Database.Memory_Store.Rollback (Tx.Transaction_Id);
          Database.Migrations.Rollback_Transaction
            (Natural (Tx.Transaction_Id), Tx.DB.all);
-         Database.Full_Text.Select_Database (Database.Full_Text_State_Key (Tx.DB.all));
-         Database.Full_Text.Rollback_Transaction (Tx.Transaction_Id);
+         Database.Full_Text.Rollback_Transaction
+           (Database.Full_Text_State_Key (Tx.DB.all), Tx.Transaction_Id);
          if Database.Backend (Tx.DB.all) = Database.Persistent_Backend then
-            Database.Full_Text.Select_Database (Database.Full_Text_State_Key (Tx.DB.all));
-            R := Database.Full_Text.Save (Database.Storage.File_IO.Path (Tx.DB.File));
+            R := Database.Full_Text.Save
+              (Database.Full_Text_State_Key (Tx.DB.all),
+               Database.Storage.File_IO.Path (Tx.DB.File));
             if not Database.Status.Is_Ok (R) then
                Tx.Current_State := Failed;
                Tx.Last := R;

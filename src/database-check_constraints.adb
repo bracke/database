@@ -9,11 +9,12 @@ package body Database.Check_Constraints is
       return (Name => To_Unbounded_Wide_Wide_String (Name), Expression => Expression, Deferred => Deferred);
    end Create;
 
-   function Validate_Definition (Constraint : Check_Constraint) return Database.Status.Result is
+   function Validate_Definition
+     (State_Key : Natural; Constraint : Check_Constraint) return Database.Status.Result is
    begin
       if Length (Constraint.Name) = 0 then
          return Database.Status.Failure (Database.Status.Invalid_Schema, "check constraint name must not be empty");
-      elsif not Database.Expressions.Is_Deterministic (Constraint.Expression) then
+      elsif not Database.Expressions.Is_Deterministic (State_Key, Constraint.Expression) then
          return Database.Status.Failure (Database.Status.Invalid_Schema,
            "check constraint expression must be deterministic");
       else
@@ -22,17 +23,18 @@ package body Database.Check_Constraints is
    end Validate_Definition;
 
    function Validate_Row
-     (Constraint : Check_Constraint;
+     (State_Key  : Natural;
+      Constraint : Check_Constraint;
       Schema     : Database.Schema.Table_Schema;
       Row        : Database.Rows.Row) return Database.Status.Result is
       Passes : Boolean := False;
       R : Database.Status.Result;
    begin
-      R := Validate_Definition (Constraint);
+      R := Validate_Definition (State_Key, Constraint);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      R := Database.Expressions.Evaluate_Boolean (Constraint.Expression, Schema, Row, Passes);
+      R := Database.Expressions.Evaluate_Boolean (State_Key, Constraint.Expression, Schema, Row, Passes);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
@@ -44,7 +46,8 @@ package body Database.Check_Constraints is
    end Validate_Row;
 
    function Validate_All
-     (Constraints : Check_Constraint_Vectors.Vector;
+     (State_Key   : Natural;
+      Constraints : Check_Constraint_Vectors.Vector;
       Schema      : Database.Schema.Table_Schema;
       Row         : Database.Rows.Row;
       Include_Deferred : Boolean := False) return Database.Status.Result is
@@ -52,7 +55,7 @@ package body Database.Check_Constraints is
    begin
       for C of Constraints loop
          if Include_Deferred or else not C.Deferred then
-            R := Validate_Row (C, Schema, Row);
+            R := Validate_Row (State_Key, C, Schema, Row);
             if not Database.Status.Is_Ok (R) then
                return R;
             end if;

@@ -55,7 +55,9 @@ package body Database.Diagnostics is
          end loop;
          return Count;
       else
-         return Natural (Database.Catalog.Rows_For_Table (Schema.Table_Id).Length);
+         return Natural
+           (Database.Catalog.Rows_For_Table
+              (Database.Catalog_State_Key (DB.all), Schema.Table_Id).Length);
       end if;
    end Table_Row_Count;
 
@@ -83,27 +85,27 @@ package body Database.Diagnostics is
       return 0;
    end Index_Depth;
 
-   function Full_Text_Index_Count return Natural is
+   function Full_Text_Index_Count (State_Key : Natural) return Natural is
    begin
-      return Database.Full_Text.Full_Text_Index_Count;
+      return Database.Full_Text.Full_Text_Index_Count (State_Key);
    end Full_Text_Index_Count;
 
    function Full_Text_Term_Count
-     (Name : Wide_Wide_String) return Natural is
+     (State_Key : Natural; Name : Wide_Wide_String) return Natural is
    begin
-      return Database.Full_Text.Term_Count (Name);
+      return Database.Full_Text.Term_Count (State_Key, Name);
    end Full_Text_Term_Count;
 
    function Full_Text_Posting_Count
-     (Name : Wide_Wide_String) return Natural is
+     (State_Key : Natural; Name : Wide_Wide_String) return Natural is
    begin
-      return Database.Full_Text.Posting_Count (Name);
+      return Database.Full_Text.Posting_Count (State_Key, Name);
    end Full_Text_Posting_Count;
 
    function Full_Text_Obsolete_Posting_Count
-     (Name : Wide_Wide_String) return Natural is
+     (State_Key : Natural; Name : Wide_Wide_String) return Natural is
    begin
-      return Database.Full_Text.Obsolete_Posting_Count (Name);
+      return Database.Full_Text.Obsolete_Posting_Count (State_Key, Name);
    end Full_Text_Obsolete_Posting_Count;
 
    function Encryption_Enabled

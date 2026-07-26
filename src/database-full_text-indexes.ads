@@ -96,12 +96,14 @@ package Database.Full_Text.Indexes is
    --  @param Row_Id row id argument supplied to the operation.
    --  @param Row_Key row key argument supplied to the operation.
    --  @param Row row value supplied to or returned by the operation.
+   --  @param Tokenizer_Key handle catalog state key (selects custom tokenizers).
    procedure Index_Row
-     (Index   : in out Full_Text_Index;
-      Tx      : in out Database.Transactions.Transaction;
-      Row_Id  : Natural;
-      Row_Key : Wide_Wide_String;
-      Row     : Database.Rows.Row);
+     (Index         : in out Full_Text_Index;
+      Tx            : in out Database.Transactions.Transaction;
+      Row_Id        : Natural;
+      Row_Key       : Wide_Wide_String;
+      Row           : Database.Rows.Row;
+      Tokenizer_Key : Natural);
 
    --  Rebuild-time indexing for rows read from persistent storage.
    --  These postings are treated as already committed base state and are not
@@ -110,11 +112,13 @@ package Database.Full_Text.Indexes is
    --  @param Row_Id row id argument supplied to the operation.
    --  @param Row_Key row key argument supplied to the operation.
    --  @param Row row value supplied to or returned by the operation.
+   --  @param Tokenizer_Key handle catalog state key (selects custom tokenizers).
    procedure Index_Row_Committed
-     (Index   : in out Full_Text_Index;
-      Row_Id  : Natural;
-      Row_Key : Wide_Wide_String;
-      Row     : Database.Rows.Row);
+     (Index         : in out Full_Text_Index;
+      Row_Id        : Natural;
+      Row_Key       : Wide_Wide_String;
+      Row           : Database.Rows.Row;
+      Tokenizer_Key : Natural);
 
    --  Perform delete row for the supplied database state or arguments.
    --  @param Index zero-based or package-defined index used by the operation.

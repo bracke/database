@@ -79,28 +79,33 @@ package Database.Full_Text.Tokenizers is
       Fn       : Tokenizer_Function) return Database.Status.Result;
 
    --  Return tokenizer exists for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @param Name logical name of the object.
    --  @return Result produced by the function.
-   function Tokenizer_Exists (Name : Wide_Wide_String) return Boolean;
+   function Tokenizer_Exists
+     (State_Key : Natural; Name : Wide_Wide_String) return Boolean;
    --  Return registered metadata for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @return Status result describing whether the operation succeeded.
-   function Registered_Metadata return Database.Extension_Metadata.Metadata_Vectors.Vector;
-   --  Selects the handle-owned callable registry used by legacy name-only lookup APIs.
-   --  @param State_Key state key argument supplied to the operation.
-   procedure Select_Database (State_Key : Natural);
+   function Registered_Metadata
+     (State_Key : Natural)
+      return Database.Extension_Metadata.Metadata_Vectors.Vector;
 
    --  Drops all transient callable registrations owned by one database handle.
    --  @param State_Key state key argument supplied to the operation.
    procedure Drop_Database (State_Key : Natural);
 
    --  Perform clear custom tokenizers for the supplied database state or arguments.
-   procedure Clear_Custom_Tokenizers;
+   --  @param State_Key handle-owned state key selecting the callable registry.
+   procedure Clear_Custom_Tokenizers (State_Key : Natural);
 
    --  Return tokenize for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the callable registry.
    --  @param Text text argument supplied to the operation.
    --  @param Config configuration values controlling the operation.
    --  @return Result produced by the function.
    function Tokenize
-     (Text   : Wide_Wide_String;
+     (State_Key : Natural;
+      Text   : Wide_Wide_String;
       Config : Tokenizer_Config := Default_Config) return Token_Vectors.Vector;
 end Database.Full_Text.Tokenizers;

@@ -575,7 +575,9 @@ package body Query_Tests is
       Assert
         (Database.Status.Is_Ok (Database.Last_Result (DB)),
          "visibility reopen failed");
-      R := Database.Catalog.Find_By_Name ("users", S);
+      R :=
+        Database.Catalog.Find_By_Name
+          (Database.Catalog_State_Key (DB), "users", S);
       Assert (Database.Status.Is_Ok (R), "visibility catalog restore failed");
       Database.Transactions.Begin_Write (DB, Tx);
       R :=

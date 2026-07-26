@@ -132,12 +132,14 @@ package body Type_System_Tests is
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
+      DB   : Database.Handle;
       Expr : Database.Expressions.Expression;
       V    : Database.Values.Value;
       R    : Database.Status.Result;
       S    : Database.Schema.Table_Schema;
       Row  : Database.Rows.Row;
    begin
+      Database.Open_In_Memory (DB);
       Expr :=
         Database.Expressions.Binary
           (Database.Expressions.Add_Expr,
@@ -149,7 +151,8 @@ package body Type_System_Tests is
            Database.Expressions.Literal
              (Database.Values.From_Duration
                 ((Seconds => 3600, Nanoseconds => 0))));
-      R := Database.Expressions.Evaluate (Expr, S, Row, V);
+      R := Database.Expressions.Evaluate
+             (Database.Catalog_State_Key (DB), Expr, S, Row, V);
       Assert (Database.Status.Is_Ok (R), "date_time plus duration evaluates");
       Assert (V.Date_Time.Time_Part.Hour = 2, "duration arithmetic result");
       Assert
@@ -158,6 +161,7 @@ package body Type_System_Tests is
             Database.Values.From_Date ((Year => 2026, Month => 1, Day => 1)))
          < 0,
          "date ordering stable");
+      Database.Close (DB);
    end Expressions_And_Ordering;
 
    overriding

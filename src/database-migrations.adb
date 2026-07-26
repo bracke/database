@@ -97,11 +97,12 @@ package body Database.Migrations is
    end Primary_Key_Value;
 
    function Update_Catalog_Row_Cache
-     (Old_Schema : Database.Schema.Table_Schema;
+     (State_Key : Natural;
+      Old_Schema : Database.Schema.Table_Schema;
       New_Schema : Database.Schema.Table_Schema;
       Default_Value : Database.Values.Value) return Database.Status.Result is
       Rows : constant Database.Foreign_Keys.Row_Vectors.Vector :=
-        Database.Catalog.Rows_For_Table (Old_Schema.Table_Id);
+        Database.Catalog.Rows_For_Table (State_Key, Old_Schema.Table_Id);
       pragma Unreferenced (New_Schema);
    begin
       if Rows.Length > 0 then
@@ -111,7 +112,7 @@ package body Database.Migrations is
             begin
                Database.Rows.Append (New_Row, Default_Value);
                Database.Catalog.Replace_Row
-                 (Old_Schema.Table_Id, Old_Schema, Old_Row, New_Row);
+                 (State_Key, Old_Schema.Table_Id, Old_Schema, Old_Row, New_Row);
             end;
          end loop;
       end if;
@@ -252,7 +253,7 @@ package body Database.Migrations is
            (Database.Status.Constraint_Error, "non-null column requires a default");
       end if;
 
-      R := Database.Catalog.Find_By_Name (Table_Name, Old_Schema);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB.all), Table_Name, Old_Schema);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
@@ -277,7 +278,8 @@ package body Database.Migrations is
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      R := Update_Catalog_Row_Cache (Old_Schema, New_Schema, Default_Value);
+      R := Update_Catalog_Row_Cache
+        (Database.Catalog_State_Key (DB.all), Old_Schema, New_Schema, Default_Value);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
@@ -304,7 +306,7 @@ package body Database.Migrations is
          return Database.Status.Failure
            (Database.Status.Transaction_Error, "transaction has no database");
       end if;
-      R := Database.Catalog.Find_By_Name (Table_Name, S);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB.all), Table_Name, S);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
@@ -342,7 +344,7 @@ package body Database.Migrations is
          return Database.Status.Failure
            (Database.Status.Transaction_Error, "transaction has no database");
       end if;
-      R := Database.Catalog.Find_By_Name (Table_Name, S);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB.all), Table_Name, S);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
@@ -380,7 +382,7 @@ package body Database.Migrations is
          return Database.Status.Failure
            (Database.Status.Transaction_Error, "transaction has no database");
       end if;
-      R := Database.Catalog.Find_By_Name (Table_Name, S);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB.all), Table_Name, S);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;

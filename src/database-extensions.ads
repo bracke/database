@@ -5,9 +5,6 @@ with Database.Status;
 
 --  Extension registry and dependency metadata.
 package Database.Extensions is
-   --  Perform select database for the supplied database state or arguments.
-   --  @param State_Key state key argument supplied to the operation.
-   procedure Select_Database (State_Key : Natural);
    --  Perform drop database for the supplied database state or arguments.
    --  @param State_Key state key argument supplied to the operation.
    procedure Drop_Database (State_Key : Natural);
@@ -50,15 +47,19 @@ package Database.Extensions is
       Dependency : Database.Extension_Metadata.Dependency) return Database.Status.Result;
 
    --  Return validate dependencies for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the extension registry.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
-   function Validate_Dependencies return Database.Status.Result;
+   function Validate_Dependencies (State_Key : Natural) return Database.Status.Result;
    --  Return registered extensions for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the extension registry.
    --  @return Status result describing whether the operation succeeded.
-   function Registered_Extensions return Extension_Vectors.Vector;
+   function Registered_Extensions (State_Key : Natural) return Extension_Vectors.Vector;
    --  Return dependencies for the supplied database state or arguments.
+   --  @param State_Key handle-owned state key selecting the extension registry.
    --  @return Result produced by the function.
-   function Dependencies return Database.Extension_Metadata.Dependency_Vectors.Vector;
+   function Dependencies
+     (State_Key : Natural) return Database.Extension_Metadata.Dependency_Vectors.Vector;
 
    --  Return save for the supplied database state or arguments.
    --  @param Path filesystem path or artifact location used by the operation.
@@ -70,5 +71,6 @@ package Database.Extensions is
    function Load (Path : Wide_Wide_String) return Database.Status.Result;
 
    --  Perform clear for the supplied database state or arguments.
-   procedure Clear;
+   --  @param State_Key handle-owned state key selecting the extension registry.
+   procedure Clear (State_Key : Natural);
 end Database.Extensions;

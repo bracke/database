@@ -38,26 +38,31 @@ package Database.Generated_Columns is
    --  @param Column column argument supplied to the operation.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
-   function Validate_Definition (Column : Generated_Column) return Database.Status.Result;
+   function Validate_Definition
+     (State_Key : Natural; Column : Generated_Column) return Database.Status.Result;
 
    --  Return recompute stored for the supplied database state or arguments.
+   --  @param State_Key handle catalog state key (selects scalar functions).
    --  @param Columns columns argument supplied to the operation.
    --  @param Schema schema metadata used for validation or registration.
    --  @param Row row value supplied to or returned by the operation.
    --  @return Result produced by the function.
    function Recompute_Stored
-     (Columns : Generated_Column_Vectors.Vector;
+     (State_Key : Natural;
+      Columns : Generated_Column_Vectors.Vector;
       Schema  : Database.Schema.Table_Schema;
       Row     : in out Database.Rows.Row) return Database.Status.Result;
 
    --  Return validate stored for the supplied database state or arguments.
+   --  @param State_Key handle catalog state key (selects scalar functions).
    --  @param Columns columns argument supplied to the operation.
    --  @param Schema schema metadata used for validation or registration.
    --  @param Row row value supplied to or returned by the operation.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
    function Validate_Stored
-     (Columns : Generated_Column_Vectors.Vector;
+     (State_Key : Natural;
+      Columns : Generated_Column_Vectors.Vector;
       Schema  : Database.Schema.Table_Schema;
       Row     : Database.Rows.Row) return Database.Status.Result;
 end Database.Generated_Columns;

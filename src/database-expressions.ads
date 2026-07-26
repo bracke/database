@@ -99,7 +99,8 @@ package Database.Expressions is
    --  @param Expr expr argument supplied to the operation.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
-   function Is_Deterministic (Expr : Expression) return Boolean;
+   --  @param State_Key handle catalog state key (selects scalar functions).
+   function Is_Deterministic (State_Key : Natural; Expr : Expression) return Boolean;
    --  Return depends on column for the supplied database state or arguments.
    --  @param Expr expr argument supplied to the operation.
    --  @param Column_Id column id argument supplied to the operation.
@@ -112,8 +113,10 @@ package Database.Expressions is
    --  @param Row row value supplied to or returned by the operation.
    --  @param Value typed value supplied to the operation.
    --  @return Result produced by the function.
+   --  @param State_Key handle catalog state key (selects scalar functions).
    function Evaluate
-     (Expr   : Expression;
+     (State_Key : Natural;
+      Expr   : Expression;
       Schema : Database.Schema.Table_Schema;
       Row    : Database.Rows.Row;
       Value  : out Database.Values.Value) return Database.Status.Result;
@@ -124,8 +127,10 @@ package Database.Expressions is
    --  @param Row row value supplied to or returned by the operation.
    --  @param Result output value populated by the operation.
    --  @return Result produced by the function.
+   --  @param State_Key handle catalog state key (selects scalar functions).
    function Evaluate_Boolean
-     (Expr   : Expression;
+     (State_Key : Natural;
+      Expr   : Expression;
       Schema : Database.Schema.Table_Schema;
       Row    : Database.Rows.Row;
       Result : out Boolean) return Database.Status.Result;

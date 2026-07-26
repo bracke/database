@@ -529,10 +529,12 @@ package body Support_Package_Tests is
         (not Database.Diagnostics.WAL_Encryption_Enabled (DB),
          "plain database wal encryption must be false");
       Assert
-        (Database.Diagnostics.Full_Text_Index_Count >= 0,
+        (Database.Diagnostics.Full_Text_Index_Count
+           (Database.Full_Text_State_Key (DB)) >= 0,
          "full-text diagnostics must be callable");
       Assert
-        (Database.Diagnostics.Full_Text_Term_Count ("missing_index") = 0,
+        (Database.Diagnostics.Full_Text_Term_Count
+           (Database.Full_Text_State_Key (DB), "missing_index") = 0,
          "missing full-text term count must be zero");
       R := Database.Transactions.Commit (Tx);
       Assert

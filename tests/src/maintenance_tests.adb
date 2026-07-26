@@ -154,7 +154,8 @@ package body Maintenance_Tests is
       Database.Close (DB);
 
       Database.Open (DB, Path);
-      R := Database.Catalog.Find_By_Name ("items", S);
+      R := Database.Catalog.Find_By_Name
+             (Database.Catalog_State_Key (DB), "items", S);
       Assert (Database.Status.Is_Ok (R), "catalog not preserved");
       Database.Transactions.Begin_Read (DB, Tx);
       R := Items.Find (Tx, DB, S, 1, Out_Item);
@@ -221,7 +222,8 @@ package body Maintenance_Tests is
       Database.Close (DB);
 
       Database.Open (DB, Path);
-      R := Database.Catalog.Find_By_Name ("items", S);
+      R := Database.Catalog.Find_By_Name
+             (Database.Catalog_State_Key (DB), "items", S);
       Assert (Database.Status.Is_Ok (R), "catalog not preserved");
       Database.Transactions.Begin_Read (DB, Tx);
       R := Items.Find (Tx, DB, S, 1, Out_Item);

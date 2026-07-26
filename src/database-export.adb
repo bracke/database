@@ -170,20 +170,21 @@ package body Database.Export is
       Write_Boolean (F, IX.Has_Expression);
    end Write_Index;
 
-   procedure Write_Relational_Metadata (F : in out Ada.Streams.Stream_IO.File_Type) is
+   procedure Write_Relational_Metadata
+     (State_Key : Natural; F : in out Ada.Streams.Stream_IO.File_Type) is
       FK_Total : Natural := 0;
    begin
       Write_Text (F, "RELATIONAL_METADATA_V1");
-      for T in 0 .. Database.Catalog.Table_Count - 1 loop
+      for T in 0 .. Database.Catalog.Table_Count (State_Key) - 1 loop
          FK_Total := FK_Total + Natural (Database.Catalog.Foreign_Keys_For_Referencing_Table
-           (Database.Catalog.Table_At (T).Table_Id).Length);
+           (State_Key, Database.Catalog.Table_At (State_Key, T).Table_Id).Length);
       end loop;
       Write_U32 (F, FK_Total);
-      for T in 0 .. Database.Catalog.Table_Count - 1 loop
+      for T in 0 .. Database.Catalog.Table_Count (State_Key) - 1 loop
          declare
             FKs : constant Database.Foreign_Keys.Foreign_Key_Vectors.Vector  :=
               Database.Catalog.Foreign_Keys_For_Referencing_Table
-                (Database.Catalog.Table_At (T).Table_Id);
+                (State_Key, Database.Catalog.Table_At (State_Key, T).Table_Id);
          begin
             for FK of FKs loop
                Write_Text (F, To_Wide_Wide_String (FK.Name));
@@ -204,14 +205,14 @@ package body Database.Export is
          end;
       end loop;
 
-      Write_U32 (F, Database.Catalog.Table_Count);
-      for T in 0 .. Database.Catalog.Table_Count - 1 loop
+      Write_U32 (F, Database.Catalog.Table_Count (State_Key));
+      for T in 0 .. Database.Catalog.Table_Count (State_Key) - 1 loop
          declare
-            S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (T);
+            S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (State_Key, T);
             Checks : constant Database.Check_Constraints.Check_Constraint_Vectors.Vector  :=
-              Database.Catalog.Check_Constraints_For_Table (S.Table_Id);
+              Database.Catalog.Check_Constraints_For_Table (State_Key, S.Table_Id);
             Gens : constant Database.Generated_Columns.Generated_Column_Vectors.Vector  :=
-              Database.Catalog.Generated_Columns_For_Table (S.Table_Id);
+              Database.Catalog.Generated_Columns_For_Table (State_Key, S.Table_Id);
          begin
             Write_U32 (F, S.Table_Id);
             Write_U32 (F, Natural (Checks.Length));
@@ -230,10 +231,10 @@ package body Database.Export is
          end;
       end loop;
 
-      Write_U32 (F, Database.Catalog.View_Count);
-      for I in 0 .. Database.Catalog.View_Count - 1 loop
+      Write_U32 (F, Database.Catalog.View_Count (State_Key));
+      for I in 0 .. Database.Catalog.View_Count (State_Key) - 1 loop
          declare
-            V : constant Database.Views.View_Definition := Database.Catalog.View_At (I);
+            V : constant Database.Views.View_Definition := Database.Catalog.View_At (State_Key, I);
          begin
             Write_U32 (F, Natural (V.Id));
             Write_Text (F, To_Wide_Wide_String (V.Name));
@@ -241,10 +242,10 @@ package body Database.Export is
          end;
       end loop;
 
-      Write_U32 (F, Database.Catalog.Materialized_View_Count);
-      for I in 0 .. Database.Catalog.Materialized_View_Count - 1 loop
+      Write_U32 (F, Database.Catalog.Materialized_View_Count (State_Key));
+      for I in 0 .. Database.Catalog.Materialized_View_Count (State_Key) - 1 loop
          declare MV : constant Database.Materialized_Views.Materialized_View_Definition  :=
-           Database.Catalog.Materialized_View_At (I);
+           Database.Catalog.Materialized_View_At (State_Key, I);
          begin
             Write_U32 (F, Natural (MV.Id));
             Write_Text (F, To_Wide_Wide_String (MV.Name));
@@ -255,7 +256,7 @@ package body Database.Export is
       end loop;
 
       declare Deps : constant Database.Extension_Metadata.Dependency_Vectors.Vector  :=
-        Database.Extensions.Dependencies;
+        Database.Extensions.Dependencies (State_Key);
       begin
          Write_U32 (F, Natural (Deps.Length));
          for D of Deps loop
@@ -336,11 +337,12 @@ package body Database.Export is
          Ada.Characters.Conversions.To_String (Destination));
       Write_Text (F, Magic);
       Write_U32 (F, 26);
-      Write_U32 (F, Database.Catalog.Table_Count);
-      if Database.Catalog.Table_Count > 0 then
-         for T in 0 .. Database.Catalog.Table_Count - 1 loop
+      Write_U32 (F, Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)));
+      if Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) > 0 then
+         for T in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) - 1 loop
             declare
-               S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (T);
+               S : constant Database.Schema.Table_Schema :=
+                 Database.Catalog.Table_At (Database.Catalog_State_Key (DB.all), T);
                C : Database.Storage.Table_Heap.Heap_Cursor;
                Row_Count : Natural := 0;
             begin
@@ -379,7 +381,7 @@ package body Database.Export is
             end;
          end loop;
       end if;
-      Write_Relational_Metadata (F);
+      Write_Relational_Metadata (Database.Catalog_State_Key (DB.all), F);
       Ada.Streams.Stream_IO.Close (F);
       if Options.Verify_After_Write and then
         not Ada.Directories.Exists

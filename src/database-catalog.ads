@@ -11,19 +11,12 @@ with Database.Full_Text.Indexes;
 
    --  Public nested package `Database.Catalog`.
 package Database.Catalog is
-   --  Selects the catalog registry owned by a database handle. Package-level
-   --  lookup APIs operate on the selected handle registry for compatibility
-   --  with earlier Ada-native APIs;
-   --  operations that receive a Handle select
-   --  automatically before reading or mutating catalog state.
-   --  @param State_Key state key argument supplied to the operation.
-   procedure Select_Database (State_Key : Natural);
    --  Perform drop database for the supplied database state or arguments.
    --  @param State_Key state key argument supplied to the operation.
    procedure Drop_Database (State_Key : Natural);
-   --  Public operation `Clear;
-   --  `. See the package documentation for transaction, ownership, and error-result semantics.
-   procedure Clear;
+   --  Clear the catalog registry owned by the given handle state key.
+   --  @param State_Key handle-owned state key selecting the catalog registry.
+   procedure Clear (State_Key : Natural);
    --  Public operation `Register`. See the package documentation for transaction, ownership, and error-result
    --  semantics.
    --  @param DB database handle used by the operation.
@@ -38,14 +31,16 @@ package Database.Catalog is
    --  @param Schema schema metadata used for validation or registration.
    --  @return Requested value or optional value according to the package contract.
    function Find_By_Name
-     (Name   : Wide_Wide_String;
+     (State_Key : Natural;
+      Name   : Wide_Wide_String;
       Schema : out Database.Schema.Table_Schema) return Database.Status.Result;
    --  Return find by id for the supplied database state or arguments.
    --  @param Table_Id table id argument supplied to the operation.
    --  @param Schema schema metadata used for validation or registration.
    --  @return Requested value or optional value according to the package contract.
    function Find_By_Id
-     (Table_Id : Natural;
+     (State_Key : Natural;
+      Table_Id : Natural;
       Schema   : out Database.Schema.Table_Schema) return Database.Status.Result;
    --  Public operation `Update_Table`. See the package documentation for transaction, ownership, and error-result
    --  semantics.
@@ -71,12 +66,12 @@ package Database.Catalog is
    --  Public operation `Table_Count`. See the package documentation for transaction, ownership, and error-result
    --  semantics.
    --  @return Number of items represented by the queried object.
-   function Table_Count return Natural;
+   function Table_Count (State_Key : Natural) return Natural;
    --  Public operation `Table_At`. See the package documentation for transaction, ownership, and error-result
    --  semantics.
    --  @param Index zero-based or package-defined index used by the operation.
    --  @return Result produced by the function.
-   function Table_At (Index : Natural) return Database.Schema.Table_Schema;
+   function Table_At (State_Key : Natural; Index : Natural) return Database.Schema.Table_Schema;
 
    --  Return add foreign key for the supplied database state or arguments.
    --  @param DB database handle used by the operation.
@@ -89,12 +84,14 @@ package Database.Catalog is
    --  @param Table_Id table id argument supplied to the operation.
    --  @return Result produced by the function.
    function Foreign_Keys_For_Referencing_Table
-     (Table_Id : Natural) return Database.Foreign_Keys.Foreign_Key_Vectors.Vector;
+     (State_Key : Natural;
+      Table_Id : Natural) return Database.Foreign_Keys.Foreign_Key_Vectors.Vector;
    --  Return foreign keys for referenced table for the supplied database state or arguments.
    --  @param Table_Id table id argument supplied to the operation.
    --  @return Result produced by the function.
    function Foreign_Keys_For_Referenced_Table
-     (Table_Id : Natural) return Database.Foreign_Keys.Foreign_Key_Vectors.Vector;
+     (State_Key : Natural;
+      Table_Id : Natural) return Database.Foreign_Keys.Foreign_Key_Vectors.Vector;
 
    --  Return add check constraint for the supplied database state or arguments.
    --  @param DB database handle used by the operation.
@@ -109,7 +106,8 @@ package Database.Catalog is
    --  @param Table_Id table id argument supplied to the operation.
    --  @return Result produced by the function.
    function Check_Constraints_For_Table
-     (Table_Id : Natural) return Database.Check_Constraints.Check_Constraint_Vectors.Vector;
+     (State_Key : Natural;
+      Table_Id : Natural) return Database.Check_Constraints.Check_Constraint_Vectors.Vector;
 
    --  Return add generated column for the supplied database state or arguments.
    --  @param DB database handle used by the operation.
@@ -124,7 +122,8 @@ package Database.Catalog is
    --  @param Table_Id table id argument supplied to the operation.
    --  @return Result produced by the function.
    function Generated_Columns_For_Table
-     (Table_Id : Natural) return Database.Generated_Columns.Generated_Column_Vectors.Vector;
+     (State_Key : Natural;
+      Table_Id : Natural) return Database.Generated_Columns.Generated_Column_Vectors.Vector;
 
    --  Return add view for the supplied database state or arguments.
    --  @param DB database handle used by the operation.
@@ -138,15 +137,16 @@ package Database.Catalog is
    --  @param View view argument supplied to the operation.
    --  @return Requested value or optional value according to the package contract.
    function Find_View
-     (Name : Wide_Wide_String;
+     (State_Key : Natural;
+      Name : Wide_Wide_String;
       View : out Database.Views.View_Definition) return Database.Status.Result;
    --  Return view count for the supplied database state or arguments.
    --  @return Number of items represented by the queried object.
-   function View_Count return Natural;
+   function View_Count (State_Key : Natural) return Natural;
    --  Return view at for the supplied database state or arguments.
    --  @param Index zero-based or package-defined index used by the operation.
    --  @return Result produced by the function.
-   function View_At (Index : Natural) return Database.Views.View_Definition;
+   function View_At (State_Key : Natural; Index : Natural) return Database.Views.View_Definition;
    --  Return update view for the supplied database state or arguments.
    --  @param DB database handle used by the operation.
    --  @param View view argument supplied to the operation.
@@ -167,16 +167,18 @@ package Database.Catalog is
    --  @param View view argument supplied to the operation.
    --  @return Requested value or optional value according to the package contract.
    function Find_Materialized_View
-     (Name : Wide_Wide_String;
+     (State_Key : Natural;
+      Name : Wide_Wide_String;
       View : out Database.Materialized_Views.Materialized_View_Definition) return Database.Status.Result;
    --  Return materialized view count for the supplied database state or arguments.
    --  @return Number of items represented by the queried object.
-   function Materialized_View_Count return Natural;
+   function Materialized_View_Count (State_Key : Natural) return Natural;
    --  Return materialized view at for the supplied database state or arguments.
    --  @param Index zero-based or package-defined index used by the operation.
    --  @return Result produced by the function.
    function Materialized_View_At
-     (Index : Natural) return Database.Materialized_Views.Materialized_View_Definition;
+     (State_Key : Natural;
+      Index : Natural) return Database.Materialized_Views.Materialized_View_Definition;
    --  Return update materialized view for the supplied database state or arguments.
    --  @param DB database handle used by the operation.
    --  @param View view argument supplied to the operation.
@@ -204,28 +206,30 @@ package Database.Catalog is
       Name : Wide_Wide_String) return Database.Status.Result;
    --  Return full text index definitions for the supplied database state or arguments.
    --  @return Result produced by the function.
-   function Full_Text_Index_Definitions return Database.Full_Text.Indexes.Metadata_Vectors.Vector;
+   function Full_Text_Index_Definitions (State_Key : Natural) return Database.Full_Text.Indexes.Metadata_Vectors.Vector;
 
    --  Row registry used by Ada-native integrity checks for in-memory tables.
    --  @param Table_Id table id argument supplied to the operation.
    --  @param Row row value supplied to or returned by the operation.
-   procedure Register_Row (Table_Id : Natural; Row : Database.Rows.Row);
+   procedure Register_Row (State_Key : Natural; Table_Id : Natural; Row : Database.Rows.Row);
    --  Perform remove row for the supplied database state or arguments.
    --  @param Table_Id table id argument supplied to the operation.
    --  @param Schema schema metadata used for validation or registration.
    --  @param Key_Row key row argument supplied to the operation.
-   procedure Remove_Row (Table_Id : Natural; Schema : Database.Schema.Table_Schema; Key_Row : Database.Rows.Row);
+   procedure Remove_Row
+     (State_Key : Natural; Table_Id : Natural; Schema : Database.Schema.Table_Schema; Key_Row : Database.Rows.Row);
    --  Perform replace row for the supplied database state or arguments.
    --  @param Table_Id table id argument supplied to the operation.
    --  @param Schema schema metadata used for validation or registration.
    --  @param Old_Row old row argument supplied to the operation.
    --  @param New_Row new row argument supplied to the operation.
    procedure Replace_Row
-     (Table_Id : Natural;
+     (State_Key : Natural;
+      Table_Id : Natural;
       Schema : Database.Schema.Table_Schema;
       Old_Row, New_Row : Database.Rows.Row);
    --  Return rows for table for the supplied database state or arguments.
    --  @param Table_Id table id argument supplied to the operation.
    --  @return Result produced by the function.
-   function Rows_For_Table (Table_Id : Natural) return Database.Foreign_Keys.Row_Vectors.Vector;
+   function Rows_For_Table (State_Key : Natural; Table_Id : Natural) return Database.Foreign_Keys.Row_Vectors.Vector;
 end Database.Catalog;

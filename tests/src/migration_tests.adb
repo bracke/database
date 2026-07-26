@@ -173,7 +173,9 @@ package body Migration_Tests is
       Database.Open (DB, Path);
       Assert
         (Database.Status.Is_Ok (Database.Last_Result (DB)), "reopen failed");
-      R := Database.Catalog.Find_By_Name ("people", Loaded);
+      R :=
+        Database.Catalog.Find_By_Name
+          (Database.Catalog_State_Key (DB), "people", Loaded);
       Assert (Database.Status.Is_Ok (R), "catalog load failed");
       Assert
         (Database.Schema.Column_Count (Loaded) = 3,
@@ -231,7 +233,9 @@ package body Migration_Tests is
       declare
          Loaded : Database.Schema.Table_Schema;
       begin
-         R := Database.Catalog.Find_By_Name ("people", Loaded);
+         R :=
+        Database.Catalog.Find_By_Name
+          (Database.Catalog_State_Key (DB), "people", Loaded);
          Assert
            (Database.Status.Is_Ok (R),
             "catalog read after explicit nullable add failed");
@@ -280,7 +284,9 @@ package body Migration_Tests is
       R :=
         Database.Migrations.Rename_Column (Tx, "people", "name", "full_name");
       Assert (Database.Status.Is_Ok (R), "rename failed");
-      R := Database.Catalog.Find_By_Name ("people", Loaded);
+      R :=
+        Database.Catalog.Find_By_Name
+          (Database.Catalog_State_Key (DB), "people", Loaded);
       Assert (Database.Status.Is_Ok (R), "catalog read failed");
       Assert
         (Database.Schema.Find_Column_Position (Loaded, "full_name")
@@ -334,7 +340,9 @@ package body Migration_Tests is
       Assert (Database.Status.Is_Ok (R), "rename failed");
       R := Database.Transactions.Rollback (Tx);
       Assert (Database.Status.Is_Ok (R), "rollback failed");
-      R := Database.Catalog.Find_By_Name ("people", Loaded);
+      R :=
+        Database.Catalog.Find_By_Name
+          (Database.Catalog_State_Key (DB), "people", Loaded);
       Assert (Database.Status.Is_Ok (R), "catalog read failed");
       Assert
         (Database.Schema.Find_Column_Position (Loaded, "name") /= Natural'Last,

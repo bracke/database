@@ -56,7 +56,7 @@ begin
    Database.Close (DB);
 
    Database.Open (DB, Path); pragma Assert (Database.Status.Is_Ok (Database.Last_Result (DB)), "open failed");
-   R := Database.Catalog.Find_By_Name ("users", S); pragma Assert (Database.Status.Is_Ok (R), "catalog lookup failed");
+   R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S); pragma Assert (Database.Status.Is_Ok (R), "catalog lookup failed");
    Database.Transactions.Begin_Read (DB, Tx);
    R := Users.Find (Tx, DB, S, 1, U); pragma Assert (Database.Status.Is_Ok (R), "find after reopen failed");
    R := Database.Transactions.Commit (Tx); pragma Assert (Database.Status.Is_Ok (R), "read commit failed");

@@ -93,19 +93,14 @@ package body Database is
       end Next_Full_Text;
    end State_Key_Counter;
 
+   --  Allocate the handle's catalog state key if it does not have one yet.
+   --  Per-subsystem state is resolved lazily from this key on first use; there
+   --  is no longer a process-global "current database" selection to warm.
    procedure Assign_Catalog_State_Key (DB : in out Handle) is
    begin
       if DB.Catalog_State_Key_Value = 0 then
          State_Key_Counter.Next_Catalog (DB.Catalog_State_Key_Value);
       end if;
-      Database.Catalog.Select_Database (DB.Catalog_State_Key_Value);
-      Database.Extensions.Select_Database (DB.Catalog_State_Key_Value);
-      Database.Functions.Select_Database (DB.Catalog_State_Key_Value);
-      Database.Aggregate_Functions.Select_Database (DB.Catalog_State_Key_Value);
-      Database.Collations.Select_Database (DB.Catalog_State_Key_Value);
-      Database.Full_Text.Tokenizers.Select_Database (DB.Catalog_State_Key_Value);
-      Database.Full_Text.Ranking.Select_Database (DB.Catalog_State_Key_Value);
-      Database.Validation_Hooks.Select_Database (DB.Catalog_State_Key_Value);
    end Assign_Catalog_State_Key;
 
    procedure Assign_Full_Text_State_Key (DB : in out Handle) is
@@ -113,7 +108,6 @@ package body Database is
       if DB.FT_State_Key = 0 then
          State_Key_Counter.Next_Full_Text (DB.FT_State_Key);
       end if;
-      Database.Full_Text.Select_Database (DB.FT_State_Key);
    end Assign_Full_Text_State_Key;
 
    procedure Open_In_Memory (DB : out Handle) is
@@ -122,9 +116,9 @@ package body Database is
       DB.Last := Database.Status.Success;
       Assign_Catalog_State_Key (DB);
       Assign_Full_Text_State_Key (DB);
-      Database.Catalog.Clear;
-      Database.Full_Text.Clear;
-      Database.Extensions.Clear;
+      Database.Catalog.Clear (DB.Catalog_State_Key_Value);
+      Database.Full_Text.Clear (DB.FT_State_Key);
+      Database.Extensions.Clear (DB.Catalog_State_Key_Value);
    end Open_In_Memory;
 
    procedure Create (DB : out Handle; Path : Wide_Wide_String) is
@@ -136,15 +130,14 @@ package body Database is
          Assign_Catalog_State_Key (DB);
          Assign_Full_Text_State_Key (DB);
          Database.Storage.Free_List.Initialize_From_File (DB.Page_Allocator, DB.File);
-         Database.Catalog.Clear;
-         Database.Full_Text.Clear;
-         Database.Extensions.Clear;
+         Database.Catalog.Clear (DB.Catalog_State_Key_Value);
+         Database.Full_Text.Clear (DB.FT_State_Key);
+         Database.Extensions.Clear (DB.Catalog_State_Key_Value);
          DB.Last := Database.Catalog.Save (DB);
          if Database.Status.Is_Ok (DB.Last) then
-            DB.Last := Database.Full_Text.Save (Path);
+            DB.Last := Database.Full_Text.Save (DB.FT_State_Key, Path);
          end if;
          if Database.Status.Is_Ok (DB.Last) then
-            Database.Extensions.Select_Database (DB.Catalog_State_Key_Value);
             DB.Last := Database.Extensions.Save (Path);
          end if;
       end if;
@@ -165,15 +158,14 @@ package body Database is
          Assign_Catalog_State_Key (DB);
          Assign_Full_Text_State_Key (DB);
          Database.Storage.Free_List.Initialize_From_File (DB.Page_Allocator, DB.File);
-         Database.Catalog.Clear;
-         Database.Full_Text.Clear;
-         Database.Extensions.Clear;
+         Database.Catalog.Clear (DB.Catalog_State_Key_Value);
+         Database.Full_Text.Clear (DB.FT_State_Key);
+         Database.Extensions.Clear (DB.Catalog_State_Key_Value);
          DB.Last := Database.Catalog.Save (DB);
          if Database.Status.Is_Ok (DB.Last) then
-            DB.Last := Database.Full_Text.Save (Path);
+            DB.Last := Database.Full_Text.Save (DB.FT_State_Key, Path);
          end if;
          if Database.Status.Is_Ok (DB.Last) then
-            Database.Extensions.Select_Database (DB.Catalog_State_Key_Value);
             DB.Last := Database.Extensions.Save (Path);
          end if;
       end if;
@@ -204,13 +196,12 @@ package body Database is
             --  references; Catalog.Load derived the high-water mark from the
             --  heap (covers both replayed-WAL and clean-checkpoint reopens).
             Database.Transactions.Reserve_Ids_Through (DB.Max_Persisted_Tx);
-            Database.Full_Text.Select_Database (DB.FT_State_Key);
             DB.Last := Database.Full_Text.Load (DB, Path);
             if Database.Status.Is_Ok (DB.Last) then
-               DB.Version := Natural'Max (DB.Version, Database.Full_Text.Max_Commit_Version);
+               DB.Version := Natural'Max
+                 (DB.Version, Database.Full_Text.Max_Commit_Version (DB.FT_State_Key));
             end if;
             if Database.Status.Is_Ok (DB.Last) then
-               Database.Extensions.Select_Database (DB.Catalog_State_Key_Value);
                DB.Last := Database.Extensions.Load (Path);
             end if;
          end if;
@@ -257,13 +248,12 @@ package body Database is
             --  references; Catalog.Load derived the high-water mark from the
             --  heap (covers both replayed-WAL and clean-checkpoint reopens).
             Database.Transactions.Reserve_Ids_Through (DB.Max_Persisted_Tx);
-            Database.Full_Text.Select_Database (DB.FT_State_Key);
             DB.Last := Database.Full_Text.Load (DB, Path);
             if Database.Status.Is_Ok (DB.Last) then
-               DB.Version := Natural'Max (DB.Version, Database.Full_Text.Max_Commit_Version);
+               DB.Version := Natural'Max
+                 (DB.Version, Database.Full_Text.Max_Commit_Version (DB.FT_State_Key));
             end if;
             if Database.Status.Is_Ok (DB.Last) then
-               Database.Extensions.Select_Database (DB.Catalog_State_Key_Value);
                DB.Last := Database.Extensions.Load (Path);
             end if;
          end if;
@@ -289,11 +279,10 @@ package body Database is
       if DB.Kind = Persistent_Backend then
          DB.Last := Database.Catalog.Save (DB);
          if Database.Status.Is_Ok (DB.Last) then
-            Database.Full_Text.Select_Database (DB.FT_State_Key);
-            DB.Last := Database.Full_Text.Save (Database.Storage.File_IO.Path (DB.File));
+            DB.Last := Database.Full_Text.Save
+              (DB.FT_State_Key, Database.Storage.File_IO.Path (DB.File));
          end if;
          if Database.Status.Is_Ok (DB.Last) then
-            Database.Extensions.Select_Database (DB.Catalog_State_Key_Value);
             DB.Last := Database.Extensions.Save (Database.Storage.File_IO.Path (DB.File));
          end if;
          if Database.Status.Is_Ok (DB.Last) then
@@ -319,12 +308,10 @@ package body Database is
       --  handle is closed. This prevents stale state from a closed handle from
       --  being visible if another handle later receives a different state key.
       if DB.FT_State_Key /= 0 then
-         Database.Full_Text.Select_Database (DB.FT_State_Key);
-         Database.Full_Text.Clear;
+         Database.Full_Text.Clear (DB.FT_State_Key);
       end if;
       if DB.Catalog_State_Key_Value /= 0 then
-         Database.Extensions.Select_Database (DB.Catalog_State_Key_Value);
-         Database.Extensions.Clear;
+         Database.Extensions.Clear (DB.Catalog_State_Key_Value);
       end if;
       if DB.Catalog_State_Key_Value /= 0 then
          Database.Catalog.Drop_Database (DB.Catalog_State_Key_Value);

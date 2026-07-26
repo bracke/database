@@ -136,11 +136,12 @@ package body Database.Full_Text.Indexes is
    end Add_Posting;
 
    procedure Index_Row
-     (Index   : in out Full_Text_Index;
-      Tx      : in out Database.Transactions.Transaction;
-      Row_Id  : Natural;
-      Row_Key : Wide_Wide_String;
-      Row     : Database.Rows.Row) is
+     (Index         : in out Full_Text_Index;
+      Tx            : in out Database.Transactions.Transaction;
+      Row_Id        : Natural;
+      Row_Key       : Wide_Wide_String;
+      Row           : Database.Rows.Row;
+      Tokenizer_Key : Natural) is
       Col : constant Natural := Index.Metadata.Column_Id;
    begin
       if Col >= Database.Rows.Column_Count (Row) then
@@ -153,7 +154,8 @@ package body Database.Full_Text.Indexes is
             return;
          end if;
          declare Tokens : constant Database.Full_Text.Tokenizers.Token_Vectors.Vector  :=
-            Database.Full_Text.Tokenizers.Tokenize (To_Wide_Wide_String (V.Text), Index.Metadata.Tokenizer);
+            Database.Full_Text.Tokenizers.Tokenize
+              (Tokenizer_Key, To_Wide_Wide_String (V.Text), Index.Metadata.Tokenizer);
          begin
             Register_Document (Index, Row_Id, Row_Key, Natural (Tokens.Length));
             for T of Tokens loop
@@ -178,10 +180,11 @@ package body Database.Full_Text.Indexes is
    end Index_Row;
 
    procedure Index_Row_Committed
-     (Index   : in out Full_Text_Index;
-      Row_Id  : Natural;
-      Row_Key : Wide_Wide_String;
-      Row     : Database.Rows.Row) is
+     (Index         : in out Full_Text_Index;
+      Row_Id        : Natural;
+      Row_Key       : Wide_Wide_String;
+      Row           : Database.Rows.Row;
+      Tokenizer_Key : Natural) is
       Col : constant Natural := Index.Metadata.Column_Id;
    begin
       if Col >= Database.Rows.Column_Count (Row) then
@@ -194,7 +197,8 @@ package body Database.Full_Text.Indexes is
             return;
          end if;
          declare Tokens : constant Database.Full_Text.Tokenizers.Token_Vectors.Vector  :=
-            Database.Full_Text.Tokenizers.Tokenize (To_Wide_Wide_String (V.Text), Index.Metadata.Tokenizer);
+            Database.Full_Text.Tokenizers.Tokenize
+              (Tokenizer_Key, To_Wide_Wide_String (V.Text), Index.Metadata.Tokenizer);
          begin
             Register_Document (Index, Row_Id, Row_Key, Natural (Tokens.Length));
             for T of Tokens loop

@@ -18,6 +18,7 @@ with Ada.Strings.Wide_Wide_Unbounded;
 with Ada.Text_IO;
 
 with Database;
+with Database.Collations;
 with Database.Rows;
 with Database.Schema;
 with Database.Status;
@@ -28,9 +29,20 @@ with Database.Values;
 
 procedure Concurrency_Soak is
 
+   use Ada.Strings.Wide_Wide_Unbounded;
+
    Workers_Per_Round : constant := 6;
    Rows_Per_Worker   : constant := 40;
    Reads_Per_Worker  : constant := 40;
+
+   --  A library-level collation, registered per worker into that worker's own
+   --  handle-keyed collation registry. Exercising a callable registry under
+   --  concurrent multi-database load is the point: since Phase 4 no longer
+   --  warms these registries at Open, they are otherwise untouched by this
+   --  soak, and every uniform subsystem shares the same Database.State_Registry
+   --  generic + keyed winner-race, so validating one validates that path.
+   function Reverse_Cmp (Left, Right : Wide_Wide_String) return Integer is
+     (if Left = Right then 0 elsif Left > Right then -1 else 1);
 
    type Item is record
       Id    : Integer;
@@ -104,6 +116,35 @@ procedure Concurrency_Soak is
       if not Database.Status.Is_Ok (R) then
          Outcome.Fail;
       else
+         --  Concurrently register + use a callable registry on this worker's
+         --  own database, then confirm isolation (own collation present, a
+         --  never-registered name absent -- a leaked/corrupt registry would
+         --  fail one of these, and TSan flags any data race on the shared
+         --  keyed registry).
+         declare
+            CM  : Database.Collations.Collation_Metadata;
+            Cmp : Integer;
+            CR  : Database.Status.Result;
+         begin
+            CM.Name := To_Unbounded_Wide_Wide_String ("wcoll");
+            CM.Compatibility_Id := To_Unbounded_Wide_Wide_String ("wcoll1");
+            CR := Database.Collations.Register_Collation
+              (DB, CM, Reverse_Cmp'Unrestricted_Access);
+            if not Database.Status.Is_Ok (CR) then
+               Outcome.Fail;
+            end if;
+            CR := Database.Collations.Compare
+              (Database.Catalog_State_Key (DB), "wcoll", "b", "a", Cmp);
+            if not Database.Status.Is_Ok (CR) or else Cmp >= 0 then
+               Outcome.Fail;
+            end if;
+            CR := Database.Collations.Compare
+              (Database.Catalog_State_Key (DB), "absent_coll", "b", "a", Cmp);
+            if Database.Status.Is_Ok (CR) then
+               Outcome.Fail;  --  a collation this DB never registered leaked in
+            end if;
+         end;
+
          for K in 1 .. Rows_Per_Worker loop
             Database.Transactions.Begin_Write (DB, Tx);
             R := Items.Insert

@@ -11,23 +11,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out database
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: database
       - name: Check out cryptolib sibling
         # database.gpr withs ../cryptolib/cryptolib.gpr (database-crypto/-keys use it).
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/cryptolib
           path: cryptolib
       - name: Check out project_tools sibling
         # tools/tools.gpr (the check_all validator) withs ../../project_tools.
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/project_tools
           path: project_tools
       - name: Set up Alire
-        uses: alire-project/setup-alire@v5
+        uses: alire-project/setup-alire@v6
         with:
           toolchain: gnat_native=15.2.1 gprbuild
       - name: Install GNATprove and GNATdoc
@@ -78,17 +78,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out database
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: database
       - name: Check out cryptolib sibling
         # database.gpr withs ../cryptolib/cryptolib.gpr.
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/cryptolib
           path: cryptolib
       - name: Set up Alire
-        uses: alire-project/setup-alire@v5
+        uses: alire-project/setup-alire@v6
         with:
           toolchain: gnat_native=15.2.1 gprbuild
       - name: Build cryptolib sibling

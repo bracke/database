@@ -421,11 +421,12 @@ begin
        new String'("tests.gpr")]);
    Run ("AUnit tests", Root & "/tests", "./bin/tests", []);
    Clean_Generated_Artifacts;
+   --  `alr build` (not `alr exec -- gprbuild`) so Alire regenerates the
+   --  gitignored config/database_inspect_config.gpr that Clean_Generated_Artifacts
+   --  just removed; a raw gprbuild cannot find it and fails.
    Run
      ("database_inspect build", Root & "/database_inspect", Alr,
-      [new String'("exec"), new String'("--"), new String'("gprbuild"),
-       new String'("-p"), new String'("-j1"), new String'("-P"),
-       new String'("database_inspect.gpr")]);
+      [new String'("--non-interactive"), new String'("build")]);
    Run
      ("database_inspect help smoke", Root, "database_inspect/bin/database_inspect",
       [new String'("--help")],

@@ -505,40 +505,26 @@ begin
       Quiet => True);
    Clean_Generated_Artifacts;
    Run
-     ("minimal example build", Root, Alr,
-      [new String'("exec"), new String'("--"), new String'("gprbuild"),
-       new String'("-p"), new String'("-j1"), new String'("-P"),
-       new String'("examples/minimal/minimal.gpr")]);
+     ("minimal example build", Root & "/examples/minimal", Alr,
+      [new String'("--non-interactive"), new String'("build")]);
    Run
-     ("persistent example build", Root, Alr,
-      [new String'("exec"), new String'("--"), new String'("gprbuild"),
-       new String'("-p"), new String'("-j1"), new String'("-P"),
-       new String'("examples/persistent/persistent.gpr")]);
+     ("persistent example build", Root & "/examples/persistent", Alr,
+      [new String'("--non-interactive"), new String'("build")]);
    Run
-     ("queries example build", Root, Alr,
-      [new String'("exec"), new String'("--"), new String'("gprbuild"),
-       new String'("-p"), new String'("-j1"), new String'("-P"),
-       new String'("examples/queries/queries.gpr")]);
+     ("queries example build", Root & "/examples/queries", Alr,
+      [new String'("--non-interactive"), new String'("build")]);
    Run
-     ("migrations example build", Root, Alr,
-      [new String'("exec"), new String'("--"), new String'("gprbuild"),
-       new String'("-p"), new String'("-j1"), new String'("-P"),
-       new String'("examples/migrations/migrations.gpr")]);
+     ("migrations example build", Root & "/examples/migrations", Alr,
+      [new String'("--non-interactive"), new String'("build")]);
    Run
-     ("concurrency example build", Root, Alr,
-      [new String'("exec"), new String'("--"), new String'("gprbuild"),
-       new String'("-p"), new String'("-j1"), new String'("-P"),
-       new String'("examples/concurrency/concurrency.gpr")]);
+     ("concurrency example build", Root & "/examples/concurrency", Alr,
+      [new String'("--non-interactive"), new String'("build")]);
    Run
-     ("integrity_check example build", Root, Alr,
-      [new String'("exec"), new String'("--"), new String'("gprbuild"),
-       new String'("-p"), new String'("-j1"), new String'("-P"),
-       new String'("examples/integrity_check/integrity_check.gpr")]);
+     ("integrity_check example build", Root & "/examples/integrity_check", Alr,
+      [new String'("--non-interactive"), new String'("build")]);
    Run
-     ("typed_table example build", Root, Alr,
-      [new String'("exec"), new String'("--"), new String'("gprbuild"),
-       new String'("-p"), new String'("-j1"), new String'("-P"),
-       new String'("examples/typed_table/typed_table.gpr")]);
+     ("typed_table example build", Root & "/examples/typed_table", Alr,
+      [new String'("--non-interactive"), new String'("build")]);
    Run ("typed_table example run", Root, "examples/typed_table/bin/main", []);
    Project_Tools.Files.Delete_Tree ("/tmp/database_gnatdoc");
    Ada.Directories.Create_Path (Root & "/obj");

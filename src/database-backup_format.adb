@@ -129,8 +129,16 @@ package body Database.Backup_Format is
    is
       F : Ada.Wide_Wide_Text_IO.File_Type;
    begin
+         --  The manifest is UTF-8, said here rather than left to the build.
+         --  Wide_Wide_Text_IO takes its encoding from the binder switch, so
+         --  without this the format on disk depends on how the program was
+         --  compiled -- and a backup written by one build would be read wrong
+         --  by another.
       Ada.Wide_Wide_Text_IO.Create
-        (F, Ada.Wide_Wide_Text_IO.Out_File, Native (Manifest_Path (Backup_Path)));
+        (F,
+         Ada.Wide_Wide_Text_IO.Out_File,
+         Native (Manifest_Path (Backup_Path)),
+         Form => "wcem=8");
       Put_Line_WW (F, "DATABASE_BACKUP_MANIFEST 1");
       Put_Line_WW (F, "database_format_version=" &
                      Natural'Wide_Wide_Image (Item.Database_Format_Version));
@@ -235,7 +243,10 @@ package body Database.Backup_Format is
            (Database.Status.Corrupt_Backup, "backup manifest is missing");
       end if;
       Ada.Wide_Wide_Text_IO.Open
-        (F, Ada.Wide_Wide_Text_IO.In_File, Native (Manifest_Path (Backup_Path)));
+        (F,
+         Ada.Wide_Wide_Text_IO.In_File,
+         Native (Manifest_Path (Backup_Path)),
+         Form => "wcem=8");
       if Ada.Wide_Wide_Text_IO.End_Of_File (F) then
          Ada.Wide_Wide_Text_IO.Close (F);
          return Database.Status.Failure

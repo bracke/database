@@ -183,10 +183,13 @@ package body Database.Tracing is
          Ada.Wide_Wide_Text_IO.Close (File);
          File_Enabled := False;
       end if;
+      --  UTF-8 by declaration, not by build switch; see the note in
+      --  Database.Backup_Format.
       Ada.Wide_Wide_Text_IO.Create
         (File => File,
          Mode => Ada.Wide_Wide_Text_IO.Out_File,
-         Name => Path);
+         Name => Path,
+         Form => "wcem=8");
       File_Enabled := True;
       return Database.Status.Success;
    exception

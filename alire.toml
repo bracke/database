@@ -7,7 +7,8 @@ maintainers = ["Bent Bracke <bent@bracke.dk>"]
 maintainers-logins = ["bracke"]
 project-files = ["database.gpr"]
 website = "https://github.com/bracke/database"
-tags = ["database", "storage", "sql", "ada"]
+long-description = "database is an Ada 2022, Ada-native, strictly typed relational storage engine. It deliberately implements no SQL, no SQL parser, no server mode and no clustering: applications use Ada APIs, explicit schemas, typed row values and explicit mapping functions instead. The engine covers typed values, rows, schemas and metadata, transaction-scoped access, process-level persistent file locking, persistent page, file and record storage, and recovery through a rollback journal and a write-ahead log."
+tags = ["database", "storage", "sql", "relational"]
 
 [[depends-on]]
 gnat_native = "=15.2.1"

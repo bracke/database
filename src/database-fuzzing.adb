@@ -87,7 +87,7 @@ package body Database.Fuzzing is
       R : Database.Status.Result;
    begin
       Delete_If_Exists (WPath);
-      Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Native (WPath));
+      Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Native (WPath), Form => "shared=no");
       if Data'Length > 0 then
          Ada.Streams.Stream_IO.Write (File, Data);
       end if;
@@ -146,7 +146,7 @@ package body Database.Fuzzing is
          Ada.Directories.Create_Path (Native (Dir));
       end if;
       Delete_If_Exists (Manifest_Path);
-      Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Native (Manifest_Path));
+      Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Native (Manifest_Path), Form => "shared=no");
       if Data'Length > 0 then
          Ada.Streams.Stream_IO.Write (File, Data);
       end if;
@@ -215,7 +215,7 @@ package body Database.Fuzzing is
       Delete_If_Exists (Source);
       Delete_If_Exists (DB_Path);
       Delete_If_Exists (Database.WAL.WAL_Path (DB_Path));
-      Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Native (Source));
+      Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Native (Source), Form => "shared=no");
       if Data'Length > 0 then
          Ada.Streams.Stream_IO.Write (File, Data);
       end if;

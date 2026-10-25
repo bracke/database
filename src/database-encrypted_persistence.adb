@@ -226,7 +226,7 @@ package body Database.Encrypted_Persistence is
       Raw  : Stream_Element_Array (0 .. Stream_Element_Offset (Data'Length - 1));
       Last : Stream_Element_Offset;
    begin
-      Ada.Streams.Stream_IO.Open (File, Ada.Streams.Stream_IO.In_File, Native (Path));
+      Ada.Streams.Stream_IO.Open (File, Ada.Streams.Stream_IO.In_File, Native (Path), Form => "shared=no");
       Ada.Streams.Stream_IO.Read (File, Raw, Last);
       Ada.Streams.Stream_IO.Close (File);
       if Last /= Raw'Last then
@@ -292,7 +292,7 @@ package body Database.Encrypted_Persistence is
       if Ada.Directories.Exists (Native (Tmp_Path)) then
          Ada.Directories.Delete_File (Native (Tmp_Path));
       end if;
-      Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Native (Tmp_Path));
+      Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Native (Tmp_Path), Form => "shared=no");
       Ada.Streams.Stream_IO.Write (File, To_Stream (H));
       Ada.Streams.Stream_IO.Write (File, To_Stream (Ciphertext));
       Ada.Streams.Stream_IO.Flush (File);
@@ -464,7 +464,7 @@ package body Database.Encrypted_Persistence is
          Raw   : Stream_Element_Array (0 .. Stream_Element_Offset (Header_Size - 1));
          Last  : Stream_Element_Offset;
       begin
-         Ada.Streams.Stream_IO.Open (File, Ada.Streams.Stream_IO.In_File, Native (Path));
+         Ada.Streams.Stream_IO.Open (File, Ada.Streams.Stream_IO.In_File, Native (Path), Form => "shared=no");
          Ada.Streams.Stream_IO.Read (File, Raw, Last);
          Ada.Streams.Stream_IO.Close (File);
          if Last /= Raw'Last then
@@ -558,7 +558,7 @@ package body Database.Encrypted_Persistence is
             end;
             Data (Offset) := Data (Offset) xor Mask;
             Ada.Directories.Delete_File (Native (Actual));
-            Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Native (Actual));
+            Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Native (Actual), Form => "shared=no");
             Ada.Streams.Stream_IO.Write (File, To_Stream (Data));
             Ada.Streams.Stream_IO.Close (File);
          end;
@@ -596,8 +596,8 @@ package body Database.Encrypted_Persistence is
       if Ada.Directories.Exists (Native (Tmp_Path)) then
          Ada.Directories.Delete_File (Native (Tmp_Path));
       end if;
-      Ada.Streams.Stream_IO.Open (Inp, Ada.Streams.Stream_IO.In_File, Native (Path));
-      Ada.Streams.Stream_IO.Create (Outp, Ada.Streams.Stream_IO.Out_File, Native (Tmp_Path));
+      Ada.Streams.Stream_IO.Open (Inp, Ada.Streams.Stream_IO.In_File, Native (Path), Form => "shared=no");
+      Ada.Streams.Stream_IO.Create (Outp, Ada.Streams.Stream_IO.Out_File, Native (Tmp_Path), Form => "shared=no");
       if New_Size > 0 then
          declare
             Data : Stream_Element_Array (0 .. Stream_Element_Offset (New_Size - 1));

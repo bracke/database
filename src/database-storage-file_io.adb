@@ -568,7 +568,7 @@ package body Database.Storage.File_IO is
          return Lock_Result;
       end if;
       Delete_Encrypted_Page_Sidecars (Path);
-      Ada.Streams.Stream_IO.Create (F.File, Out_File, Native (Path));
+      Ada.Streams.Stream_IO.Create (F.File, Out_File, Native (Path), Form => "shared=no");
       F.Opened := True;
       F.Name := To_Unbounded_Wide_Wide_String (Path);
       Initialize (P, 0, Header_Page);
@@ -656,7 +656,7 @@ package body Database.Storage.File_IO is
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Path));
+      Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Path), Form => "shared=no");
       F.Opened := True;
       F.Name := To_Unbounded_Wide_Wide_String (Path);
       R := Read_Page (F, 0, Header_Page, P);
@@ -751,8 +751,8 @@ package body Database.Storage.File_IO is
       end if;
       Ada.Streams.Stream_IO.Close (F.File);
       F.Opened := False;
-      Ada.Streams.Stream_IO.Open (Inp, In_File, Native (Old_Path));
-      Ada.Streams.Stream_IO.Create (Outp, Out_File, Native (Tmp_Path));
+      Ada.Streams.Stream_IO.Open (Inp, In_File, Native (Old_Path), Form => "shared=no");
+      Ada.Streams.Stream_IO.Create (Outp, Out_File, Native (Tmp_Path), Form => "shared=no");
       if Count > 0 then
          for I in 0 .. Count - 1 loop
             Set_Index (Inp, Positive_Count (I * Page_Size + 1));
@@ -767,7 +767,7 @@ package body Database.Storage.File_IO is
                exception
                   when others => null;
                end;
-               Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Old_Path));
+               Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Old_Path), Form => "shared=no");
                F.Opened := True;
                return Database.Status.Failure (Database.Status.Corrupt_File, "short read during truncate");
             end if;
@@ -782,7 +782,7 @@ package body Database.Storage.File_IO is
          if Ada.Directories.Exists (Native (Tmp_Path)) then
             Ada.Directories.Delete_File (Native (Tmp_Path));
          end if;
-         Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Old_Path));
+         Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Old_Path), Form => "shared=no");
          F.Opened := True;
          return R;
       end if;
@@ -792,14 +792,14 @@ package body Database.Storage.File_IO is
       Ada.Directories.Rename (Native (Tmp_Path), Native (Old_Path));
       R := Sync_Parent_Directory (Old_Path);
       if not Database.Status.Is_Ok (R) then
-         Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Old_Path));
+         Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Old_Path), Form => "shared=no");
          F.Opened := True;
          return R;
       end if;
       if F.Encrypted then
          Delete_Encrypted_Page_Sidecars_From (Old_Path, Count);
       end if;
-      Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Old_Path));
+      Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Old_Path), Form => "shared=no");
       F.Opened := True;
       return Database.Status.Success;
    exception
@@ -815,7 +815,7 @@ package body Database.Storage.File_IO is
                Ada.Streams.Stream_IO.Open
                  (F.File,
                   In_File,
-                  Native (Old_Path));
+                  Native (Old_Path), Form => "shared=no");
                F.Opened := True;
             end if;
          exception

@@ -81,8 +81,8 @@ package body Database.Crash_Harness is
          return;
       end if;
       Delete_If_Exists (Temp);
-      SIO.Open (In_File, SIO.In_File, Native (Path));
-      SIO.Create (Out_File, SIO.Out_File, Native (Temp));
+      SIO.Open (In_File, SIO.In_File, Native (Path), Form => "shared=no");
+      SIO.Create (Out_File, SIO.Out_File, Native (Temp), Form => "shared=no");
       while not SIO.End_Of_File (In_File) and then Written < Last_Byte loop
          SIO.Read (In_File, Buffer, Last);
          exit when Last < Buffer'First;
@@ -251,7 +251,7 @@ package body Database.Crash_Harness is
       for I in Bytes'Range loop
          Bytes (I) := Ada.Streams.Stream_Element (Cipher (Integer (I - Bytes'First)));
       end loop;
-      SIO.Create (F, SIO.Out_File, Native (Path));
+      SIO.Create (F, SIO.Out_File, Native (Path), Form => "shared=no");
       SIO.Write (F, Bytes);
       SIO.Close (F);
       Truncate_File_To (Path, 7);
@@ -276,7 +276,7 @@ package body Database.Crash_Harness is
    begin
       Delete_If_Exists (Backup_Path);
       Ada.Directories.Create_Directory (Native (Backup_Path));
-      SIO.Create (F, SIO.Out_File, Native (Manifest_Path));
+      SIO.Create (F, SIO.Out_File, Native (Manifest_Path), Form => "shared=no");
       SIO.Write (F, Bytes);
       SIO.Close (F);
       GNAT.OS_Lib.OS_Exit (Crash_Exit_Code);
@@ -459,7 +459,7 @@ package body Database.Crash_Harness is
                Raw : Ada.Streams.Stream_Element_Array (1 .. 7) := [others => 0];
                Last : Ada.Streams.Stream_Element_Offset;
             begin
-               SIO.Open (EF, SIO.In_File, Native (Path));
+               SIO.Open (EF, SIO.In_File, Native (Path), Form => "shared=no");
                SIO.Read (EF, Raw, Last);
                SIO.Close (EF);
                for I in Raw'First .. Last loop

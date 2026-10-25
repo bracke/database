@@ -1084,7 +1084,7 @@ package body Database.Full_Text is
       State : constant Full_Text_State_Access := State_For (State_Key);
       F : File_Type;
    begin
-      Create (F, Out_File, Sidecar_Path (Path));
+      Create (F, Out_File, Sidecar_Path (Path), Form => "shared=no");
       Put_Line (F, "DATABASE_FULL_TEXT_V2");
       Put_Line (F, Natural'Wide_Wide_Image (Owned_Index_Count (State_Key)));
       for IX of State.all.FT_Indexes loop
@@ -1275,7 +1275,7 @@ package body Database.Full_Text is
       if not Ada.Directories.Exists (Sidecar_Path (Path)) then
          return Database.Status.Success;
       end if;
-      Open (F, In_File, Sidecar_Path (Path));
+      Open (F, In_File, Sidecar_Path (Path), Form => "shared=no");
       Get_Line (F, Line, Last);
       if Line (1 .. Last) = "DATABASE_FULL_TEXT_V2" then
          Header_Is_V2 := True;

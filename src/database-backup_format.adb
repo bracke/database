@@ -77,7 +77,7 @@ package body Database.Backup_Format is
       if not Ada.Directories.Exists (Native (Path)) then
          return 0;
       end if;
-      Ada.Streams.Stream_IO.Open (F, Ada.Streams.Stream_IO.In_File, Native (Path));
+      Ada.Streams.Stream_IO.Open (F, Ada.Streams.Stream_IO.In_File, Native (Path), Form => "shared=no");
       while not Ada.Streams.Stream_IO.End_Of_File (F) loop
          Ada.Streams.Stream_IO.Read (F, Buf, Last);
          for I in Buf'First .. Last loop

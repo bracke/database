@@ -334,7 +334,7 @@ package body Database.Export is
 
       Ada.Streams.Stream_IO.Create
         (F, Ada.Streams.Stream_IO.Out_File,
-         Ada.Characters.Conversions.To_String (Destination));
+         Ada.Characters.Conversions.To_String (Destination), Form => "shared=no");
       Write_Text (F, Magic);
       Write_U32 (F, 26);
       Write_U32 (F, Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)));

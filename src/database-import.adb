@@ -802,7 +802,7 @@ package body Database.Import is
 
       Ada.Streams.Stream_IO.Open
         (F, Ada.Streams.Stream_IO.In_File,
-         Ada.Characters.Conversions.To_String (Source));
+         Ada.Characters.Conversions.To_String (Source), Form => "shared=no");
       if not Read_Text (F, Header)
         or else (To_Wide_Wide_String (Header) /= Magic_20 and then To_Wide_Wide_String (Header) /= Magic_26)
         or else not Read_U32 (F, Version)

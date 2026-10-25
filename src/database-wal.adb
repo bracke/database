@@ -278,9 +278,9 @@ package body Database.WAL is
       if W.Opened then
          return Database.Status.Failure (Database.Status.Already_Open, "WAL already open");
       end if;
-      Ada.Streams.Stream_IO.Create (W.File, Out_File, Native (WAL_Path (Database_Path)));
+      Ada.Streams.Stream_IO.Create (W.File, Out_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
       Ada.Streams.Stream_IO.Close (W.File);
-      Ada.Streams.Stream_IO.Open (W.File, Out_File, Native (WAL_Path (Database_Path)));
+      Ada.Streams.Stream_IO.Open (W.File, Out_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
       W.Opened := True;
       W.DB_Path := To_Unbounded_Wide_Wide_String (Database_Path);
       Database.Log_Sequence.Reset (W.Generator);
@@ -331,7 +331,7 @@ package body Database.WAL is
             return Normalize_Result;
          end if;
       end;
-      Ada.Streams.Stream_IO.Open (W.File, In_File, Native (WAL_Path (Database_Path)));
+      Ada.Streams.Stream_IO.Open (W.File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
       W.Opened := True;
       W.DB_Path := To_Unbounded_Wide_Wide_String (Database_Path);
       Load_Generator_From_File (W);
@@ -691,12 +691,12 @@ package body Database.WAL is
       end if;
 
       if New_Size = 0 then
-         Ada.Streams.Stream_IO.Create (Outp, Out_File, Native (Tmp_Path));
+         Ada.Streams.Stream_IO.Create (Outp, Out_File, Native (Tmp_Path), Form => "shared=no");
          Ada.Streams.Stream_IO.Flush (Outp);
          Ada.Streams.Stream_IO.Close (Outp);
       else
-         Ada.Streams.Stream_IO.Open (Inp, In_File, Native (Source_Path));
-         Ada.Streams.Stream_IO.Create (Outp, Out_File, Native (Tmp_Path));
+         Ada.Streams.Stream_IO.Open (Inp, In_File, Native (Source_Path), Form => "shared=no");
+         Ada.Streams.Stream_IO.Create (Outp, Out_File, Native (Tmp_Path), Form => "shared=no");
          while Remaining > 0 loop
             declare
                Want : constant Natural := Natural'Min (Remaining, Buffer'Length);
@@ -767,7 +767,7 @@ package body Database.WAL is
       end if;
 
       File_Size := Natural (Ada.Directories.Size (Native (WAL_Path (Database_Path))));
-      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)));
+      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
       while not End_Of_File (File) loop
          declare
             Frame_Start : constant Positive_Count := Index (File);
@@ -846,7 +846,7 @@ package body Database.WAL is
       if not Exists (Database_Path) then
          return Database.Status.Success;
       end if;
-      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)));
+      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
       while not End_Of_File (File) loop
          if not Read_Header (File, H) then
             Ada.Streams.Stream_IO.Close (File);
@@ -929,7 +929,7 @@ package body Database.WAL is
       --  may leave one incomplete trailing frame.  Complete frames must still
       --  validate strictly, while a short final header or payload terminates
       --  replay at the last complete durable record.
-      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)));
+      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
       while not End_Of_File (File) loop
          exit when not Read_Header (File, H);
          declare
@@ -972,7 +972,7 @@ package body Database.WAL is
       Ada.Streams.Stream_IO.Close (File);
 
       Last := Database.Log_Sequence.Invalid_LSN;
-      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)));
+      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
       while not End_Of_File (File) loop
          exit when not Read_Header (File, H);
          declare
@@ -1063,7 +1063,7 @@ package body Database.WAL is
          return 0;
       end if;
 
-      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)));
+      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
       while not End_Of_File (File) loop
          exit when not Read_Header (File, H);
          declare
@@ -1121,7 +1121,7 @@ package body Database.WAL is
          return;
       end if;
 
-      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)));
+      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
       while not End_Of_File (File) loop
          exit when not Read_Header (File, H);
          declare

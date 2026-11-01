@@ -33,6 +33,7 @@ package Database.Status is
    Read_Only_Transaction : constant Status_Code := Database.Read_Only_Transaction;
    Transaction_Conflict : constant Status_Code := Database.Transaction_Conflict;
    Lock_Error : constant Status_Code := Database.Lock_Error;
+   Recovery_Required : constant Status_Code := Database.Recovery_Required;
    Serialization_Failure : constant Status_Code := Database.Serialization_Failure;
    Snapshot_Too_Old : constant Status_Code := Database.Snapshot_Too_Old;
    Version_Conflict : constant Status_Code := Database.Version_Conflict;

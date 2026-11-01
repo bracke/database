@@ -87,6 +87,12 @@ package body Database.Transactions is
          Tx.Last := Database.Status.Failure (Database.Status.Not_Open, "database not open");
          return;
       end if;
+      if Mode_In = Read_Write and then Database.Is_Read_Only (DB) then
+         Tx.Last := Database.Status.Failure
+           (Database.Status.Read_Only_Transaction,
+            "write transaction requested on read-only database");
+         return;
+      end if;
 
       if Blocking then
          case Mode_In is

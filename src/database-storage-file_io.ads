@@ -19,6 +19,10 @@ package Database.Storage.File_IO is
    --  @return Status result describing whether the operation succeeded.
    function Open (F : in out File_Handle; Path : Wide_Wide_String) return Database.Status.Result;
 
+   --  Open an existing page file using O_RDONLY and a shared process lock.
+   function Open_Read_Only
+     (F : in out File_Handle; Path : Wide_Wide_String) return Database.Status.Result;
+
    --  Create/open a page file whose ordinary page reads and writes are
    --  authenticated encrypted page artifacts. The raw database file remains
    --  a sparse compatibility carrier;

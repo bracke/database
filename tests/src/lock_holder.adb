@@ -8,15 +8,24 @@ procedure Lock_Holder is
    DB : Database.Handle;
    Ready : Ada.Text_IO.File_Type;
 begin
-   if Ada.Command_Line.Argument_Count /= 2 then
+   if Ada.Command_Line.Argument_Count not in 2 .. 3 then
       Ada.Command_Line.Set_Exit_Status (2);
       return;
    end if;
 
-   Database.Open
-     (DB,
-      Ada.Characters.Conversions.To_Wide_Wide_String
-        (Ada.Command_Line.Argument (1)));
+   if Ada.Command_Line.Argument_Count = 3
+     and then Ada.Command_Line.Argument (3) = "read-only"
+   then
+      Database.Open_Read_Only
+        (DB,
+         Ada.Characters.Conversions.To_Wide_Wide_String
+           (Ada.Command_Line.Argument (1)));
+   else
+      Database.Open
+        (DB,
+         Ada.Characters.Conversions.To_Wide_Wide_String
+           (Ada.Command_Line.Argument (1)));
+   end if;
    if not Database.Last_Operation_Succeeded (DB) then
       Ada.Command_Line.Set_Exit_Status (3);
       return;

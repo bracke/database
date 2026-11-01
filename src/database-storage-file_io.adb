@@ -22,6 +22,7 @@ package body Database.Storage.File_IO is
    O_CREAT : constant Interfaces.C.int := 64;
    O_DIRECTORY : constant Interfaces.C.int := 16#10000#;
    Mode_RW : constant Interfaces.C.int := 8#666#;
+   LOCK_SH : constant Interfaces.C.int := 1;
    LOCK_EX : constant Interfaces.C.int := 2;
    LOCK_NB : constant Interfaces.C.int := 4;
    LOCK_UN : constant Interfaces.C.int := 8;
@@ -131,9 +132,11 @@ package body Database.Storage.File_IO is
    function Acquire_Process_Lock
      (F              : in out File_Handle;
       Path           : Wide_Wide_String;
-      Create_If_Need : Boolean) return Database.Status.Result is
-      Flags : Interfaces.C.int := O_RDWR;
-      FD    : Interfaces.C.int;
+      Create_If_Need : Boolean;
+      Shared         : Boolean := False) return Database.Status.Result is
+      Flags     : Interfaces.C.int := (if Shared then O_RDONLY else O_RDWR);
+      Operation : constant Interfaces.C.int := (if Shared then LOCK_SH else LOCK_EX);
+      FD        : Interfaces.C.int;
    begin
       if F.Lock_FD /= Invalid_Lock_FD then
          return Database.Status.Failure
@@ -150,7 +153,7 @@ package body Database.Storage.File_IO is
            (Database.Status.IOError, "could not open database file for process lock");
       end if;
 
-      if C_Flock (FD, LOCK_EX + LOCK_NB) /= 0 then
+      if C_Flock (FD, Operation + LOCK_NB) /= 0 then
          declare
             Ignored : constant Interfaces.C.int := C_Close (FD);
             pragma Unreferenced (Ignored);
@@ -162,6 +165,7 @@ package body Database.Storage.File_IO is
       end if;
 
       F.Lock_FD := FD;
+      F.Read_Only := Shared;
       return Database.Status.Success;
    exception
       when others =>
@@ -178,11 +182,13 @@ package body Database.Storage.File_IO is
             pragma Unreferenced (Unlock_Result, Close_Result);
          begin
             F.Lock_FD := Invalid_Lock_FD;
+            F.Read_Only := False;
          end;
       end if;
    exception
       when others =>
          F.Lock_FD := Invalid_Lock_FD;
+         F.Read_Only := False;
    end Release_Process_Lock;
 
    function Natural_Image (Value : Natural) return Wide_Wide_String is
@@ -693,6 +699,65 @@ package body Database.Storage.File_IO is
          return Database.Status.Failure (Database.Status.IOError, "could not open database file");
    end Open;
 
+   function Open_Read_Only
+     (F : in out File_Handle; Path : Wide_Wide_String) return Database.Status.Result is
+      P : Page;
+      R : Database.Status.Result;
+   begin
+      if F.Opened then
+         return Database.Status.Failure (Database.Status.Already_Open, "file already open");
+      end if;
+      R := Acquire_Process_Lock
+        (F, Path, Create_If_Need => False, Shared => True);
+      if not Database.Status.Is_Ok (R) then
+         return R;
+      end if;
+      Ada.Streams.Stream_IO.Open (F.File, In_File, Native (Path), Form => "shared=no");
+      F.Opened := True;
+      F.Name := To_Unbounded_Wide_Wide_String (Path);
+      R := Read_Page (F, 0, Header_Page, P);
+      if not Database.Status.Is_Ok (R) then
+         declare
+            Close_Result : constant Database.Status.Result := Close (F);
+            pragma Unreferenced (Close_Result);
+         begin
+            return R;
+         end;
+      end if;
+      declare
+         M : constant Byte_Array := Payload (P);
+      begin
+         if M'Length < 8
+           or else M (0) /= 16#44#
+           or else M (1) /= 16#41#
+           or else M (2) /= 16#54#
+           or else M (3) /= 16#41#
+         then
+            declare
+               Close_Result : constant Database.Status.Result := Close (F);
+               pragma Unreferenced (Close_Result);
+            begin
+               return Database.Status.Failure
+                 (Database.Status.Invalid_File, "invalid database file header");
+            end;
+         end if;
+      end;
+      return Database.Status.Success;
+   exception
+      when others =>
+         begin
+            if Ada.Streams.Stream_IO.Is_Open (F.File) then
+               Ada.Streams.Stream_IO.Close (F.File);
+            end if;
+         exception
+            when others => null;
+         end;
+         F.Opened := False;
+         Release_Process_Lock (F);
+         return Database.Status.Failure
+           (Database.Status.IOError, "could not open database file read-only");
+   end Open_Read_Only;
+
    function Close (F : in out File_Handle) return Database.Status.Result is
    begin
       if F.Opened then
@@ -711,6 +776,9 @@ package body Database.Storage.File_IO is
    begin
       if not F.Opened then
          return Database.Status.Failure (Database.Status.Not_Open, "file not open");
+      end if;
+      if F.Read_Only then
+         return Database.Status.Success;
       end if;
       if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Random_IO_Failure) then
          return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Random_IO_Failure);
@@ -744,6 +812,10 @@ package body Database.Storage.File_IO is
    begin
       if not F.Opened then
          return Database.Status.Failure (Database.Status.Not_Open, "file not open");
+      end if;
+      if F.Read_Only then
+         return Database.Status.Failure
+           (Database.Status.Read_Only_Transaction, "truncate attempted on read-only file");
       end if;
       R := Flush (F);
       if not Database.Status.Is_Ok (R) then
@@ -939,6 +1011,10 @@ package body Database.Storage.File_IO is
       end if;
       if not F.Opened then
          return Database.Status.Failure (Database.Status.Not_Open, "file not open");
+      end if;
+      if F.Read_Only then
+         return Database.Status.Failure
+           (Database.Status.Read_Only_Transaction, "write attempted on read-only file");
       end if;
       if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Random_IO_Failure) then
          return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Random_IO_Failure);

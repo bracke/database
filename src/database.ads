@@ -18,7 +18,7 @@ package Database is
       Serialization_Error, Corrupt_Index, Key_Not_Found, Duplicate_Key,
       Unsupported_Key_Type, Invalid_Schema, Migration_Error,
       Unsupported_Migration, Read_Only_Transaction, Transaction_Conflict,
-      Lock_Error, Serialization_Failure, Snapshot_Too_Old, Version_Conflict,
+      Lock_Error, Recovery_Required, Serialization_Failure, Snapshot_Too_Old, Version_Conflict,
       WAL_Corruption, Replay_Failure, Checkpoint_Failure, Invalid_LSN,
       Full_Text_Index_Error, Invalid_Full_Text_Query, Unsupported_Tokenizer,
       Unsupported_Normalization, Backup_Error, Restore_Error, Export_Error,
@@ -117,6 +117,13 @@ package Database is
    --  @param Path filesystem path of the database carrier file.
    procedure Open (DB : out Handle; Path : Wide_Wide_String);
 
+   --  Open an existing persistent database without permitting recovery or
+   --  mutation.  The operation takes a shared process lock and fails with
+   --  Recovery_Required when a WAL is present.
+   --  @param DB database handle initialized by the operation.
+   --  @param Path filesystem path of the database carrier file.
+   procedure Open_Read_Only (DB : out Handle; Path : Wide_Wide_String);
+
    --  Open an encrypted persistent database.
    --  @param DB database handle initialized by the operation.
    --  @param Path filesystem path of the database carrier file.
@@ -134,6 +141,9 @@ package Database is
    --  @param DB database handle queried by the operation.
    --  @return True when the handle is open.
    function Is_Open (DB : Handle) return Boolean;
+
+   --  Return whether the handle was opened through Open_Read_Only.
+   function Is_Read_Only (DB : Handle) return Boolean;
 
    --  Return whether the last root-level operation succeeded.
    --  @param DB database handle queried by the operation.
@@ -178,6 +188,7 @@ private
       Name      : Unbounded_Wide_Wide_String := Null_Unbounded_Wide_Wide_String;
       Lock_FD   : Interfaces.C.int := Interfaces.C.int'First;
       Encrypted : Boolean := False;
+      Read_Only : Boolean := False;
       Key       : Encryption_Key := (Valid => False, Id => 0, Data => (others => 0));
    end record;
 
@@ -204,5 +215,6 @@ private
       Encryption_Format_Version : Natural := 1;
       Encryption_Key_Id         : Key_Id := 0;
       WAL_Encryption_Enabled    : Boolean := False;
+      Read_Only_Mode            : Boolean := False;
    end record;
 end Database;

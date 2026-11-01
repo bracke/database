@@ -1,8 +1,11 @@
 with AUnit.Assertions;
 
+with Ada.Calendar;
 with Ada.Characters.Conversions;
 with Ada.Directories;
 with Ada.Strings.Wide_Wide_Unbounded;
+with Ada.Streams;
+with Ada.Streams.Stream_IO;
 with Database;
 with Database.Locking;
 with Database.Predicates;
@@ -14,6 +17,7 @@ with Database.Tables;
 with Database.Transactions;
 with Database.Types;
 with Database.Values;
+with Database.WAL;
 with GNAT.OS_Lib;
 
 package body Concurrency_Tests is
@@ -21,6 +25,10 @@ package body Concurrency_Tests is
    use type Database.Status.Status_Code;
    use type Database.Transactions.Transaction_Mode;
    use type GNAT.OS_Lib.Process_Id;
+   use type Ada.Calendar.Time;
+   use type Ada.Directories.File_Size;
+   use type Ada.Streams.Stream_Element_Array;
+   use type Ada.Streams.Stream_Element_Offset;
 
    overriding
    function Name (T : Case_Type) return AUnit.Message_String is
@@ -62,6 +70,35 @@ package body Concurrency_Tests is
    exception
       when others => null;
    end Remove_File_If_Present;
+
+   function File_Contents (Path : String) return Ada.Streams.Stream_Element_Array is
+      File : Ada.Streams.Stream_IO.File_Type;
+   begin
+      Ada.Streams.Stream_IO.Open (File, Ada.Streams.Stream_IO.In_File, Path);
+      declare
+         Length : constant Ada.Streams.Stream_Element_Offset :=
+           Ada.Streams.Stream_Element_Offset (Ada.Streams.Stream_IO.Size (File));
+         Data   : Ada.Streams.Stream_Element_Array
+           (0 .. Length - Ada.Streams.Stream_Element_Offset'(1));
+         Last   : Ada.Streams.Stream_Element_Offset;
+      begin
+         if Data'Length > 0 then
+            Ada.Streams.Stream_IO.Read (File, Data, Last);
+            if Last /= Data'Last then
+               Ada.Streams.Stream_IO.Close (File);
+               raise Ada.Streams.Stream_IO.End_Error;
+            end if;
+         end if;
+         Ada.Streams.Stream_IO.Close (File);
+         return Data;
+      end;
+   exception
+      when others =>
+         if Ada.Streams.Stream_IO.Is_Open (File) then
+            Ada.Streams.Stream_IO.Close (File);
+         end if;
+         raise;
+   end File_Contents;
 
    package Items is new
      Database.Tables.Typed
@@ -357,6 +394,157 @@ package body Concurrency_Tests is
          raise;
    end Process_Lock_Blocks_Second_Process;
 
+   procedure Persistent_Read_Only_Contract
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Path       : constant String := "read_only_contract.database";
+      FTS_Path   : constant String := Path & ".fts";
+      DB         : Database.Handle;
+      Read_Tx    : Database.Transactions.Transaction;
+      Write_Tx   : Database.Transactions.Transaction;
+      W          : Database.WAL.WAL_Handle;
+      R          : Database.Status.Result;
+      DB_Size    : Ada.Directories.File_Size;
+      FTS_Size   : Ada.Directories.File_Size;
+      DB_Time    : Ada.Calendar.Time;
+      FTS_Time   : Ada.Calendar.Time;
+   begin
+      Remove_File_If_Present (Path);
+      Remove_File_If_Present (FTS_Path);
+      Remove_File_If_Present (Path & ".wal");
+
+      Database.Create
+        (DB, Ada.Characters.Conversions.To_Wide_Wide_String (Path));
+      Assert (Database.Last_Operation_Succeeded (DB), "fixture create failed");
+      Database.Close (DB);
+      Assert (Database.Last_Operation_Succeeded (DB), "fixture close failed");
+      Assert (Ada.Directories.Exists (FTS_Path), "fixture full-text sidecar missing");
+
+      DB_Size := Ada.Directories.Size (Path);
+      FTS_Size := Ada.Directories.Size (FTS_Path);
+      DB_Time := Ada.Directories.Modification_Time (Path);
+      FTS_Time := Ada.Directories.Modification_Time (FTS_Path);
+
+      declare
+         DB_Bytes  : constant Ada.Streams.Stream_Element_Array := File_Contents (Path);
+         FTS_Bytes : constant Ada.Streams.Stream_Element_Array := File_Contents (FTS_Path);
+      begin
+         Database.Open_Read_Only
+           (DB, Ada.Characters.Conversions.To_Wide_Wide_String (Path));
+         Assert (Database.Last_Operation_Succeeded (DB), "read-only open failed");
+         Assert (Database.Is_Read_Only (DB), "handle not marked read-only");
+
+         Database.Transactions.Begin_Read (DB, Read_Tx);
+         Assert (Database.Transactions.Is_Active (Read_Tx), "read transaction inactive");
+         R := Database.Transactions.Commit (Read_Tx);
+         Assert (Database.Status.Is_Ok (R), "read transaction commit failed");
+
+         Database.Transactions.Begin_Write (DB, Write_Tx);
+         Assert (not Database.Transactions.Is_Active (Write_Tx), "write transaction was admitted");
+         Assert
+           (Database.Transactions.Result (Write_Tx).Code = Database.Status.Read_Only_Transaction,
+            "write transaction returned wrong status");
+
+         Database.Close (DB);
+         Assert (Database.Last_Operation_Succeeded (DB), "read-only close failed");
+         Assert (Ada.Directories.Size (Path) = DB_Size, "carrier size changed");
+         Assert (Ada.Directories.Size (FTS_Path) = FTS_Size, "full-text sidecar size changed");
+         Assert (Ada.Directories.Modification_Time (Path) = DB_Time, "carrier timestamp changed");
+         Assert
+           (Ada.Directories.Modification_Time (FTS_Path) = FTS_Time,
+            "full-text sidecar timestamp changed");
+         Assert (File_Contents (Path) = DB_Bytes, "carrier bytes changed");
+         Assert (File_Contents (FTS_Path) = FTS_Bytes, "full-text sidecar bytes changed");
+      end;
+
+      R := Database.WAL.Create
+        (W, Ada.Characters.Conversions.To_Wide_Wide_String (Path));
+      Assert (Database.Status.Is_Ok (R), "WAL fixture create failed");
+      R := Database.WAL.Close (W);
+      Assert (Database.Status.Is_Ok (R), "WAL fixture close failed");
+      Database.Open_Read_Only
+        (DB, Ada.Characters.Conversions.To_Wide_Wide_String (Path));
+      Assert
+        (Database.Last_Result (DB).Code = Database.Status.Recovery_Required,
+         "read-only open did not reject existing WAL");
+      Assert
+        (Database.WAL.Exists (Ada.Characters.Conversions.To_Wide_Wide_String (Path)),
+         "read-only open removed the WAL");
+
+      R := Database.WAL.Delete (Ada.Characters.Conversions.To_Wide_Wide_String (Path));
+      Assert (Database.Status.Is_Ok (R), "WAL cleanup failed");
+      Remove_File_If_Present (Path);
+      Remove_File_If_Present (FTS_Path);
+   exception
+      when others =>
+         Remove_File_If_Present (Path & ".wal");
+         Remove_File_If_Present (Path);
+         Remove_File_If_Present (FTS_Path);
+         raise;
+   end Persistent_Read_Only_Contract;
+
+   procedure Process_Shared_Readers_Block_Writer
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Path       : constant String := "shared_reader_test.database";
+      Ready_Path : constant String := "shared_reader_test.ready";
+      Fixture    : Database.Handle;
+      Reader     : Database.Handle;
+      Writer     : Database.Handle;
+      Args       : GNAT.OS_Lib.Argument_List (1 .. 3);
+      Pid        : GNAT.OS_Lib.Process_Id;
+      Done       : GNAT.OS_Lib.Process_Id;
+      Success    : Boolean := False;
+   begin
+      Remove_File_If_Present (Path);
+      Remove_File_If_Present (Path & ".fts");
+      Remove_File_If_Present (Ready_Path);
+      Database.Create
+        (Fixture, Ada.Characters.Conversions.To_Wide_Wide_String (Path));
+      Assert (Database.Last_Operation_Succeeded (Fixture), "fixture create failed");
+      Database.Close (Fixture);
+      Assert (Database.Last_Operation_Succeeded (Fixture), "fixture close failed");
+
+      Args (1) := new String'(Path);
+      Args (2) := new String'(Ready_Path);
+      Args (3) := new String'("read-only");
+      Pid := GNAT.OS_Lib.Non_Blocking_Spawn ("./bin/lock_holder", Args);
+      for Arg of Args loop
+         GNAT.OS_Lib.Free (Arg);
+      end loop;
+      Assert (Pid /= GNAT.OS_Lib.Invalid_Pid, "could not spawn read-only helper");
+      for I in 1 .. 50 loop
+         exit when Ada.Directories.Exists (Ready_Path);
+         delay 0.05;
+      end loop;
+      Assert (Ada.Directories.Exists (Ready_Path), "read-only helper did not become ready");
+
+      Database.Open_Read_Only
+        (Reader, Ada.Characters.Conversions.To_Wide_Wide_String (Path));
+      Assert (Database.Last_Operation_Succeeded (Reader), "second reader was rejected");
+      Database.Open
+        (Writer, Ada.Characters.Conversions.To_Wide_Wide_String (Path));
+      Assert
+        (Database.Last_Result (Writer).Code = Database.Status.Lock_Error,
+         "writer was admitted while shared readers held locks");
+      Database.Close (Reader);
+      Assert (Database.Last_Operation_Succeeded (Reader), "reader close failed");
+
+      GNAT.OS_Lib.Wait_Process (Done, Success);
+      Assert (Done = Pid, "unexpected process completed");
+      Assert (Success, "read-only helper failed");
+      Remove_File_If_Present (Ready_Path);
+      Remove_File_If_Present (Path);
+      Remove_File_If_Present (Path & ".fts");
+   exception
+      when others =>
+         Remove_File_If_Present (Ready_Path);
+         Remove_File_If_Present (Path);
+         Remove_File_If_Present (Path & ".fts");
+         raise;
+   end Process_Shared_Readers_Block_Writer;
 
    --  Many readers admitted at once run Start concurrently; the transaction-id
    --  allocator must be atomic or two of them get the same id.
@@ -471,6 +659,14 @@ package body Concurrency_Tests is
         (T,
          Process_Lock_Blocks_Second_Process'Access,
          "process lock blocks second process");
+      Register_Routine
+        (T,
+         Persistent_Read_Only_Contract'Access,
+         "persistent read-only handle never mutates and rejects recovery");
+      Register_Routine
+        (T,
+         Process_Shared_Readers_Block_Writer'Access,
+         "process shared readers coexist and block writer");
       Register_Routine
         (T,
          Read_And_Write_Visibility'Access,

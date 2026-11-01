@@ -217,6 +217,50 @@ package body Database is
       end if;
    end Open;
 
+   procedure Open_Read_Only (DB : out Handle; Path : Wide_Wide_String) is
+   begin
+      DB.Kind := Closed_Backend;
+      DB.Read_Only_Mode := True;
+      DB.Last := Database.Storage.File_IO.Open_Read_Only (DB.File, Path);
+      if Database.Status.Is_Ok (DB.Last) and then Database.WAL.Exists (Path) then
+         DB.Last := Database.Status.Failure
+           (Database.Status.Recovery_Required,
+            "database has a write-ahead log and requires recovery");
+      end if;
+      if Database.Status.Is_Ok (DB.Last) then
+         DB.Kind := Persistent_Backend;
+         Assign_Catalog_State_Key (DB);
+         Assign_Full_Text_State_Key (DB);
+         Database.Storage.Free_List.Initialize_From_File (DB.Page_Allocator, DB.File);
+         DB.Last := Database.Catalog.Load (DB);
+         if Database.Status.Is_Ok (DB.Last) then
+            Database.Transactions.Reserve_Ids_Through (DB.Max_Persisted_Tx);
+            DB.Last := Database.Full_Text.Load (DB, Path);
+         end if;
+         if Database.Status.Is_Ok (DB.Last) then
+            DB.Last := Database.Extensions.Load (Path);
+         end if;
+      end if;
+      if not Database.Status.Is_Ok (DB.Last) then
+         declare
+            Saved : constant Database.Status.Result := DB.Last;
+            R     : constant Database.Status.Result := Database.Storage.File_IO.Close (DB.File);
+            pragma Unreferenced (R);
+         begin
+            if DB.FT_State_Key /= 0 then
+               Database.Full_Text.Clear (DB.FT_State_Key);
+            end if;
+            if DB.Catalog_State_Key_Value /= 0 then
+               Database.Catalog.Drop_Database (DB.Catalog_State_Key_Value);
+               Database.Extensions.Drop_Database (DB.Catalog_State_Key_Value);
+            end if;
+            DB.Last := Saved;
+            DB.Kind := Closed_Backend;
+            DB.Read_Only_Mode := False;
+         end;
+      end if;
+   end Open_Read_Only;
+
    procedure Open_Encrypted
      (DB   : out Handle;
       Path : Wide_Wide_String;
@@ -277,19 +321,23 @@ package body Database is
          return;
       end if;
       if DB.Kind = Persistent_Backend then
-         DB.Last := Database.Catalog.Save (DB);
-         if Database.Status.Is_Ok (DB.Last) then
-            DB.Last := Database.Full_Text.Save
-              (DB.FT_State_Key, Database.Storage.File_IO.Path (DB.File));
-         end if;
-         if Database.Status.Is_Ok (DB.Last) then
-            DB.Last := Database.Extensions.Save (Database.Storage.File_IO.Path (DB.File));
-         end if;
-         if Database.Status.Is_Ok (DB.Last) then
-            DB.Last := Database.Storage.File_IO.Flush (DB.File);
-         end if;
-         if Database.Status.Is_Ok (DB.Last) then
-            DB.Last := Database.WAL.Delete (Database.Storage.File_IO.Path (DB.File));
+         if DB.Read_Only_Mode then
+            DB.Last := Database.Status.Success;
+         else
+            DB.Last := Database.Catalog.Save (DB);
+            if Database.Status.Is_Ok (DB.Last) then
+               DB.Last := Database.Full_Text.Save
+                 (DB.FT_State_Key, Database.Storage.File_IO.Path (DB.File));
+            end if;
+            if Database.Status.Is_Ok (DB.Last) then
+               DB.Last := Database.Extensions.Save (Database.Storage.File_IO.Path (DB.File));
+            end if;
+            if Database.Status.Is_Ok (DB.Last) then
+               DB.Last := Database.Storage.File_IO.Flush (DB.File);
+            end if;
+            if Database.Status.Is_Ok (DB.Last) then
+               DB.Last := Database.WAL.Delete (Database.Storage.File_IO.Path (DB.File));
+            end if;
          end if;
          declare
             R : constant Database.Status.Result := Database.Storage.File_IO.Close (DB.File);
@@ -321,11 +369,16 @@ package body Database is
       end if;
 
       DB.Kind := Closed_Backend;
+      DB.Read_Only_Mode := False;
    end Close;
    function Is_Open (DB : Handle) return Boolean is
    begin
       return DB.Kind /= Closed_Backend;
    end Is_Open;
+   function Is_Read_Only (DB : Handle) return Boolean is
+   begin
+      return DB.Kind /= Closed_Backend and then DB.Read_Only_Mode;
+   end Is_Read_Only;
    function Last_Operation_Succeeded (DB : Handle) return Boolean is
    begin
       return Database.Status.Is_Ok (DB.Last);

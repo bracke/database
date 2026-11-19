@@ -17,21 +17,19 @@ package body Database.Storage.File_IO is
    use type Interfaces.C.int;
 
    Invalid_Lock_FD : constant Interfaces.C.int := Interfaces.C.int'First;
-   O_RDONLY : constant Interfaces.C.int := 0;
-   O_RDWR  : constant Interfaces.C.int := 2;
-   O_CREAT : constant Interfaces.C.int := 64;
-   O_DIRECTORY : constant Interfaces.C.int := 16#10000#;
-   Mode_RW : constant Interfaces.C.int := 8#666#;
    LOCK_SH : constant Interfaces.C.int := 1;
    LOCK_EX : constant Interfaces.C.int := 2;
    LOCK_NB : constant Interfaces.C.int := 4;
    LOCK_UN : constant Interfaces.C.int := 8;
 
-   function C_Open
+   function C_Open_File
      (Path  : Interfaces.C.char_array;
-      Flags : Interfaces.C.int;
-      Mode  : Interfaces.C.int) return Interfaces.C.int
-   with Import, Convention => C, External_Name => "open";
+      Read_Only : Interfaces.C.int;
+      Create    : Interfaces.C.int) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "database_posix_open_file";
+
+   function C_Open_Directory (Path : Interfaces.C.char_array) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "database_posix_open_directory";
 
    function C_Close (FD : Interfaces.C.int) return Interfaces.C.int
    with Import, Convention => C, External_Name => "close";
@@ -85,7 +83,7 @@ package body Database.Storage.File_IO is
       if not Ada.Directories.Exists (Native (Path)) then
          return Database.Status.Success;
       end if;
-      FD := C_Open (Interfaces.C.To_C (Native (Path)), O_RDWR, Mode_RW);
+      FD := C_Open_File (Interfaces.C.To_C (Native (Path)), Read_Only => 0, Create => 0);
       if FD < 0 then
          return Database.Status.Failure
            (Database.Status.IOError, "could not open database file for fsync");
@@ -107,7 +105,7 @@ package body Database.Storage.File_IO is
       Dir : constant String := Parent_Directory (Path);
       FD  : Interfaces.C.int;
    begin
-      FD := C_Open (Interfaces.C.To_C (Dir), O_RDONLY + O_DIRECTORY, Mode_RW);
+      FD := C_Open_Directory (Interfaces.C.To_C (Dir));
       if FD < 0 then
          return Database.Status.Failure
            (Database.Status.IOError, "could not open database directory for fsync");
@@ -134,7 +132,6 @@ package body Database.Storage.File_IO is
       Path           : Wide_Wide_String;
       Create_If_Need : Boolean;
       Shared         : Boolean := False) return Database.Status.Result is
-      Flags     : Interfaces.C.int := (if Shared then O_RDONLY else O_RDWR);
       Operation : constant Interfaces.C.int := (if Shared then LOCK_SH else LOCK_EX);
       FD        : Interfaces.C.int;
    begin
@@ -143,11 +140,10 @@ package body Database.Storage.File_IO is
            (Database.Status.Already_Open, "database file lock already held");
       end if;
 
-      if Create_If_Need then
-         Flags := Flags + O_CREAT;
-      end if;
-
-      FD := C_Open (Interfaces.C.To_C (Native (Path)), Flags, Mode_RW);
+      FD := C_Open_File
+        (Interfaces.C.To_C (Native (Path)),
+         Read_Only => (if Shared then 1 else 0),
+         Create    => (if Create_If_Need then 1 else 0));
       if FD < 0 then
          return Database.Status.Failure
            (Database.Status.IOError, "could not open database file for process lock");

@@ -23,16 +23,14 @@ package body Database.WAL is
       Stream_Element (Character'Pos ('W')), Stream_Element (Character'Pos ('A')),
       Stream_Element (Character'Pos ('L')), Stream_Element (Character'Pos ('1')),
       Stream_Element (Character'Pos ('7')), 0];
-   O_RDONLY : constant Interfaces.C.int := 0;
-   O_RDWR : constant Interfaces.C.int := 2;
-   O_DIRECTORY : constant Interfaces.C.int := 16#10000#;
-   Mode_RW : constant Interfaces.C.int := 8#666#;
-
-   function C_Open
+   function C_Open_File
      (Path  : Interfaces.C.char_array;
-      Flags : Interfaces.C.int;
-      Mode  : Interfaces.C.int) return Interfaces.C.int
-   with Import, Convention => C, External_Name => "open";
+      Read_Only : Interfaces.C.int;
+      Create    : Interfaces.C.int) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "database_posix_open_file";
+
+   function C_Open_Directory (Path : Interfaces.C.char_array) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "database_posix_open_directory";
 
    function C_Close (FD : Interfaces.C.int) return Interfaces.C.int
    with Import, Convention => C, External_Name => "close";
@@ -64,7 +62,7 @@ package body Database.WAL is
       if not Ada.Directories.Exists (Native (Path)) then
          return Database.Status.Success;
       end if;
-      FD := C_Open (Interfaces.C.To_C (Native (Path)), O_RDWR, Mode_RW);
+      FD := C_Open_File (Interfaces.C.To_C (Native (Path)), Read_Only => 0, Create => 0);
       if FD < 0 then
          return Database.Status.Failure
            (Database.Status.IOError, "could not open WAL file for fsync");
@@ -90,7 +88,7 @@ package body Database.WAL is
       Dir : constant String := Parent_Directory (Path);
       FD  : Interfaces.C.int;
    begin
-      FD := C_Open (Interfaces.C.To_C (Dir), O_RDONLY + O_DIRECTORY, Mode_RW);
+      FD := C_Open_Directory (Interfaces.C.To_C (Dir));
       if FD < 0 then
          return Database.Status.Failure
            (Database.Status.IOError, "could not open WAL directory for fsync");

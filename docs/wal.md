@@ -8,6 +8,8 @@ For a database file named `app.db`, the WAL file is `app.db.wal`.
 
 The WAL is append-only. Records are assigned monotonically increasing log sequence numbers (LSNs). A committed transaction is durable only after its commit record has been appended, stream-flushed, and `fsync`ed. Main database pages may lag behind the WAL until checkpointing applies committed frames back to the database file.
 
+Opening an existing WAL normalizes it (a torn suffix from a crash is cut off) and scans it for the last LSN. A commit opens the WAL once per page frame, so after a WAL handle closes cleanly the process remembers the file's size, modification time, and last LSN; the next open of the same WAL reuses them instead of scanning while the file is unchanged. Any WAL error, deletion, or truncation, and closing the database handle (which releases the process lock), forget them, and a changed file is always scanned and normalized.
+
 ## Record model
 
 WAL uses physical page logging. Each WAL record has a fixed header and an optional payload.

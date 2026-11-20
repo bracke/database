@@ -1,4 +1,5 @@
 --  Transaction lifecycle, RAII rollback, locking participation, and WAL writes.
+with Ada.Containers.Ordered_Maps;
 with Ada.Containers.Vectors;
 with Ada.Finalization;
 with Database.Status;
@@ -134,6 +135,25 @@ package Database.Transactions is
      (Tx   : in out Transaction;
       Page : Database.Storage.Pages.Page) return Database.Status.Result;
 
+   --  Return the last page of a table heap as this transaction last appended to it, so an append need not walk the
+   --  page chain again. Only this transaction changes the heap while it is active, so the hint stays exact; it ends
+   --  with the transaction.
+   --  @param Tx transaction object that scopes the operation.
+   --  @param First first page of the table heap.
+   --  @return Last page, or Invalid_Page_Id when this transaction has not appended to the heap.
+   function Heap_Tail
+     (Tx    : Transaction;
+      First : Database.Storage.Pages.Page_Id) return Database.Storage.Pages.Page_Id;
+
+   --  Record the last page of a table heap after an append.
+   --  @param Tx transaction object that scopes the operation.
+   --  @param First first page of the table heap.
+   --  @param Last page the row was appended to.
+   procedure Set_Heap_Tail
+     (Tx    : in out Transaction;
+      First : Database.Storage.Pages.Page_Id;
+      Last  : Database.Storage.Pages.Page_Id);
+
    --  Finalize performs the documented database operation.
    --  @param Tx transaction object that scopes the operation.
    overriding procedure Finalize (Tx : in out Transaction);
@@ -149,6 +169,11 @@ private
      (Index_Type => Natural, Element_Type => Database.Storage.Pages.Page);
 
    --  Public type `Transaction`.
+   --  Last heap page per table heap, by first page.
+   package Heap_Tail_Maps is new Ada.Containers.Ordered_Maps
+     (Key_Type => Database.Storage.Pages.Page_Id, Element_Type => Database.Storage.Pages.Page_Id,
+      "<" => Database."<", "=" => Database."=");
+
    type Transaction is new Ada.Finalization.Limited_Controlled with record
       DB                  : Handle_Access := null;
       Current_State       : Transaction_State := Rolled_Back;
@@ -157,6 +182,7 @@ private
       Has_Writes          : Boolean := False;
       Before_Image_Ids    : Page_Id_Vectors.Vector;
       Before_Image_Pages  : Page_Vectors.Vector;
+      Heap_Tails          : Heap_Tail_Maps.Map;
       Original_Page_Count : Natural := 0;
       Transaction_Id      : Database.Versioning.Transaction_Id := 0;
       Lock_Held           : Boolean := False;

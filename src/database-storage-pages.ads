@@ -56,12 +56,14 @@ package Database.Storage.Pages is
    --  @param P p argument supplied to the operation.
    --  @param Expected_Id expected id argument supplied to the operation.
    --  @param Expected_Kind expected kind argument supplied to the operation.
+   --  @param Verify_Checksum Whether to verify the checksum; False only for a page validated earlier.
    --  @return True when the requested condition holds;
    --  otherwise False or an explicit validation status.
    function Validate
-     (P             : Page;
-      Expected_Id   : Page_Id;
-      Expected_Kind : Page_Kind) return Database.Status.Result;
+     (P               : Page;
+      Expected_Id     : Page_Id;
+      Expected_Kind   : Page_Kind;
+      Verify_Checksum : Boolean := True) return Database.Status.Result;
 
    --  Public operation `Get_Id`. See the package documentation for transaction, ownership, and error-result semantics.
    --  @param P p argument supplied to the operation.

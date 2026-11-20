@@ -32,6 +32,9 @@ Every page carries:
 - used-payload byte count
 - payload bytes
 
+Header bytes 36 .. 39 hold a checksum: the sum of every other byte of the page.
+Every page read from the file is verified against it.
+
 The engine validates page id consistency, page kind consistency, used-payload
 bounds, and page-chain reachability during integrity checks.
 
@@ -70,10 +73,38 @@ being treated as a valid row.
 
 ## Index layout
 
-Primary and secondary indexes use B+ tree pages. Leaf nodes map keys to row
-references. Internal nodes route by sorted keys. Index validation checks key
-ordering, key support, row references, root reachability, and page kind
-correctness.
+Primary and secondary indexes use B+ tree pages. Every index entry is one
+(key, row reference) pair; entries are ordered by key and then by reference, so
+equal keys of a non-unique index are adjacent and each entry is distinct. Leaf
+pages (`BTree_Leaf_Page`) hold entries and link to their right sibling through
+the page's next-page field. Internal pages (`BTree_Internal_Page`) hold a first
+child and separators, each with the child that holds the entries at or above
+it.
+
+A node's payload starts with the marker `BPT1`, then the node type (0 leaf,
+1 internal), the entry count (u16), and the first child (u32, internal nodes
+only); then per entry the key length (u16), the key, the row reference page and
+slot (u32 each), and for internal nodes the child page (u32). A key is its
+value kind followed by a fixed big-endian encoding of the value; text and enum
+keys are UTF-8. An encoded key holds at most 1,000 bytes, so every node holds at
+least three entries; a longer key is rejected as `Row_Too_Large`.
+
+The root page of an index never moves, so catalog references stay valid: when
+the root splits, its two halves move to new pages and the root becomes their
+parent. Nodes split when full and are not merged; a leaf emptied by deletes
+stays in the tree. Every node is written through its transaction, so index
+changes are logged in the WAL and rolled back with the transaction.
+
+Earlier versions kept index entries in process memory and wrote nothing to the
+root page they allocated. Such a root (a leaf page without the marker) is an
+unbuilt index: lookups bypass it by scanning the table, and the next insert into
+the table rebuilds it in place from the table rows. An unbuilt root that is not
+an empty leaf page (for example one whose page a rollback removed) is replaced
+by a new root, which the catalog records.
+
+Index validation checks that every node is readable, carries the marker, and
+holds its entries in strictly ascending order, and that no page is reached
+twice. The integrity check marks every index page as reachable.
 
 Secondary indexes may be unique or non-unique. `Null` secondary keys are not
 entered.

@@ -1,4 +1,6 @@
 with Ada.Characters.Conversions;
+with Ada.Calendar;
+with Ada.Containers.Indefinite_Ordered_Maps;
 with Ada.Containers.Vectors;
 with Ada.Directories;
 with Ada.Streams;
@@ -149,9 +151,69 @@ package body Database.WAL is
          return Database.Status.Failure (Database.Status.IOError, "could not switch WAL file mode");
    end Ensure_Mode;
 
+   --  What this process knows about a WAL it appended to and closed cleanly: the file's size and modification time
+   --  then, and the last sequence number in it. Commit opens the WAL once per page frame; while the file is unchanged,
+   --  Open reuses this instead of validating and scanning the whole file, which made each commit cost time
+   --  proportional to the WAL.
+   type Trusted_State is record
+      Size     : Ada.Directories.File_Size;
+      Modified : Ada.Calendar.Time;
+      Last     : Log_Sequence_Number;
+   end record;
+
+   package Trust_Maps is new Ada.Containers.Indefinite_Ordered_Maps (Wide_Wide_String, Trusted_State);
+
+   protected Trust is
+      procedure Remember (Path : Wide_Wide_String; State : Trusted_State);
+      procedure Forget (Path : Wide_Wide_String);
+      procedure Find (Path : Wide_Wide_String; Found : out Boolean; State : out Trusted_State);
+   private
+      Map : Trust_Maps.Map;
+   end Trust;
+
+   protected body Trust is
+      procedure Remember (Path : Wide_Wide_String; State : Trusted_State) is
+      begin
+         Map.Include (Path, State);
+      end Remember;
+
+      procedure Forget (Path : Wide_Wide_String) is
+      begin
+         Map.Exclude (Path);
+      end Forget;
+
+      procedure Find (Path : Wide_Wide_String; Found : out Boolean; State : out Trusted_State) is
+      begin
+         Found := Map.Contains (Path);
+         if Found then
+            State := Map.Element (Path);
+         end if;
+      end Find;
+   end Trust;
+
+   procedure Forget_Trusted (Database_Path : Wide_Wide_String) is
+   begin
+      Trust.Forget (Database_Path);
+   end Forget_Trusted;
+
+   --  Whether the WAL of Database_Path is unchanged since this process last closed it, and what it held then.
+   function Unchanged (Database_Path : Wide_Wide_String; State : out Trusted_State) return Boolean is
+      use type Ada.Directories.File_Size;
+      Found : Boolean;
+      Path  : constant String := Native (WAL_Path (Database_Path));
+   begin
+      Trust.Find (Database_Path, Found, State);
+      return Found and then Ada.Directories.Exists (Path) and then Ada.Directories.Size (Path) = State.Size
+        and then Ada.Calendar."=" (Ada.Directories.Modification_Time (Path), State.Modified);
+   exception
+      when others =>
+         return False;
+   end Unchanged;
+
    function Delete (Database_Path : Wide_Wide_String) return Database.Status.Result is
       P : constant String := Native (WAL_Path (Database_Path));
    begin
+      Trust.Forget (Database_Path);
       if Ada.Directories.Exists (P) then
          Ada.Directories.Delete_File (P);
       end if;
@@ -230,18 +292,24 @@ package body Database.WAL is
         or else Kind = Full_Text_Posting_Page;
    end Is_Full_Text_Page;
 
+   --  The sum of every header byte except the four checksum bytes 36 .. 39, and of every payload byte. A modular
+   --  accumulator needs no per-byte overflow check; the result stays far below 2**32 for a frame.
    function Checksum (H : Stream_Element_Array; Payload : Stream_Element_Array) return Natural is
-      S : Natural := 0;
+      use type Interfaces.Unsigned_32;
+      S : Interfaces.Unsigned_32 := 0;
    begin
-      for I in H'Range loop
-         if I < 36 or else I > 39 then
-            S := S + Natural (H (I));
+      for Value of H loop
+         S := S + Interfaces.Unsigned_32 (Value);
+      end loop;
+      for I in Stream_Element_Offset'(36) .. 39 loop
+         if I in H'Range then
+            S := S - Interfaces.Unsigned_32 (H (I));
          end if;
       end loop;
-      for I in Payload'Range loop
-         S := S + Natural (Payload (I));
+      for Value of Payload loop
+         S := S + Interfaces.Unsigned_32 (Value);
       end loop;
-      return S;
+      return Natural (S);
    end Checksum;
 
    function Normalize_For_Append
@@ -322,6 +390,19 @@ package body Database.WAL is
          return Create (W, Database_Path);
       end if;
       declare
+         State : Trusted_State;
+      begin
+         if Unchanged (Database_Path, State) then
+            Ada.Streams.Stream_IO.Open
+              (W.File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
+            W.Opened := True;
+            W.DB_Path := To_Unbounded_Wide_Wide_String (Database_Path);
+            Database.Log_Sequence.Reset (W.Generator, State.Last);
+            return Database.Status.Success;
+         end if;
+      end;
+      Trust.Forget (Database_Path);
+      declare
          Normalize_Result : constant Database.Status.Result  :=
            Normalize_For_Append (Database_Path);
       begin
@@ -341,14 +422,22 @@ package body Database.WAL is
    end Open;
 
    function Close (W : in out WAL_Handle) return Database.Status.Result is
+      Path : constant Wide_Wide_String := To_Wide_Wide_String (W.DB_Path);
    begin
       if W.Opened then
          Ada.Streams.Stream_IO.Close (W.File);
          W.Opened := False;
+         --  Everything appended through W is complete and in the file, so the next Open may reuse what W knew.
+         Trust.Remember
+           (Path, (Size     => Ada.Directories.Size (Native (WAL_Path (Path))),
+                   Modified => Ada.Directories.Modification_Time (Native (WAL_Path (Path))),
+                   Last     => Database.Log_Sequence.Current (W.Generator)));
       end if;
       return Database.Status.Success;
    exception
-      when others => return Database.Status.Failure (Database.Status.IOError, "could not close WAL file");
+      when others =>
+         Trust.Forget (Path);
+         return Database.Status.Failure (Database.Status.IOError, "could not close WAL file");
    end Close;
 
    function Is_Open (W : WAL_Handle) return Boolean is (W.Opened);
@@ -684,6 +773,7 @@ package body Database.WAL is
       Remaining   : Natural := New_Size;
       R           : Database.Status.Result;
    begin
+      Trust.Forget (Database_Path);
       if Ada.Directories.Exists (Native (Tmp_Path)) then
          Ada.Directories.Delete_File (Native (Tmp_Path));
       end if;

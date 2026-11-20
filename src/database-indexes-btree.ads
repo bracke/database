@@ -1,4 +1,9 @@
 --  Persistent B+ tree operations for primary and secondary indexes.
+--
+--  Each index is a B+ tree of pages whose root page never moves, so catalog references stay valid. Entries are
+--  ordered by key and then by row reference, so equal keys are adjacent; leaves are linked for range scans. Every
+--  change is written through the transaction, so it is logged in the WAL and rolled back with the transaction.
+--  Nodes are split when full and never merged; an emptied leaf stays in the tree.
 with Ada.Containers.Vectors;
 with Database.Status;
 with Database.Storage.File_IO;
@@ -147,4 +152,49 @@ package Database.Indexes.BTree is
    function Validate
      (F    : in out Database.Storage.File_IO.File_Handle;
       Root : Database.Storage.Pages.Page_Id) return Database.Status.Result;
+
+   --  Page_Id_Vectors lists the pages of one B+ tree.
+   package Page_Id_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Natural, Element_Type => Database.Storage.Pages.Page_Id);
+
+   --  Test whether an index root holds a tree of the persistent format. A root allocated by an earlier version of
+   --  this package, which kept index entries only in memory, holds nothing: such an index is unbuilt until it is
+   --  reset and filled from its table. Lookups in an unbuilt index fail with Not_Found, so callers fall back to the
+   --  table; changes to it are ignored.
+   --  @param F database file.
+   --  @param Root root page of the index.
+   --  @return True when the index is built.
+   function Is_Built
+     (F    : in out Database.Storage.File_IO.File_Handle;
+      Root : Database.Storage.Pages.Page_Id) return Boolean;
+
+   --  Test whether an unbuilt root is a leaf page that was allocated and never written, as earlier versions left
+   --  every root; only such a page may be reset in place. Any other unbuilt root (a page rolled back or reused) must
+   --  be replaced by a new root instead.
+   --  @param F database file.
+   --  @param Root root page of the index.
+   --  @return True for an empty, never-written leaf page.
+   function Is_Unwritten
+     (F    : in out Database.Storage.File_IO.File_Handle;
+      Root : Database.Storage.Pages.Page_Id) return Boolean;
+
+   --  Make Root an empty built index, keeping its page, so the caller can fill it from the table.
+   --  @param Tx write transaction.
+   --  @param F database file.
+   --  @param Root root page of the index.
+   --  @return Status result describing whether the operation succeeded.
+   function Reset
+     (Tx   : in out Database.Transactions.Transaction;
+      F    : in out Database.Storage.File_IO.File_Handle;
+      Root : Database.Storage.Pages.Page_Id) return Database.Status.Result;
+
+   --  List every page of an index: its root, internal nodes, and leaves.
+   --  @param F database file.
+   --  @param Root root page of the index.
+   --  @param Pages pages in breadth-first order; only Root for an unbuilt index.
+   --  @return Status result; Corrupt_Index when a node is unreadable or reached twice.
+   function Pages_Of
+     (F     : in out Database.Storage.File_IO.File_Handle;
+      Root  : Database.Storage.Pages.Page_Id;
+      Pages : out Page_Id_Vectors.Vector) return Database.Status.Result;
 end Database.Indexes.BTree;

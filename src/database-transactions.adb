@@ -67,6 +67,7 @@ package body Database.Transactions is
       Tx.Has_Writes := False;
       Tx.Before_Image_Ids.Clear;
       Tx.Before_Image_Pages.Clear;
+      Tx.Heap_Tails.Clear;
       Tx.Original_Page_Count := 0;
       Tx.Transaction_Id := 0;
       Tx.Lock_Held := False;
@@ -94,6 +95,8 @@ package body Database.Transactions is
          return;
       end if;
 
+      --  A transaction reads its own snapshot; pages cached before it started may predate it.
+      Database.Storage.File_IO.Invalidate_Cache (DB.File);
       if Blocking then
          case Mode_In is
             when Read_Only => DB.Lock.Begin_Read;
@@ -141,6 +144,9 @@ package body Database.Transactions is
 
    procedure Release_Lock (Tx : in out Transaction) is
    begin
+      if Tx.DB /= null then
+         Database.Storage.File_IO.Invalidate_Cache (Tx.DB.File);
+      end if;
       if Tx.Lock_Held and then Tx.DB /= null then
          case Tx.Current_Mode is
             when Read_Only => Tx.DB.Lock.End_Read;
@@ -169,6 +175,20 @@ package body Database.Transactions is
       end if;
       return Database.Status.Success;
    end Ensure_Write_State;
+
+   function Heap_Tail
+     (Tx    : Transaction;
+      First : Database.Storage.Pages.Page_Id) return Database.Storage.Pages.Page_Id is
+     (if Tx.Heap_Tails.Contains (First) then Tx.Heap_Tails.Element (First)
+      else Database.Storage.Pages.Invalid_Page_Id);
+
+   procedure Set_Heap_Tail
+     (Tx    : in out Transaction;
+      First : Database.Storage.Pages.Page_Id;
+      Last  : Database.Storage.Pages.Page_Id) is
+   begin
+      Tx.Heap_Tails.Include (First, Last);
+   end Set_Heap_Tail;
 
    procedure Begin_Read (DB : in out Database.Handle; Tx : out Transaction) is
       Granted : Boolean;

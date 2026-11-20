@@ -110,6 +110,10 @@ package Database.Storage.File_IO is
    function Write_Page
      (F    : in out File_Handle;
       Page : Database.Storage.Pages.Page) return Database.Status.Result;
+   --  Forget the page images a handle keeps between reads. Transactions call this when they start and end, so a cached
+   --  page never outlives the snapshot it was read in.
+   --  @param F handle whose cache is cleared; a handle without a cache is unchanged.
+   procedure Invalidate_Cache (F : in out File_Handle);
    --  Public operation `Page_Count`. See the package documentation for transaction, ownership, and error-result
    --  semantics.
    --  @param F f argument supplied to the operation.

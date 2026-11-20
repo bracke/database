@@ -1,3 +1,4 @@
+with Interfaces;
 
 package body Database.Storage.Pages is
    use type Ada.Streams.Stream_Element_Offset;
@@ -47,15 +48,18 @@ package body Database.Storage.Pages is
       return R;
    end Get_U64;
 
+   --  The sum of every byte except the four checksum bytes 36 .. 39: summing all bytes and subtracting those four
+   --  avoids a comparison per byte.
+   --  The modular accumulator cannot overflow for one page (at most 4096 * 255), so no per-byte overflow check is
+   --  needed.
    function Checksum (B : Page_Buffer) return Natural is
-      S : Natural := 0;
+      use type Interfaces.Unsigned_32;
+      S : Interfaces.Unsigned_32 := 0;
    begin
-      for I in B'Range loop
-         if I < 36 or else I > 39 then
-            S := S + Natural (B (I));
-         end if;
+      for Value of B loop
+         S := S + Interfaces.Unsigned_32 (Value);
       end loop;
-      return S;
+      return Natural (S) - Natural (B (36)) - Natural (B (37)) - Natural (B (38)) - Natural (B (39));
    end Checksum;
 
    procedure Refresh_Checksum (P : in out Page) is
@@ -84,9 +88,10 @@ package body Database.Storage.Pages is
    end Initialize;
 
    function Validate
-     (P             : Page;
-      Expected_Id   : Page_Id;
-      Expected_Kind : Page_Kind) return Database.Status.Result is
+     (P               : Page;
+      Expected_Id     : Page_Id;
+      Expected_Kind   : Page_Kind;
+      Verify_Checksum : Boolean := True) return Database.Status.Result is
       K : Natural;
    begin
       if P.Buffer (0) /= Magic_0
@@ -115,7 +120,7 @@ package body Database.Storage.Pages is
       if Used (P) > Payload_Capacity then
          return Database.Status.Failure (Database.Status.Corrupt_File, "page payload out of bounds");
       end if;
-      if Get_U32 (P.Buffer, 36) /= Checksum (P.Buffer) then
+      if Verify_Checksum and then Get_U32 (P.Buffer, 36) /= Checksum (P.Buffer) then
          return Database.Status.Failure (Database.Status.Corrupt_File, "page checksum mismatch");
       end if;
       return Database.Status.Success;
@@ -196,12 +201,11 @@ package body Database.Storage.Pages is
    end To_Stream;
 
    function From_Stream (S : Ada.Streams.Stream_Element_Array) return Page is
-      P : Page;
    begin
-      P.Buffer := [others => 0];
-      for I in 0 .. Page_Size - 1 loop
-         P.Buffer (I) := Byte (S (S'First + Ada.Streams.Stream_Element_Offset (I)));
-      end loop;
-      return P;
+      return P : Page do
+         for I in 0 .. Page_Size - 1 loop
+            P.Buffer (I) := Byte (S (S'First + Ada.Streams.Stream_Element_Offset (I)));
+         end loop;
+      end return;
    end From_Stream;
 end Database.Storage.Pages;

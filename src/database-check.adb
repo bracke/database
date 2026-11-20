@@ -311,6 +311,27 @@ package body Database.Check is
             Free     : Boolean_Array (0 .. Count) := [others => False];
             P        : Page;
             SR       : Database.Status.Result;
+
+            --  Mark every page of the index tree at Root: its root, internal nodes, and leaves.
+            procedure Mark_Index (Root : Page_Id; Missing : Wide_Wide_String) is
+               Pages : Database.Indexes.BTree.Page_Id_Vectors.Vector;
+               IR    : Database.Status.Result;
+            begin
+               if Root = Invalid_Page_Id then
+                  return;
+               end if;
+               IR := Database.Indexes.BTree.Pages_Of (DB.File, Root, Pages);
+               if not Database.Status.Is_Ok (IR) then
+                  Add_Error (R, Invalid_Index, To_Wide_Wide_String (IR.Message), Root);
+               end if;
+               for Id of Pages loop
+                  if Natural (Id) >= Count then
+                     Add_Error (R, Missing_Page, Missing, Id);
+                  else
+                     Mark (Reachable, Id);
+                  end if;
+               end loop;
+            end Mark_Index;
          begin
             if Count = 0 then
                Add_Error (R, Missing_Page, "database file has no header page");
@@ -346,48 +367,9 @@ package body Database.Check is
                            Add_Error (R, Invalid_Page, "loop in table heap pages", Page_Id (S.Heap_First_Page));
                         end if;
                      end;
-                        if S.Primary_Index_Root /= Natural (Invalid_Page_Id) then
-                           declare
-                              Id : Page_Id := Page_Id (S.Primary_Index_Root);
-                              Guard : Natural := 0;
-                           begin
-                              while Id /= Invalid_Page_Id and then Guard <= Count loop
-                                 if Natural (Id) >= Count then
-                                    Add_Error (R, Missing_Page, "primary index references missing page", Id);
-                                    exit;
-                                 end if;
-                                 Mark (Reachable, Id);
-                                 SR := Database.Storage.File_IO.Read_Page (DB.File, Id, BTree_Leaf_Page, P);
-                                 exit when not Database.Status.Is_Ok (SR);
-                                 Id := Get_Next (P);
-                                 Guard := Guard + 1;
-                              end loop;
-                              if Guard > Count then
-                                 Add_Error (R, Invalid_Index, "loop in primary index leaf chain",
-                                   Page_Id (S.Primary_Index_Root));
-                              end if;
-                           end;
-                        end if;
+                        Mark_Index (Page_Id (S.Primary_Index_Root), "primary index references missing page");
                         for IX of S.Indexes loop
-                           declare
-                              Id : Page_Id := IX.Root_Page;
-                              Guard : Natural := 0;
-                           begin
-                              while Id /= Invalid_Page_Id and then Guard <= Count loop
-                                 if Natural (Id) >= Count then
-                                    Add_Error (R, Missing_Page, "index references missing page", Id);
-                                    exit;
-                                 end if;
-                                 Mark (Reachable, Id);
-                                 SR := Database.Storage.File_IO.Read_Page (DB.File, Id, BTree_Leaf_Page, P);
-                                 exit when not Database.Status.Is_Ok (SR);
-                                 Id := Get_Next (P);
-                                 Guard := Guard + 1;
-                              end loop;
-                              if Guard > Count then
-                                 Add_Error (R, Invalid_Index, "loop in index leaf chain", IX.Root_Page);
-                              end if;
-                           end;
+                           Mark_Index (IX.Root_Page, "index references missing page");
                         end loop;
                   end;
                end loop;

@@ -64,8 +64,9 @@ procedure Check_All is
         ("Alire GNAT 15 toolchain",
          Root,
          Alr,
-         [new String'("exec"), new String'("--"),
-          new String'("gnatls"), new String'("--version")],
+         GNAT.OS_Lib.Argument_List'
+           [new String'("exec"), new String'("--"),
+            new String'("gnatls"), new String'("--version")],
          Output,
          Quiet => True);
 

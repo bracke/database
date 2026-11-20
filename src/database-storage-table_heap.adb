@@ -94,7 +94,11 @@ package body Database.Storage.Table_Heap is
             return R;
          end if;
       end if;
-      Id := First_Page;
+      --  Continue at the page this transaction last appended to instead of walking the chain from its first page.
+      Id := Database.Transactions.Heap_Tail (Tx, First_Page);
+      if Id = Invalid_Page_Id then
+         Id := First_Page;
+      end if;
       loop
          R := Database.Storage.File_IO.Read_Page (F, Id, Table_Heap_Page, P);
          if not Database.Status.Is_Ok (R) then
@@ -115,6 +119,7 @@ package body Database.Storage.Table_Heap is
                   P.Buffer (Off + Slot_Header + I) := Enc.Data (I);
                end loop;
                Set_Used (P, Used (P) + Slot_Header + Enc.Last);
+               Database.Transactions.Set_Heap_Tail (Tx, First_Page, Get_Id (P));
                return Database.Transactions.Write_Page (Tx, P);
             end;
          elsif Get_Next (P) = Invalid_Page_Id then

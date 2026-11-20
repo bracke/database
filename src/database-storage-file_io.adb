@@ -8,6 +8,7 @@ with Database.Tracing;
 with Ada.Characters.Conversions;
 with Ada.Directories;
 with Ada.Streams;
+with Ada.Unchecked_Deallocation;
 with Interfaces.C;
 
 package body Database.Storage.File_IO is
@@ -15,6 +16,43 @@ package body Database.Storage.File_IO is
    use Ada.Streams.Stream_IO;
    use Database.Storage.Pages;
    use type Interfaces.C.int;
+
+   procedure Free_Cache is new Ada.Unchecked_Deallocation (Database.Page_Cache, Database.Page_Cache_Access);
+
+   pragma Compile_Time_Error
+     (Database.Cached_Page_Bytes /= Page_Size, "the page cache must hold exactly one page");
+
+   procedure Invalidate_Cache (F : in out File_Handle) is
+   begin
+      if F.Cache /= null then
+         for Entry_Item of F.Cache.all loop
+            Entry_Item.Valid := False;
+         end loop;
+      end if;
+   end Invalidate_Cache;
+
+   --  Every unencrypted handle caches. The process lock keeps other processes from writing while it is open: shared
+   --  for a read-only handle, exclusive for a read-write one. This handle's own writes update the cache in Write_Page,
+   --  and every other change to the file (truncation, encryption) clears it.
+   function Caches (F : File_Handle) return Boolean is (not F.Encrypted);
+
+   function Slot_Of (Id : Page_Id) return Natural is (Natural (Id) mod Database.Cache_Slots);
+
+   --  Drop the cached image of one page, before the file copy of that page changes.
+   procedure Forget (F : in out File_Handle; Id : Page_Id) is
+   begin
+      if F.Cache /= null then
+         F.Cache (Slot_Of (Id)).Valid := False;
+      end if;
+   end Forget;
+
+   procedure Remember (F : in out File_Handle; Id : Page_Id; Page : Database.Storage.Pages.Page) is
+   begin
+      if F.Cache = null then
+         F.Cache := new Database.Page_Cache;
+      end if;
+      F.Cache (Slot_Of (Id)) := (Id => Id, Valid => True, Bytes => Page.Buffer);
+   end Remember;
 
    Invalid_Lock_FD : constant Interfaces.C.int := Interfaces.C.int'First;
    LOCK_SH : constant Interfaces.C.int := 1;
@@ -361,12 +399,14 @@ package body Database.Storage.File_IO is
      (F   : in out File_Handle;
       Key : Database.Keys.Encryption_Key) is
    begin
+      Invalidate_Cache (F);
       F.Encrypted := Database.Keys.Is_Valid (Key);
       F.Key := Key;
    end Enable_Encryption;
 
    procedure Disable_Encryption (F : in out File_Handle) is
    begin
+      Invalidate_Cache (F);
       F.Encrypted := False;
       F.Key := Database.Keys.Empty_Key;
    end Disable_Encryption;
@@ -464,6 +504,7 @@ package body Database.Storage.File_IO is
       Last  : Stream_Element_Offset;
       R     : Database.Status.Result;
    begin
+      Invalidate_Cache (F);
       if not Database.Keys.Is_Valid (Key) then
          return Database.Status.Failure
            (Database.Status.Invalid_Key, "encrypted rewrite requires valid key");
@@ -756,6 +797,7 @@ package body Database.Storage.File_IO is
 
    function Close (F : in out File_Handle) return Database.Status.Result is
    begin
+      Free_Cache (F.Cache);
       if F.Opened then
          Ada.Streams.Stream_IO.Close (F.File);
          F.Opened := False;
@@ -806,6 +848,7 @@ package body Database.Storage.File_IO is
       Last : Stream_Element_Offset;
       R : Database.Status.Result;
    begin
+      Invalidate_Cache (F);
       if not F.Opened then
          return Database.Status.Failure (Database.Status.Not_Open, "file not open");
       end if;
@@ -893,6 +936,7 @@ package body Database.Storage.File_IO is
          return Database.Status.Failure (Database.Status.IOError, "truncate failed");
    end Truncate_To_Page_Count;
 
+
    function Read_Page
      (F    : in out File_Handle;
       Id   : Page_Id;
@@ -907,6 +951,14 @@ package body Database.Storage.File_IO is
       end if;
       if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Random_IO_Failure) then
          return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Random_IO_Failure);
+      end if;
+      if Caches (F) and then F.Cache /= null and then F.Cache (Slot_Of (Id)).Valid
+        and then F.Cache (Slot_Of (Id)).Id = Id
+      then
+         --  The image passed every check, including the checksum, when it was read.
+         Database.Metrics.Increment_Cache_Hits;
+         Page.Buffer := F.Cache (Slot_Of (Id)).Bytes;
+         return Validate (Page, Id, Kind, Verify_Checksum => False);
       end if;
       if not F.Encrypted then
          R := Ensure_Mode (F, In_File);
@@ -940,6 +992,10 @@ package body Database.Storage.File_IO is
       Database.Tracing.Emit_Trace ((0, Database.Tracing.Storage_Trace,
         Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("page read"), False));
       R := Validate (Page, Id, Kind);
+      if Database.Status.Is_Ok (R) and then Caches (F) then
+         Database.Metrics.Increment_Cache_Misses;
+         Remember (F, Id, Page);
+      end if;
       return R;
    exception
       when others => return Database.Status.Failure (Database.Status.IOError, "page read failed");
@@ -1002,6 +1058,7 @@ package body Database.Storage.File_IO is
       Kind : constant Page_Kind := Get_Kind (Page);
       R : constant Database.Status.Result := Validate (Page, Get_Id (Page), Kind);
    begin
+      Forget (F, Get_Id (Page));
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
@@ -1070,6 +1127,9 @@ package body Database.Storage.File_IO is
       Database.Metrics.Increment_Page_Writes;
       Database.Tracing.Emit_Trace ((0, Database.Tracing.Storage_Trace,
         Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("page write"), False));
+      if Caches (F) then
+         Remember (F, Get_Id (Page), Page);
+      end if;
       return Database.Status.Success;
    exception
       when others => return Database.Status.Failure (Database.Status.IOError, "page write failed");

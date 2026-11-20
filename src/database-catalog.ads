@@ -232,4 +232,10 @@ package Database.Catalog is
    --  @param Table_Id table id argument supplied to the operation.
    --  @return Result produced by the function.
    function Rows_For_Table (State_Key : Natural; Table_Id : Natural) return Database.Foreign_Keys.Row_Vectors.Vector;
+
+   --  Return how many rows of a table the catalog caches, without copying them.
+   --  @param State_Key catalog state of the database.
+   --  @param Table_Id table id argument supplied to the operation.
+   --  @return Number of cached rows of the table.
+   function Row_Count (State_Key : Natural; Table_Id : Natural) return Natural;
 end Database.Catalog;

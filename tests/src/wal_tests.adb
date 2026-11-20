@@ -1,6 +1,7 @@
 with AUnit.Assertions;
 
 with Ada.Directories;
+with Ada.Streams.Stream_IO;
 with Database;
 with Database.Checkpointing;
 with Database.Full_Text.Postings;
@@ -313,6 +314,69 @@ package body WAL_Tests is
       Remove_File ("wal_ft_reject.database.wal");
    end Full_Text_WAL_Rejects_Non_Full_Text_Page;
 
+   --  Reopening a WAL this process closed cleanly reuses what it knew, continuing the sequence numbers; a WAL that
+   --  changed since, or that is no longer trusted, is scanned and normalized again.
+   procedure Reopen_Reuses_Clean_Close
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Path     : constant Wide_Wide_String := "wal_reopen.database";
+      F        : Database.Storage.File_IO.File_Handle;
+      W        : Database.WAL.WAL_Handle;
+      Previous : Database.Log_Sequence.Log_Sequence_Number := Database.Log_Sequence.Invalid_LSN;
+      R        : Database.Status.Result;
+
+      --  Append one commit record and close; its sequence number must follow the previous one.
+      procedure Commit_Once (Message : String) is
+         L : Database.Log_Sequence.Log_Sequence_Number;
+      begin
+         R := Database.WAL.Append_Commit (W, 1, 1, L);
+         Assert (Database.Status.Is_Ok (R), Message & ": append failed");
+         Assert (L > Previous, Message & ": the sequence continues");
+         Previous := L;
+         R := Database.WAL.Flush (W);
+         Assert (Database.Status.Is_Ok (R), Message & ": flush failed");
+         R := Database.WAL.Close (W);
+         Assert (Database.Status.Is_Ok (R), Message & ": close failed");
+      end Commit_Once;
+
+      procedure Reopen (Message : String) is
+      begin
+         R := Database.WAL.Open (W, Path);
+         Assert (Database.Status.Is_Ok (R), Message & ": open failed");
+      end Reopen;
+   begin
+      Remove_File ("wal_reopen.database");
+      Remove_File ("wal_reopen.database.wal");
+      R := Database.Storage.File_IO.Create (F, Path);
+      Assert (Database.Status.Is_Ok (R), "db create failed");
+      R := Database.WAL.Create (W, Path);
+      Assert (Database.Status.Is_Ok (R), "wal create failed");
+      Commit_Once ("first commit");
+      Reopen ("trusted reopen");
+      Commit_Once ("commit after a trusted reopen");
+      Database.WAL.Forget_Trusted (Path);
+      Reopen ("scanned reopen");
+      Commit_Once ("commit after a scanned reopen");
+      --  A torn suffix written behind this process's back changes the file, so the next open normalizes it.
+      declare
+         File : Ada.Streams.Stream_IO.File_Type;
+      begin
+         Ada.Streams.Stream_IO.Open (File, Ada.Streams.Stream_IO.Append_File, "wal_reopen.database.wal");
+         Ada.Streams.Stream_IO.Write (File, [1 .. 5 => 16#FF#]);
+         Ada.Streams.Stream_IO.Close (File);
+      end;
+      Reopen ("reopen after a torn suffix");
+      Commit_Once ("commit after normalizing");
+      R := Database.WAL.Validate (Path);
+      Assert (Database.Status.Is_Ok (R), "the WAL validates");
+      R := Database.Storage.File_IO.Close (F);
+      Assert (Database.Status.Is_Ok (R), "file close failed");
+      Database.WAL.Forget_Trusted (Path);
+      Remove_File ("wal_reopen.database");
+      Remove_File ("wal_reopen.database.wal");
+   end Reopen_Reuses_Clean_Close;
+
    overriding
    procedure Register_Tests (T : in out Case_Type) is
       use AUnit.Test_Cases.Registration;
@@ -343,5 +407,7 @@ package body WAL_Tests is
         (T,
          Full_Text_WAL_Rejects_Non_Full_Text_Page'Access,
          "full-text WAL rejects non-full-text page");
+      Register_Routine
+        (T, Reopen_Reuses_Clean_Close'Access, "reopening a cleanly closed WAL continues its sequence");
    end Register_Tests;
 end WAL_Tests;

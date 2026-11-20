@@ -243,19 +243,25 @@ package body Database.Tables is
          end case;
       end Bounds_For;
 
+      --  The column a table's primary index is keyed on, or Natural'Last for a table without a primary key.
+      function Primary_Column (Schema : Database.Schema.Table_Schema) return Natural is
+        (if Database.Schema.Primary_Key_Index (Schema) = Natural'Last then Natural'Last
+         else Schema.Columns.Element (Database.Schema.Primary_Key_Index (Schema)).Id);
+
+      --  The row visible to Tx whose Column equals Key, found through the index at Root. A built index is
+      --  authoritative; an unbuilt one (see BTree.Is_Built) is bypassed by scanning the table.
       function Visible_Ref_For_Key
         (Tx     : in out Database.Transactions.Transaction;
          DB     : in out Database.Handle;
          Schema : Database.Schema.Table_Schema;
          Root   : Database.Storage.Pages.Page_Id;
          Key    : Database.Values.Value;
+         Column : Natural;
          Ref    : out Database.Indexes.Row_Reference) return Database.Status.Result is
          Refs : Database.Indexes.BTree.Row_Reference_Vectors.Vector;
          Row_Value : Database.Rows.Row;
          R : Database.Status.Result;
          Cursor : Database.Storage.Table_Heap.Heap_Cursor;
-         PK_Pos : Natural;
-         PK_Col : Natural;
          Bound : constant Database.Indexes.BTree.Range_Bound  :=
            (Kind => Database.Indexes.BTree.Inclusive, Key => Key);
       begin
@@ -263,40 +269,31 @@ package body Database.Tables is
          if Root = Database.Storage.Pages.Invalid_Page_Id or else Root = 0 then
             return Database.Status.Failure (Database.Status.Not_Found, "row not found");
          end if;
-         R := Database.Indexes.BTree.Range_Find (DB.File, Root, Bound, Bound, Refs);
-         if not Database.Status.Is_Ok (R) then
-            return R;
-         end if;
-         for Candidate of Refs loop
-            R := Database.Storage.Table_Heap.Read_At (Tx, DB.File, Candidate, Schema, Row_Value);
-            if Database.Status.Is_Ok (R) then
-               Ref := Candidate;
-               return Database.Status.Success;
-            elsif R.Code /= Database.Status.Not_Found then
+         if Database.Indexes.BTree.Is_Built (DB.File, Root) then
+            R := Database.Indexes.BTree.Range_Find (DB.File, Root, Bound, Bound, Refs);
+            if not Database.Status.Is_Ok (R) then
                return R;
             end if;
-         end loop;
-
-         PK_Pos := Database.Schema.Primary_Key_Index (Schema);
-         if PK_Pos /= Natural'Last and then Schema.Heap_First_Page /= 0 then
-            PK_Col := Schema.Columns.Element (PK_Pos).Id;
+            for Candidate of Refs loop
+               R := Database.Storage.Table_Heap.Read_At (Tx, DB.File, Candidate, Schema, Row_Value);
+               if Database.Status.Is_Ok (R) then
+                  Ref := Candidate;
+                  return Database.Status.Success;
+               elsif R.Code /= Database.Status.Not_Found then
+                  return R;
+               end if;
+            end loop;
+            return Database.Status.Failure (Database.Status.Not_Found, "row not found");
+         end if;
+         if Schema.Heap_First_Page /= 0 then
             R := Database.Storage.Table_Heap.Scan_First
-              (Tx,
-               DB.File,
-               Database.Storage.Pages.Page_Id (Schema.Heap_First_Page),
-               Schema,
-               Cursor);
+              (Tx, DB.File, Database.Storage.Pages.Page_Id (Schema.Heap_First_Page), Schema, Cursor);
             while Database.Status.Is_Ok (R) and then Cursor.Has_Row loop
-               if Database.Values.Equal
-                    (Index_Value (Schema, Cursor.Row, PK_Col), Key)
-               then
-                  Ref :=
-                    (Page        => Cursor.Current_Page,
-                     Slot_Offset => Cursor.Slot_Offset);
+               if Database.Values.Equal (Index_Value (Schema, Cursor.Row, Column), Key) then
+                  Ref := (Page => Cursor.Current_Page, Slot_Offset => Cursor.Slot_Offset);
                   return Database.Status.Success;
                end if;
-               R := Database.Storage.Table_Heap.Scan_Next
-                 (Tx, DB.File, Schema, Cursor);
+               R := Database.Storage.Table_Heap.Scan_Next (Tx, DB.File, Schema, Cursor);
             end loop;
             if not Database.Status.Is_Ok (R) then
                return R;
@@ -305,16 +302,89 @@ package body Database.Tables is
          return Database.Status.Failure (Database.Status.Not_Found, "row not found");
       end Visible_Ref_For_Key;
 
+      --  Make the index at Root built: an index root allocated before indexes were persistent is filled in place; a
+      --  root the catalog kept after its page was rolled back or reused is replaced by a new root, and Replaced is
+      --  set so the caller records it in the catalog.
+      function Ensure_Index
+        (Tx       : in out Database.Transactions.Transaction;
+         DB       : in out Database.Handle;
+         Schema   : Database.Schema.Table_Schema;
+         Root     : in out Database.Storage.Pages.Page_Id;
+         Column   : Natural;
+         Replaced : in out Boolean) return Database.Status.Result is
+         R : Database.Status.Result;
+         C : Database.Storage.Table_Heap.Heap_Cursor;
+      begin
+         if Root = Database.Storage.Pages.Invalid_Page_Id
+           or else Database.Indexes.BTree.Is_Built (DB.File, Root)
+         then
+            return Database.Status.Success;
+         end if;
+         if Database.Indexes.BTree.Is_Unwritten (DB.File, Root) then
+            R := Database.Indexes.BTree.Reset (Tx, DB.File, Root);
+         else
+            R := Database.Indexes.BTree.Create (Tx, DB.File, DB.Page_Allocator, Root);
+            Replaced := True;
+         end if;
+         if not Database.Status.Is_Ok (R) or else Schema.Heap_First_Page = 0 then
+            return R;
+         end if;
+         R := Database.Storage.Table_Heap.Scan_First
+           (DB.File, Database.Storage.Pages.Page_Id (Schema.Heap_First_Page), Schema, C);
+         while Database.Status.Is_Ok (R) and then C.Has_Row loop
+            declare
+               K : constant Database.Values.Value := Index_Value (Schema, C.Row, Column);
+            begin
+               if K.Kind /= Database.Types.Null_Value then
+                  R := Database.Indexes.BTree.Insert_Duplicate
+                    (Tx, DB.File, DB.Page_Allocator, Root, K, (Page => C.Current_Page, Slot_Offset => C.Slot_Offset));
+                  exit when not Database.Status.Is_Ok (R);
+               end if;
+            end;
+            R := Database.Storage.Table_Heap.Scan_Next (DB.File, Schema, C);
+         end loop;
+         return R;
+      end Ensure_Index;
+
+      --  Make every index of a table built before a change, recording replaced roots in the catalog.
+      function Ensure_Indexes
+        (Tx     : in out Database.Transactions.Transaction;
+         DB     : in out Database.Handle;
+         S      : in out Database.Schema.Table_Schema) return Database.Status.Result is
+         Replaced : Boolean := False;
+         Root     : Database.Storage.Pages.Page_Id := Database.Storage.Pages.Page_Id (S.Primary_Index_Root);
+         R        : Database.Status.Result :=
+           Ensure_Index (Tx, DB, S, Root, Primary_Column (S), Replaced);
+      begin
+         S.Primary_Index_Root := Natural (Root);
+         if S.Indexes.Length > 0 then
+            for I in 0 .. Natural (S.Indexes.Length) - 1 loop
+               exit when not Database.Status.Is_Ok (R);
+               declare
+                  IX : Database.Indexes.Index_Metadata := S.Indexes.Element (I);
+               begin
+                  R := Ensure_Index (Tx, DB, S, IX.Root_Page, IX.Column_Id, Replaced);
+                  S.Indexes.Replace_Element (I, IX);
+               end;
+            end loop;
+         end if;
+         if Database.Status.Is_Ok (R) and then Replaced then
+            R := Database.Catalog.Update_Table (DB, S);
+         end if;
+         return R;
+      end Ensure_Indexes;
+
       function Any_Visible_Key
         (Tx     : in out Database.Transactions.Transaction;
          DB     : in out Database.Handle;
          Schema : Database.Schema.Table_Schema;
          Root   : Database.Storage.Pages.Page_Id;
-         Key    : Database.Values.Value) return Boolean is
+         Key    : Database.Values.Value;
+         Column : Natural) return Boolean is
          Ref : Database.Indexes.Row_Reference;
          R : Database.Status.Result;
       begin
-         R := Visible_Ref_For_Key (Tx, DB, Schema, Root, Key, Ref);
+         R := Visible_Ref_For_Key (Tx, DB, Schema, Root, Key, Column, Ref);
          return Database.Status.Is_Ok (R);
       end Any_Visible_Key;
 
@@ -851,6 +921,11 @@ package body Database.Tables is
             return V;
          end if;
          if Database.Backend (DB) = Database.Persistent_Backend then
+            V := Ensure_Indexes (Tx, DB, S);
+            if not Database.Status.Is_Ok (V) then
+               return V;
+            end if;
+            Root := Database.Storage.Pages.Page_Id (S.Primary_Index_Root);
             if Root = Database.Storage.Pages.Invalid_Page_Id then
                V := Database.Indexes.BTree.Create (Tx, DB.File, DB.Page_Allocator, Root);
                if not Database.Status.Is_Ok (V) then
@@ -862,7 +937,7 @@ package body Database.Tables is
                   return V;
                end if;
             else
-               if Any_Visible_Key (Tx, DB, S, Root, Key) then
+               if Any_Visible_Key (Tx, DB, S, Root, Key, Primary_Column (S)) then
                   return Database.Status.Failure (Database.Status.Duplicate_Key, "duplicate primary key");
                end if;
             end if;
@@ -877,7 +952,7 @@ package body Database.Tables is
                         return V;
                      end if;
                      if K.Kind /= Database.Types.Null_Value then
-                        if Any_Visible_Key (Tx, DB, S, IX.Root_Page, K) then
+                        if Any_Visible_Key (Tx, DB, S, IX.Root_Page, K, IX.Column_Id) then
                            return Database.Status.Failure (Database.Status.Duplicate_Key,
                              "duplicate value for unique index");
                         end if;
@@ -911,7 +986,7 @@ package body Database.Tables is
                   end if;
                   if K.Kind /= Database.Types.Null_Value then
                      if IX.Unique then
-                        if Any_Visible_Key (Tx, DB, S, IX.Root_Page, K) then
+                        if Any_Visible_Key (Tx, DB, S, IX.Root_Page, K, IX.Column_Id) then
                            return Database.Status.Failure (Database.Status.Duplicate_Key,
                              "duplicate value for unique index");
                         end if;
@@ -943,8 +1018,7 @@ package body Database.Tables is
                Database.Catalog.Register_Row (Database.Catalog_State_Key (DB), S.Table_Id, Row_Value);
                Database.Full_Text.Maintain_Insert  (Tx,
                  S,
-                 Natural (Database.Catalog.Rows_For_Table
-                   (Database.Catalog_State_Key (DB), S.Table_Id).Length),
+                 Database.Catalog.Row_Count (Database.Catalog_State_Key (DB), S.Table_Id),
                  Row_Value);
             end if;
             return V;
@@ -971,8 +1045,7 @@ package body Database.Tables is
             Database.Catalog.Register_Row (Database.Catalog_State_Key (DB), S.Table_Id, Row_Value);
             Database.Full_Text.Maintain_Insert  (Tx,
               S,
-              Natural (Database.Catalog.Rows_For_Table
-                (Database.Catalog_State_Key (DB), S.Table_Id).Length),
+              Database.Catalog.Row_Count (Database.Catalog_State_Key (DB), S.Table_Id),
               Row_Value);
             return Database.Status.Success;
          end if;
@@ -1002,7 +1075,7 @@ package body Database.Tables is
             end if;
             R := Visible_Ref_For_Key
               (Tx, DB, S, Database.Storage.Pages.Page_Id (S.Primary_Index_Root),
-               Key_Value_For_Find, Ref);
+               Key_Value_For_Find, Primary_Column (S), Ref);
             if not Database.Status.Is_Ok (R) then
                if R.Code = Database.Status.Not_Found or else R.Code = Database.Status.Key_Not_Found then
                   return Database.Status.Failure (Database.Status.Not_Found, "row not found");
@@ -1058,7 +1131,7 @@ package body Database.Tables is
                return Database.Status.Failure (Database.Status.Not_Found, "row not found");
             end if;
             R := Visible_Ref_For_Key
-              (Tx, DB, S, Database.Storage.Pages.Page_Id (S.Primary_Index_Root), K, Ref);
+              (Tx, DB, S, Database.Storage.Pages.Page_Id (S.Primary_Index_Root), K, Primary_Column (S), Ref);
             if not Database.Status.Is_Ok (R) then
                if R.Code = Database.Status.Key_Not_Found or else R.Code = Database.Status.Not_Found then
                   return Database.Status.Failure (Database.Status.Not_Found, "row not found");

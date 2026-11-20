@@ -321,6 +321,8 @@ package body Database is
          return;
       end if;
       if DB.Kind = Persistent_Backend then
+         --  The process lock is released below; another process may append to the WAL afterwards.
+         Database.WAL.Forget_Trusted (Database.Storage.File_IO.Path (DB.File));
          if DB.Read_Only_Mode then
             DB.Last := Database.Status.Success;
          else

@@ -148,6 +148,11 @@ package Database.WAL is
    --  otherwise False or an explicit validation status.
    function Validate (Database_Path : Wide_Wide_String) return Database.Status.Result;
 
+   --  Forget what this process knows about a WAL it appended to, so the next Open scans the file again. Called when
+   --  the database handle closes and its process lock is released, after which another process may append.
+   --  @param Database_Path database path whose WAL is no longer trusted.
+   procedure Forget_Trusted (Database_Path : Wide_Wide_String);
+
 private
    --  WAL_Handle defines a public database type used by this package.
    type WAL_Handle is limited record

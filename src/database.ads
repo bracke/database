@@ -1,5 +1,6 @@
 --  Root database handle API. Owns in-memory or persistent database state.
 --  All data access is performed through transaction-scoped package APIs.
+with Ada.Containers.Vectors;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Ada.Streams.Stream_IO;
 with Interfaces.C;
@@ -182,6 +183,21 @@ private
       Data  : Binary_Key := (others => 0);
    end record;
 
+   --  Validated page images of an unencrypted handle, kept for the duration of one transaction. The handle's process
+   --  lock keeps other processes from writing while it is open; its own page writes update the cache, other changes to
+   --  the file clear it, and so does every transaction start and end and closing the handle.
+   Cached_Page_Bytes : constant := 4096;
+   Cache_Slots       : constant := 64;
+
+   type Cached_Page is record
+      Id    : Page_Id := 0;
+      Valid : Boolean := False;
+      Bytes : Byte_Array (0 .. Cached_Page_Bytes - 1) := [others => 0];
+   end record;
+
+   type Page_Cache is array (0 .. Cache_Slots - 1) of Cached_Page;
+   type Page_Cache_Access is access Page_Cache;
+
    type File_Handle is limited record
       File      : Ada.Streams.Stream_IO.File_Type;
       Opened    : Boolean := False;
@@ -190,10 +206,17 @@ private
       Encrypted : Boolean := False;
       Read_Only : Boolean := False;
       Key       : Encryption_Key := (Valid => False, Id => 0, Data => (others => 0));
+      Cache     : Page_Cache_Access := null;
    end record;
 
+   package Page_Id_Lists is new Ada.Containers.Vectors (Index_Type => Positive, Element_Type => Page_Id);
+
+   --  Next_Page is the first page past the file. The file is scanned for free pages once, on the first allocation
+   --  after the allocator is initialized; Free_Pages holds the ones not yet reused, each checked again before use.
    type Allocator is record
-      Next_Page : Page_Id := 1;
+      Next_Page  : Page_Id := 1;
+      Scanned    : Boolean := False;
+      Free_Pages : Page_Id_Lists.Vector;
    end record;
 
    type Handle is limited record

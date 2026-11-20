@@ -26,6 +26,14 @@ date/time values, and richer type metadata.
 The storage layer is page-oriented and includes durable page handling, record
 serialization, file I/O, heap-table storage, and free-list management.
 
+Each unencrypted file handle keeps a small direct-mapped cache of validated
+page images (64 pages), so a scan that visits many rows of one page reads,
+decodes, and checksums that page once. The handle's process lock keeps other
+processes from writing while it is open; the handle's own page writes update the
+cache, truncation and encryption changes clear it, and every transaction start
+and end clears it, so a cached page never outlives the snapshot it was read in.
+The `Cache_Hits` and `Cache_Misses` metrics count its use.
+
 ### Transactions and Recovery
 
 The transaction layer coordinates rollback journal behavior, WAL logging,
@@ -34,7 +42,15 @@ checkpointing, replay, MVCC visibility, and transaction isolation.
 ### Indexing
 
 The index layer includes B+ tree indexes, secondary indexes, expression/partial
-index metadata, and SPARK-oriented B+ tree invariant validation.
+index metadata, and SPARK-oriented B+ tree invariant validation. B+ trees are
+stored in their pages and changed through the owning transaction; see
+[storage-format.md](storage-format.md#index-layout).
+
+Appends to a table heap continue at the page the transaction last appended to,
+and the catalog counts its cached rows per table, so neither an insert nor its
+full-text maintenance depends on the size of the table. The page allocator scans
+the file for free pages once per open and checks a remembered free page again
+before reusing it.
 
 ### Query and Optimization
 

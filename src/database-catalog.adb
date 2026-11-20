@@ -2,6 +2,7 @@ with Database.Catalog.Rules;
 with Database.Fault_Hooks;
 with Ada.Containers;
 with Ada.Containers.Indefinite_Vectors;
+with Ada.Containers.Ordered_Maps;
 with Ada.Unchecked_Deallocation;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Storage.Pages;
@@ -43,6 +44,9 @@ package body Database.Catalog is
    package Catalog_Row_Vectors is new Ada.Containers.Indefinite_Vectors
      (Index_Type => Natural, Element_Type => Catalog_Row);
 
+   --  Cached rows per table, kept with Cached_Rows so a count needs no scan.
+   package Row_Count_Maps is new Ada.Containers.Ordered_Maps (Key_Type => Natural, Element_Type => Natural);
+
    type Catalog_State is record
       Tables               : Schema_Vectors.Vector;
       Foreign_Keys         : Database.Foreign_Keys.Foreign_Key_Vectors.Vector;
@@ -52,6 +56,7 @@ package body Database.Catalog is
       Materialized_Views   : Database.Materialized_Views.Materialized_View_Vectors.Vector;
       Full_Text_Indexes    : Database.Full_Text.Indexes.Metadata_Vectors.Vector;
       Cached_Rows          : Catalog_Row_Vectors.Vector;
+      Row_Counts           : Row_Count_Maps.Map;
    end record;
 
    type Catalog_State_Access is access all Catalog_State;
@@ -184,6 +189,7 @@ package body Database.Catalog is
       State.all.Materialized_Views.Clear;
       State.all.Full_Text_Indexes.Clear;
       State.all.Cached_Rows.Clear;
+      State.all.Row_Counts.Clear;
    end Clear;
 
    function Register
@@ -1469,6 +1475,7 @@ package body Database.Catalog is
       State : constant Catalog_State_Access := State_For (State_Key);
    begin
       State.all.Cached_Rows.Append (Catalog_Row'(Table_Id => Table_Id, Row => Row));
+      State.all.Row_Counts.Include (Table_Id, Row_Count (State_Key, Table_Id) + 1);
    end Register_Row;
 
    procedure Remove_Row
@@ -1484,6 +1491,9 @@ package body Database.Catalog is
            Key_Row)
          then
             State.all.Cached_Rows.Delete (I);
+            if State.all.Row_Counts.Contains (Table_Id) and then State.all.Row_Counts.Element (Table_Id) > 0 then
+               State.all.Row_Counts.Replace (Table_Id, State.all.Row_Counts.Element (Table_Id) - 1);
+            end if;
          end if;
       end loop;
    end Remove_Row;
@@ -1494,6 +1504,12 @@ package body Database.Catalog is
       Remove_Row (State_Key, Table_Id, Schema, Old_Row);
       Register_Row (State_Key, Table_Id, New_Row);
    end Replace_Row;
+
+   function Row_Count (State_Key : Natural; Table_Id : Natural) return Natural is
+      State : constant Catalog_State_Access := State_For (State_Key);
+   begin
+      return (if State.all.Row_Counts.Contains (Table_Id) then State.all.Row_Counts.Element (Table_Id) else 0);
+   end Row_Count;
 
    function Rows_For_Table (State_Key : Natural; Table_Id : Natural) return Database.Foreign_Keys.Row_Vectors.Vector is
       State : constant Catalog_State_Access := State_For (State_Key);

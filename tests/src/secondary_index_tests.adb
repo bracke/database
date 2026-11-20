@@ -1,9 +1,14 @@
+with Ada.Characters.Conversions;
 with AUnit.Assertions;
 
 with Ada.Directories;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Database; use Database;
 with Database.Catalog;
+with Database.Check;
+with Database.Indexes.BTree;
+with Database.Storage.File_IO;
+with Database.Storage.Pages;
 with Database.Predicates;
 with Database.Rows;
 with Database.Schema;
@@ -279,6 +284,262 @@ package body Secondary_Index_Tests is
       end if;
    end Rebuild_Existing_Index;
 
+   --  Numbered test users: a unique email per row and one of 50 ages.
+   function Numbered (Id : Integer) return User_Row is
+      Image : constant Wide_Wide_String := Integer'Wide_Wide_Image (Id);
+      Email : Wide_Wide_String (1 .. 24) := (others => ' ');
+      Text  : constant Wide_Wide_String := "user" & Image (Image'First + 1 .. Image'Last) & "@example.test";
+   begin
+      Email (1 .. Text'Length) := Text;
+      return (Id => Id, Name => "Numbered        ", Email => Email, Age => Id mod 50);
+   end Numbered;
+
+   function Count_Where
+     (Tx     : in out Database.Transactions.Transaction;
+      DB     : in out Database.Handle;
+      S      : Database.Schema.Table_Schema;
+      Column : Natural;
+      Value  : Database.Values.Value) return Natural
+   is
+      Predicate : constant Database.Predicates.Predicate := Database.Predicates.Column_Equals (Column, Value);
+      C         : Users.Cursor;
+      Count     : Natural := 0;
+      R         : Database.Status.Result := Users.Scan (Tx, DB, S, Predicate, C);
+   begin
+      Assert (Database.Status.Is_Ok (R), "indexed scan failed");
+      while Users.Has_Element (C) loop
+         Count := Count + 1;
+         R := Users.Next (Tx, DB, S, Predicate, C);
+         Assert (Database.Status.Is_Ok (R), "indexed scan next failed");
+      end loop;
+      return Count;
+   end Count_Where;
+
+   --  Inspect a closed database's index through its file, opened read-only.
+   function Index_Pages (Path : Wide_Wide_String; Root : Database.Storage.Pages.Page_Id) return Natural is
+      F     : Database.Storage.File_IO.File_Handle;
+      Pages : Database.Indexes.BTree.Page_Id_Vectors.Vector;
+      R     : Database.Status.Result := Database.Storage.File_IO.Open_Read_Only (F, Path);
+   begin
+      Assert (Database.Status.Is_Ok (R), "read-only open failed");
+      R := Database.Indexes.BTree.Pages_Of (F, Root, Pages);
+      Assert (Database.Status.Is_Ok (R), "index pages unreadable");
+      R := Database.Storage.File_IO.Close (F);
+      return Natural (Pages.Length);
+   end Index_Pages;
+
+   function Built (Path : Wide_Wide_String; Root : Database.Storage.Pages.Page_Id) return Boolean is
+      F      : Database.Storage.File_IO.File_Handle;
+      R      : Database.Status.Result := Database.Storage.File_IO.Open_Read_Only (F, Path);
+      Result : Boolean;
+   begin
+      Assert (Database.Status.Is_Ok (R), "read-only open failed");
+      Result := Database.Indexes.BTree.Is_Built (F, Root);
+      R := Database.Storage.File_IO.Close (F);
+      return Result;
+   end Built;
+
+   procedure Expect_Healthy (DB : in out Database.Handle; Message : String) is
+      Tx : Database.Transactions.Transaction;
+      CR : Database.Check.Check_Result;
+      R  : Database.Status.Result;
+   begin
+      Database.Transactions.Begin_Read (DB, Tx);
+      CR := Database.Check.Check_Database (Tx);
+      Assert (CR.Success, Message & (if CR.Success then "" else ": " & Database.Check.Check_Error_Kind'Image
+                (CR.Errors.First_Element.Kind) & " " & Ada.Characters.Conversions.To_String
+                  (Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (CR.Errors.First_Element.Message)) &
+                Database.Storage.Pages.Page_Id'Image (CR.Errors.First_Element.Page)));
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "read commit failed");
+   end Expect_Healthy;
+
+   procedure Remove_Files (Name : String) is
+      procedure Remove (File : String) is
+      begin
+         if Ada.Directories.Exists (File) then
+            Ada.Directories.Delete_File (File);
+         end if;
+      end Remove;
+   begin
+      Remove (Name);
+      Remove (Name & ".wal");
+      Remove (Name & ".fts");
+   end Remove_Files;
+
+   --  Thousands of rows split every index into several pages; lookups, duplicates, and deletes stay exact after the
+   --  database is reopened, and every index page is reachable.
+   procedure Persistent_Tree_Across_Reopen
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Name  : constant String := "secondary_tree.database";
+      Path  : constant Wide_Wide_String := "secondary_tree.database";
+      Rows  : constant := 4_000;
+      DB    : Database.Handle;
+      Tx    : Database.Transactions.Transaction;
+      S     : Database.Schema.Table_Schema;
+      R     : Database.Status.Result;
+   begin
+      Remove_Files (Name);
+      Database.Create (DB, Path);
+      Add_User_Schema (S);
+      R := Users.Register (DB, S);
+      Assert (Database.Status.Is_Ok (R), "register failed");
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Users.Create_Index (Tx, DB, S, "email_unique", 2, True);
+      Assert (Database.Status.Is_Ok (R), "unique index create failed");
+      R := Users.Create_Index (Tx, DB, S, "age_index", 3, False);
+      Assert (Database.Status.Is_Ok (R), "secondary index create failed");
+      R := Database.Transactions.Commit (Tx);
+      for Batch in 0 .. Rows / 500 - 1 loop
+         Database.Transactions.Begin_Write (DB, Tx);
+         for Id in Batch * 500 + 1 .. Batch * 500 + 500 loop
+            R := Users.Insert (Tx, DB, S, Numbered (Id));
+            Assert (Database.Status.Is_Ok (R), "insert failed");
+         end loop;
+         R := Database.Transactions.Commit (Tx);
+         Assert (Database.Status.Is_Ok (R), "commit failed");
+      end loop;
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
+      Database.Close (DB);
+      Assert (Index_Pages (Path, Database.Storage.Pages.Page_Id (S.Primary_Index_Root)) > 2,
+              "the primary index spans several pages");
+      for IX of S.Indexes loop
+         Assert (Index_Pages (Path, IX.Root_Page) > 2, "each secondary index spans several pages");
+      end loop;
+
+      Database.Open (DB, Path);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
+      Assert (Database.Status.Is_Ok (R), "catalog reopen failed");
+      Expect_Healthy (DB, "a large indexed table passes the integrity check");
+      Database.Transactions.Begin_Write (DB, Tx);
+      Assert (Count_Where (Tx, DB, S, 3, Database.Values.From_Integer (7)) = Rows / 50,
+              "a non-unique key spans leaves after reopen");
+      Assert (Count_Where (Tx, DB, S, 2, Database.Values.From_Text (Numbered (3_999).Email)) = 1,
+              "a unique key is found after reopen");
+      R := Users.Insert (Tx, DB, S, (Numbered (2_000) with delta Id => Rows + 1));
+      Assert (R.Code = Database.Status.Duplicate_Key, "a duplicate unique key is rejected after reopen");
+      for Id in 1 .. Rows loop
+         if Id mod 50 = 7 then
+            R := Users.Delete (Tx, DB, S, Id);
+            Assert (Database.Status.Is_Ok (R), "delete failed");
+         end if;
+      end loop;
+      Assert (Count_Where (Tx, DB, S, 3, Database.Values.From_Integer (7)) = 0, "deleted rows are gone");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "delete commit failed");
+      Expect_Healthy (DB, "the table passes the integrity check after deletes");
+      Database.Close (DB);
+      Remove_Files (Name);
+   end Persistent_Tree_Across_Reopen;
+
+   --  An index whose root page was allocated but never written, as earlier versions left every index, is bypassed
+   --  by lookups and rebuilt from the table by the next change.
+   procedure Unbuilt_Index_Is_Rebuilt
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Name : constant String := "secondary_unbuilt.database";
+      Path : constant Wide_Wide_String := "secondary_unbuilt.database";
+      DB   : Database.Handle;
+      Tx   : Database.Transactions.Transaction;
+      S    : Database.Schema.Table_Schema;
+      R    : Database.Status.Result;
+      Root : Database.Storage.Pages.Page_Id;
+   begin
+      Remove_Files (Name);
+      Database.Create (DB, Path);
+      Add_User_Schema (S);
+      R := Users.Register (DB, S);
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Users.Create_Index (Tx, DB, S, "email_unique", 2, True);
+      --  Few enough rows for the index to fit its root, as an earlier version's index root never had children.
+      for Id in 1 .. 50 loop
+         R := Users.Insert (Tx, DB, S, Numbered (Id));
+         Assert (Database.Status.Is_Ok (R), "insert failed");
+      end loop;
+      R := Database.Transactions.Commit (Tx);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
+      Root := S.Indexes.Element (0).Root_Page;
+      Database.Close (DB);
+      --  Leave the root as an earlier version did: an allocated, never written leaf page.
+      declare
+         F    : Database.Storage.File_IO.File_Handle;
+         Page : Database.Storage.Pages.Page;
+      begin
+         R := Database.Storage.File_IO.Open (F, Path);
+         Database.Storage.Pages.Initialize (Page, Root, Database.Storage.Pages.BTree_Leaf_Page);
+         R := Database.Storage.File_IO.Write_Page (F, Page);
+         Assert (Database.Status.Is_Ok (R), "root reset failed");
+         R := Database.Storage.File_IO.Close (F);
+      end;
+
+      Assert (not Built (Path, Root), "the index starts unbuilt");
+      Database.Open (DB, Path);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
+      Database.Transactions.Begin_Write (DB, Tx);
+      Assert (Count_Where (Tx, DB, S, 2, Database.Values.From_Text (Numbered (30).Email)) = 1,
+              "a lookup in an unbuilt index scans the table");
+      R := Users.Insert (Tx, DB, S, (Numbered (30) with delta Id => 1_000));
+      Assert (R.Code = Database.Status.Duplicate_Key,
+              "an unbuilt unique index still rejects a duplicate of the indexed column");
+      for Id in 51 .. 450 loop
+         R := Users.Insert (Tx, DB, S, Numbered (Id));
+         Assert (Database.Status.Is_Ok (R), "insert after reopen failed");
+      end loop;
+      R := Database.Transactions.Commit (Tx);
+      Database.Close (DB);
+      Assert (Built (Path, Root), "the next change rebuilt the index");
+      Database.Open (DB, Path);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
+      Database.Transactions.Begin_Write (DB, Tx);
+      Assert (Count_Where (Tx, DB, S, 2, Database.Values.From_Text (Numbered (30).Email)) = 1,
+              "the rebuilt index holds the earlier rows");
+      Assert (Count_Where (Tx, DB, S, 2, Database.Values.From_Text (Numbered (400).Email)) = 1,
+              "and the later ones");
+      R := Database.Transactions.Commit (Tx);
+      Expect_Healthy (DB, "a rebuilt index passes the integrity check");
+      Database.Close (DB);
+      Remove_Files (Name);
+   end Unbuilt_Index_Is_Rebuilt;
+
+   --  Index pages change with their transaction: a rolled-back insert leaves no index entry behind.
+   procedure Rollback_Restores_Index
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Name : constant String := "secondary_rollback.database";
+      Path : constant Wide_Wide_String := "secondary_rollback.database";
+      DB   : Database.Handle;
+      Tx   : Database.Transactions.Transaction;
+      S    : Database.Schema.Table_Schema;
+      R    : Database.Status.Result;
+   begin
+      Remove_Files (Name);
+      Database.Create (DB, Path);
+      Add_User_Schema (S);
+      R := Users.Register (DB, S);
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Users.Create_Index (Tx, DB, S, "email_unique", 2, True);
+      R := Users.Insert (Tx, DB, S, Numbered (1));
+      R := Database.Transactions.Commit (Tx);
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Users.Insert (Tx, DB, S, Numbered (2));
+      Assert (Database.Status.Is_Ok (R), "insert before rollback failed");
+      R := Database.Transactions.Rollback (Tx);
+      Assert (Database.Status.Is_Ok (R), "rollback failed");
+      Database.Transactions.Begin_Write (DB, Tx);
+      Assert (Count_Where (Tx, DB, S, 2, Database.Values.From_Text (Numbered (2).Email)) = 0,
+              "a rolled-back row is not found through the index");
+      R := Users.Insert (Tx, DB, S, (Numbered (2) with delta Id => 3));
+      Assert (Database.Status.Is_Ok (R), "a rolled-back key can be used again");
+      R := Database.Transactions.Commit (Tx);
+      Expect_Healthy (DB, "the database passes the integrity check after a rollback");
+      Database.Close (DB);
+      Remove_Files (Name);
+   end Rollback_Restores_Index;
+
    overriding
    procedure Register_Tests (T : in out Case_Type) is
       use AUnit.Test_Cases.Registration;
@@ -293,5 +554,9 @@ package body Secondary_Index_Tests is
          "unique and non-unique maintenance across reopen");
       Register_Routine
         (T, Rebuild_Existing_Index'Access, "rebuild secondary index");
+      Register_Routine
+        (T, Persistent_Tree_Across_Reopen'Access, "multi-page index trees across reopen");
+      Register_Routine (T, Unbuilt_Index_Is_Rebuilt'Access, "unbuilt index bypassed then rebuilt");
+      Register_Routine (T, Rollback_Restores_Index'Access, "rollback restores index pages");
    end Register_Tests;
 end Secondary_Index_Tests;

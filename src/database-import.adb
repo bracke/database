@@ -856,7 +856,7 @@ package body Database.Import is
                First := Database.Storage.Pages.Page_Id (S.Heap_First_Page);
                Root := Database.Storage.Pages.Invalid_Page_Id;
                if Database.Schema.Primary_Key_Index (S) /= Natural'Last then
-                  R := Database.Indexes.BTree.Create (Tx, DB.File, DB.Page_Allocator, Root);
+                  R := Database.Indexes.BTree.Create (Tx, Root);
                   if not Database.Status.Is_Ok (R) then
                      Ada.Streams.Stream_IO.Close (F);
                      return R;
@@ -871,7 +871,7 @@ package body Database.Import is
                   begin
                      New_IX.Table_Id := S.Table_Id;
                      New_IX.Root_Page := Database.Storage.Pages.Invalid_Page_Id;
-                     R := Database.Indexes.BTree.Create (Tx, DB.File, DB.Page_Allocator, IX_Root);
+                     R := Database.Indexes.BTree.Create (Tx, IX_Root);
                      if not Database.Status.Is_Ok (R) then
                         Ada.Streams.Stream_IO.Close (F);
                         return R;
@@ -901,7 +901,7 @@ package body Database.Import is
                     (Database.Status.Import_Error, "malformed row in logical export");
                end if;
                R := Database.Storage.Table_Heap.Append_Row
-                 (Tx, DB.File, DB.Page_Allocator, First, S, Row, Ref);
+                 (Tx, DB.File, First, S, Row, Ref);
                if not Database.Status.Is_Ok (R) then
                   Ada.Streams.Stream_IO.Close (F);
                   return R;
@@ -909,7 +909,7 @@ package body Database.Import is
                if Database.Schema.Primary_Key_Index (S) /= Natural'Last then
                   Key := Key_For_Row (S, Row);
                   R := Database.Indexes.BTree.Insert_Duplicate
-                    (Tx, DB.File, DB.Page_Allocator, Root, Key, Ref);
+                    (Tx, Root, Key, Ref);
                   if not Database.Status.Is_Ok (R) then
                      Ada.Streams.Stream_IO.Close (F);
                      return R;
@@ -922,7 +922,7 @@ package body Database.Import is
                   begin
                      if K.Kind /= Database.Types.Null_Value then
                         R := Database.Indexes.BTree.Insert_Duplicate
-                          (Tx, DB.File, DB.Page_Allocator, IX_Root, K, Ref);
+                          (Tx, IX_Root, K, Ref);
                         if not Database.Status.Is_Ok (R) then
                            Ada.Streams.Stream_IO.Close (F);
                            return R;

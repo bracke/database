@@ -15,27 +15,43 @@ package body Database.Indexes.BTree is
    function Too_Deep return Database.Status.Result is
      (Database.Status.Failure (Database.Status.Corrupt_Index, "B+ tree path exceeds the page count"));
 
+   function Corrupt (Message : Wide_Wide_String) return Database.Status.Result is
+     (Database.Status.Failure (Database.Status.Corrupt_Index, Message));
+
+   --  The database a write transaction changes; null when the transaction cannot change index pages.
+   function Database_Of (Tx : in out Database.Transactions.Transaction) return access Database.Handle is
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
+   begin
+      if DB = null or else Database."/=" (Database.Backend (DB.all), Database.Persistent_Backend) then
+         return null;
+      end if;
+      return DB;
+   end Database_Of;
+
+   function Not_Writable return Database.Status.Result is
+     (Database.Status.Failure
+        (Database.Status.Transaction_Error, "index pages change only in a write transaction of a persistent database"));
+
+   --  Whether Key lies on the inner side of Bound: above a lower bound (Low) or below an upper one.
    function Within_Bound
-     (Key   : Database.Values.Value;
-      Bound : Range_Bound;
-      Low   : Boolean) return Boolean is
+     (Key    : Database.Values.Value;
+      Bound  : Range_Bound;
+      Low    : Boolean;
+      Inside : out Boolean) return Database.Status.Result
+   is
       Order : Database.Indexes.Ordering;
       R     : Database.Status.Result;
    begin
+      Inside := True;
       if Bound.Kind = Unbounded then
-         return True;
+         return Database.Status.Success;
       end if;
       R := Database.Indexes.Compare (Key, Bound.Key, Order);
-      if not Database.Status.Is_Ok (R) then
-         return False;
-      end if;
-      if Low then
-         return Order = Database.Indexes.Greater
-           or else (Bound.Kind = Inclusive and then Order = Database.Indexes.Equal);
-      else
-         return Order = Database.Indexes.Less
+      if Database.Status.Is_Ok (R) then
+         Inside := Order = (if Low then Database.Indexes.Greater else Database.Indexes.Less)
            or else (Bound.Kind = Inclusive and then Order = Database.Indexes.Equal);
       end if;
+      return R;
    end Within_Bound;
 
    --  How a descent chooses a child: the subtree that may hold the first entry with a key, or the subtree that holds
@@ -109,14 +125,13 @@ package body Database.Indexes.BTree is
    end Position_Of;
 
    function Allocate
-     (F         : in out Database.Storage.File_IO.File_Handle;
-      Allocator : in out Database.Storage.Free_List.Allocator;
-      Leaf      : Boolean;
-      Id        : out Page_Id) return Database.Status.Result
+     (Tx   : in out Database.Transactions.Transaction;
+      Leaf : Boolean;
+      Id   : out Page_Id) return Database.Status.Result
    is
       Page : Database.Storage.Pages.Page;
-      R    : constant Database.Status.Result := Database.Storage.Free_List.Allocate
-        (Allocator, F, (if Leaf then BTree_Leaf_Page else BTree_Internal_Page), Page);
+      R    : constant Database.Status.Result :=
+        Database.Transactions.Allocate_Page (Tx, (if Leaf then BTree_Leaf_Page else BTree_Internal_Page), Page);
    begin
       Id := (if Database.Status.Is_Ok (R) then Get_Id (Page) else Invalid_Page_Id);
       return R;
@@ -151,17 +166,16 @@ package body Database.Indexes.BTree is
    --  Write N back after a change; when it no longer fits a page, split it and add the separator to its parent,
    --  splitting upward as needed. The root keeps its page: when it splits, its halves move to two new pages.
    function Write_Back
-     (Tx        : in out Database.Transactions.Transaction;
-      F         : in out Database.Storage.File_IO.File_Handle;
-      Allocator : in out Database.Storage.Free_List.Allocator;
-      N         : in out Node;
-      Path      : in out Page_Id_Vectors.Vector) return Database.Status.Result
+     (Tx   : in out Database.Transactions.Transaction;
+      F    : in out Database.Storage.File_IO.File_Handle;
+      N    : in out Node;
+      Path : in out Page_Id_Vectors.Vector) return Database.Status.Result
    is
       R : Database.Status.Result;
    begin
       loop
          if Fits (N) then
-            return Store (Tx, F, N);
+            return Store (Tx, N);
          end if;
          declare
             M         : constant Positive := Split_Point (N);
@@ -175,7 +189,7 @@ package body Database.Indexes.BTree is
             Left.Items := Slice (N.Items, 0, M - 1);
             Right.Items := Slice (N.Items, (if N.Leaf then M else M + 1), Last);
             Right.First := (if N.Leaf then Invalid_Page_Id else Separator.Child);
-            R := Allocate (F, Allocator, N.Leaf, Right.Id);
+            R := Allocate (Tx, N.Leaf, Right.Id);
             if not Database.Status.Is_Ok (R) then
                return R;
             end if;
@@ -186,24 +200,24 @@ package body Database.Indexes.BTree is
             end if;
             if Path.Is_Empty then
                --  The root splits: its left half also moves to a new page, and the root becomes their parent.
-               R := Allocate (F, Allocator, N.Leaf, Left.Id);
+               R := Allocate (Tx, N.Leaf, Left.Id);
                if not Database.Status.Is_Ok (R) then
                   return R;
                end if;
-               R := Store (Tx, F, Left);
+               R := Store (Tx, Left);
                if Database.Status.Is_Ok (R) then
-                  R := Store (Tx, F, Right);
+                  R := Store (Tx, Right);
                end if;
                if not Database.Status.Is_Ok (R) then
                   return R;
                end if;
                N := (Id => N.Id, Leaf => False, First => Left.Id, Next => Invalid_Page_Id, Items => <>);
                N.Items.Append (Separator);
-               return Store (Tx, F, N);
+               return Store (Tx, N);
             end if;
-            R := Store (Tx, F, Left);
+            R := Store (Tx, Left);
             if Database.Status.Is_Ok (R) then
-               R := Store (Tx, F, Right);
+               R := Store (Tx, Right);
             end if;
             if not Database.Status.Is_Ok (R) then
                return R;
@@ -228,19 +242,19 @@ package body Database.Indexes.BTree is
 
    --  Add one (Key, Ref) entry; an entry that is already present is left as it is.
    function Add
-     (Tx        : in out Database.Transactions.Transaction;
-      F         : in out Database.Storage.File_IO.File_Handle;
-      Allocator : in out Database.Storage.Free_List.Allocator;
-      Root      : Page_Id;
-      Key       : Database.Values.Value;
-      Ref       : Database.Indexes.Row_Reference) return Database.Status.Result
+     (Tx   : in out Database.Transactions.Transaction;
+      F    : in out Database.Storage.File_IO.File_Handle;
+      Root : Page_Id;
+      Key  : Database.Values.Value;
+      Ref  : Database.Indexes.Row_Reference) return Database.Status.Result
    is
+      Size  : constant Natural := Key_Size (Key);
       Leaf  : Node;
       Path  : Page_Id_Vectors.Vector;
       Found : Boolean;
       R     : Database.Status.Result;
    begin
-      if Key_Size (Key) > Max_Key_Bytes then
+      if Size > Max_Key_Bytes then
          return Database.Status.Failure (Database.Status.Row_Too_Large, "index key is too large");
       end if;
       R := Leaf_For (F, Root, Exact_Entry, Key, Ref, Leaf, Path);
@@ -253,33 +267,32 @@ package body Database.Indexes.BTree is
          if not Database.Status.Is_Ok (R) or else Found then
             return R;
          end if;
-         Leaf.Items.Insert (Position, Item'(Key => Key, Ref => Ref, Child => Invalid_Page_Id));
+         Leaf.Items.Insert (Position, Item'(Key => Key, Ref => Ref, Child => Invalid_Page_Id, Key_Length => Size));
       end;
-      return Write_Back (Tx, F, Allocator, Leaf, Path);
+      return Write_Back (Tx, F, Leaf, Path);
    end Add;
 
+   function Reset
+     (Tx   : in out Database.Transactions.Transaction;
+      Root : Page_Id) return Database.Status.Result is (Store (Tx, (Id => Root, Leaf => True, others => <>)));
+
    function Create
-     (Tx        : in out Database.Transactions.Transaction;
-      F         : in out Database.Storage.File_IO.File_Handle;
-      Allocator : in out Database.Storage.Free_List.Allocator;
-      Root      : out Database.Storage.Pages.Page_Id) return Database.Status.Result is
-      R : constant Database.Status.Result := Allocate (F, Allocator, True, Root);
+     (Tx   : in out Database.Transactions.Transaction;
+      Root : out Database.Storage.Pages.Page_Id) return Database.Status.Result
+   is
+      R : Database.Status.Result;
    begin
+      Root := Invalid_Page_Id;
+      if Database_Of (Tx) = null then
+         return Not_Writable;
+      end if;
+      R := Allocate (Tx, True, Root);
       if not Database.Status.Is_Ok (R) then
          Root := Invalid_Page_Id;
          return R;
       end if;
-      return Reset (Tx, F, Root);
+      return Reset (Tx, Root);
    end Create;
-
-   function Reset
-     (Tx   : in out Database.Transactions.Transaction;
-      F    : in out Database.Storage.File_IO.File_Handle;
-      Root : Database.Storage.Pages.Page_Id) return Database.Status.Result
-   is
-   begin
-      return Store (Tx, F, (Id => Root, Leaf => True, others => <>));
-   end Reset;
 
    function Is_Built
      (F    : in out Database.Storage.File_IO.File_Handle;
@@ -295,6 +308,35 @@ package body Database.Indexes.BTree is
         and then Database.Status.Is_Ok (Database.Storage.File_IO.Read_Page (F, Root, BTree_Leaf_Page, Page))
         and then Used (Page) = 0;
    end Is_Unwritten;
+
+   function Clear
+     (Tx   : in out Database.Transactions.Transaction;
+      Root : Database.Storage.Pages.Page_Id) return Database.Status.Result
+   is
+      DB    : constant access Database.Handle := Database_Of (Tx);
+      Pages : Page_Id_Vectors.Vector;
+      R     : Database.Status.Result;
+   begin
+      if DB = null then
+         return Not_Writable;
+      elsif Is_Built (DB.File, Root) then
+         R := Pages_Of (DB.File, Root, Pages);
+         if not Database.Status.Is_Ok (R) then
+            return R;
+         end if;
+         for Id of Pages loop
+            if Id /= Root then
+               R := Database.Transactions.Free_Page (Tx, Id);
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
+            end if;
+         end loop;
+      elsif not Is_Unwritten (DB.File, Root) then
+         return Corrupt ("index root is neither a B+ tree nor an unwritten page");
+      end if;
+      return Reset (Tx, Root);
+   end Clear;
 
    --  Visit the references of every entry within Low .. High in ascending order, until Process asks to stop.
    generic
@@ -313,11 +355,12 @@ package body Database.Indexes.BTree is
       High : Range_Bound;
       R    : out Database.Status.Result)
    is
-      Limit : constant Natural := Database.Storage.File_IO.Page_Count (F);
-      Leaf  : Node;
-      Path  : Page_Id_Vectors.Vector;
-      Steps : Natural := 0;
-      Stop  : Boolean := False;
+      Limit  : constant Natural := Database.Storage.File_IO.Page_Count (F);
+      Leaf   : Node;
+      Path   : Page_Id_Vectors.Vector;
+      Steps  : Natural := 0;
+      Stop   : Boolean := False;
+      Inside : Boolean;
    begin
       if not Is_Built (F, Root) then
          R := Not_Built;
@@ -339,10 +382,14 @@ package body Database.Indexes.BTree is
             return;
          end if;
          for Entry_Item of Leaf.Items loop
-            if not Within_Bound (Entry_Item.Key, High, False) then
+            R := Within_Bound (Entry_Item.Key, High, False, Inside);
+            if not Database.Status.Is_Ok (R) or else not Inside then
                return;
             end if;
-            if Within_Bound (Entry_Item.Key, Low, True) then
+            R := Within_Bound (Entry_Item.Key, Low, True, Inside);
+            if not Database.Status.Is_Ok (R) then
+               return;
+            elsif Inside then
                Process (Entry_Item.Ref, Stop);
                if Stop then
                   return;
@@ -385,69 +432,74 @@ package body Database.Indexes.BTree is
       return Database.Status.Failure (Database.Status.Key_Not_Found, "index key not found");
    end Find;
 
-
-   function Insert
-     (Tx        : in out Database.Transactions.Transaction;
-      F         : in out Database.Storage.File_IO.File_Handle;
-      Allocator : in out Database.Storage.Free_List.Allocator;
-      Root      : in out Database.Storage.Pages.Page_Id;
-      Key       : Database.Values.Value;
-      Ref       : Database.Indexes.Row_Reference) return Database.Status.Result is
+   --  Insert or Insert_Duplicate: create a missing root, leave an unbuilt index alone, and reject an existing key of a
+   --  unique index. A unique insert descends twice, once to look for the key and once to place the entry: a single
+   --  descent cannot do both, because a separator left by a deleted entry can send an entry with the same key to a
+   --  leaf right of the first one.
+   function Insert_Entry
+     (Tx     : in out Database.Transactions.Transaction;
+      Root   : in out Database.Storage.Pages.Page_Id;
+      Key    : Database.Values.Value;
+      Ref    : Database.Indexes.Row_Reference;
+      Unique : Boolean) return Database.Status.Result
+   is
+      DB       : constant access Database.Handle := Database_Of (Tx);
       Existing : Database.Indexes.Row_Reference;
       R        : Database.Status.Result;
    begin
-      if Root = Invalid_Page_Id then
-         R := Create (Tx, F, Allocator, Root);
+      if DB = null then
+         return Not_Writable;
+      elsif Root = Invalid_Page_Id then
+         R := Create (Tx, Root);
          if not Database.Status.Is_Ok (R) then
             return R;
          end if;
-      elsif not Is_Built (F, Root) then
+      elsif not Is_Built (DB.File, Root) then
          return Database.Status.Success;
       end if;
-      R := Find (F, Root, Key, Existing);
-      if Database.Status.Is_Ok (R) then
-         return Database.Status.Failure (Database.Status.Duplicate_Key, "duplicate index key");
-      elsif R.Code /= Database.Status.Key_Not_Found then
-         return R;
+      if Unique then
+         R := Find (DB.File, Root, Key, Existing);
+         if Database.Status.Is_Ok (R) then
+            return Database.Status.Failure (Database.Status.Duplicate_Key, "duplicate index key");
+         elsif R.Code /= Database.Status.Key_Not_Found then
+            return R;
+         end if;
       end if;
-      return Add (Tx, F, Allocator, Root, Key, Ref);
-   end Insert;
+      return Add (Tx, DB.File, Root, Key, Ref);
+   end Insert_Entry;
+
+   function Insert
+     (Tx   : in out Database.Transactions.Transaction;
+      Root : in out Database.Storage.Pages.Page_Id;
+      Key  : Database.Values.Value;
+      Ref  : Database.Indexes.Row_Reference) return Database.Status.Result is
+     (Insert_Entry (Tx, Root, Key, Ref, Unique => True));
 
    function Insert_Duplicate
-     (Tx        : in out Database.Transactions.Transaction;
-      F         : in out Database.Storage.File_IO.File_Handle;
-      Allocator : in out Database.Storage.Free_List.Allocator;
-      Root      : in out Database.Storage.Pages.Page_Id;
-      Key       : Database.Values.Value;
-      Ref       : Database.Indexes.Row_Reference) return Database.Status.Result is
-      R : Database.Status.Result;
-   begin
-      if Root = Invalid_Page_Id then
-         R := Create (Tx, F, Allocator, Root);
-         if not Database.Status.Is_Ok (R) then
-            return R;
-         end if;
-      elsif not Is_Built (F, Root) then
-         return Database.Status.Success;
-      end if;
-      return Add (Tx, F, Allocator, Root, Key, Ref);
-   end Insert_Duplicate;
+     (Tx   : in out Database.Transactions.Transaction;
+      Root : in out Database.Storage.Pages.Page_Id;
+      Key  : Database.Values.Value;
+      Ref  : Database.Indexes.Row_Reference) return Database.Status.Result is
+     (Insert_Entry (Tx, Root, Key, Ref, Unique => False));
 
    function Remove_Entry
      (Tx   : in out Database.Transactions.Transaction;
-      F    : in out Database.Storage.File_IO.File_Handle;
       Root : Database.Storage.Pages.Page_Id;
       Key  : Database.Values.Value;
-      Ref  : Database.Indexes.Row_Reference) return Database.Status.Result is
+      Ref  : Database.Indexes.Row_Reference) return Database.Status.Result
+   is
+      DB    : constant access Database.Handle := Database_Of (Tx);
       Leaf  : Node;
       Path  : Page_Id_Vectors.Vector;
       Found : Boolean;
       R     : Database.Status.Result;
    begin
-      if not Is_Built (F, Root) then
+      if DB = null then
+         return Not_Writable;
+      elsif not Is_Built (DB.File, Root) then
          return Database.Status.Success;
       end if;
-      R := Leaf_For (F, Root, Exact_Entry, Key, Ref, Leaf, Path);
+      R := Leaf_For (DB.File, Root, Exact_Entry, Key, Ref, Leaf, Path);
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
@@ -459,74 +511,8 @@ package body Database.Indexes.BTree is
          end if;
          Leaf.Items.Delete (Position);
       end;
-      return Store (Tx, F, Leaf);
+      return Store (Tx, Leaf);
    end Remove_Entry;
-
-   function Remove
-     (Tx   : in out Database.Transactions.Transaction;
-      F    : in out Database.Storage.File_IO.File_Handle;
-      Root : Database.Storage.Pages.Page_Id;
-      Key  : Database.Values.Value) return Database.Status.Result is
-      Limit : constant Natural := Database.Storage.File_IO.Page_Count (F);
-      Leaf  : Node;
-      Path  : Page_Id_Vectors.Vector;
-      R     : Database.Status.Result;
-      Steps : Natural := 0;
-   begin
-      if not Is_Built (F, Root) then
-         return Database.Status.Success;
-      end if;
-      R := Leaf_For (F, Root, First_With_Key, Key, Database.Indexes.Invalid_Row_Reference, Leaf, Path);
-      while Database.Status.Is_Ok (R) loop
-         declare
-            Changed : Boolean := False;
-            Beyond  : Boolean := False;
-            Order   : Database.Indexes.Ordering;
-            I       : Natural := 0;
-         begin
-            while I < Natural (Leaf.Items.Length) loop
-               R := Database.Indexes.Compare (Leaf.Items (I).Key, Key, Order);
-               exit when not Database.Status.Is_Ok (R);
-               if Order = Database.Indexes.Equal then
-                  Leaf.Items.Delete (I);
-                  Changed := True;
-               elsif Order = Database.Indexes.Greater then
-                  Beyond := True;
-                  exit;
-               else
-                  I := I + 1;
-               end if;
-            end loop;
-            if Database.Status.Is_Ok (R) and then Changed then
-               R := Store (Tx, F, Leaf);
-            end if;
-            exit when not Database.Status.Is_Ok (R) or else Beyond or else Leaf.Next = Invalid_Page_Id;
-         end;
-         Steps := Steps + 1;
-         if Steps > Limit then
-            return Too_Deep;
-         end if;
-         R := Load (F, Leaf.Next, Leaf);
-      end loop;
-      return R;
-   end Remove;
-
-   function Update
-     (Tx        : in out Database.Transactions.Transaction;
-      F         : in out Database.Storage.File_IO.File_Handle;
-      Allocator : in out Database.Storage.Free_List.Allocator;
-      Root      : in out Database.Storage.Pages.Page_Id;
-      Old_Key   : Database.Values.Value;
-      New_Key   : Database.Values.Value;
-      New_Ref   : Database.Indexes.Row_Reference) return Database.Status.Result is
-      R : Database.Status.Result;
-   begin
-      R := Remove_Entry (Tx, F, Root, Old_Key, New_Ref);
-      if not Database.Status.Is_Ok (R) then
-         return R;
-      end if;
-      return Insert_Duplicate (Tx, F, Allocator, Root, New_Key, New_Ref);
-   end Update;
 
    function Range_Find
      (F      : in out Database.Storage.File_IO.File_Handle;
@@ -576,7 +562,7 @@ package body Database.Indexes.BTree is
                   Child : constant Page_Id := (if Position < 0 then N.First else N.Items (Position).Child);
                begin
                   if Seen.Contains (Child) then
-                     return Database.Status.Failure (Database.Status.Corrupt_Index, "B+ tree page is reached twice");
+                     return Corrupt ("B+ tree page is reached twice");
                   end if;
                   Seen.Insert (Child);
                   Pages.Append (Child);
@@ -589,41 +575,110 @@ package body Database.Indexes.BTree is
    end Pages_Of;
 
    function Validate
-      (F    : in out Database.Storage.File_IO.File_Handle;
-       Root : Database.Storage.Pages.Page_Id) return Database.Status.Result is
-      Page  : Database.Storage.Pages.Page;
-      Pages : Page_Id_Vectors.Vector;
-      R     : Database.Status.Result;
+     (F    : in out Database.Storage.File_IO.File_Handle;
+      Root : Database.Storage.Pages.Page_Id) return Database.Status.Result
+   is
+      --  A separator bounding a subtree, or no bound.
+      type Bound is record
+         Present : Boolean := False;
+         Key     : Database.Values.Value;
+         Ref     : Database.Indexes.Row_Reference;
+      end record;
+
+      Limit      : constant Natural := Database.Storage.File_IO.Page_Count (F);
+      Seen       : Page_Sets.Set;
+      Leaves     : Page_Id_Vectors.Vector;
+      Links      : Page_Id_Vectors.Vector;
+      Leaf_Depth : Integer := -1;
+
+      --  Whether (Key, Ref) compares to Edge as required: at or above a lower bound, below an upper one.
+      function Respects
+        (Edge : Bound; Key : Database.Values.Value; Ref : Database.Indexes.Row_Reference; Lower : Boolean)
+         return Boolean
+      is
+         Order : Database.Indexes.Ordering;
+      begin
+         if not Edge.Present then
+            return True;
+         end if;
+         return Database.Status.Is_Ok (Compare (Key, Ref, Edge.Key, Edge.Ref, Order))
+           and then (if Lower then Order /= Database.Indexes.Less else Order = Database.Indexes.Less);
+      end Respects;
+
+      function Visit (Id : Page_Id; Depth : Natural; Low, High : Bound) return Database.Status.Result is
+         N     : Node;
+         Order : Database.Indexes.Ordering;
+         R     : Database.Status.Result;
+      begin
+         if Depth > Limit then
+            return Too_Deep;
+         elsif Seen.Contains (Id) then
+            return Corrupt ("B+ tree page is reached twice");
+         end if;
+         Seen.Insert (Id);
+         R := Load (F, Id, N);
+         if not Database.Status.Is_Ok (R) then
+            return R;
+         end if;
+         for I in 0 .. Natural (N.Items.Length) - 1 loop
+            if I > 0 then
+               R := Compare (N.Items (I - 1).Key, N.Items (I - 1).Ref, N.Items (I).Key, N.Items (I).Ref, Order);
+               if not Database.Status.Is_Ok (R) or else Order /= Database.Indexes.Less then
+                  return Corrupt ("B+ tree node is out of order");
+               end if;
+            end if;
+            if not Respects (Low, N.Items (I).Key, N.Items (I).Ref, True)
+              or else not Respects (High, N.Items (I).Key, N.Items (I).Ref, False)
+            then
+               return Corrupt ("B+ tree entry lies outside its parent's separators");
+            end if;
+         end loop;
+         if N.Leaf then
+            if Leaf_Depth < 0 then
+               Leaf_Depth := Depth;
+            elsif Leaf_Depth /= Depth then
+               return Corrupt ("B+ tree leaves are at different depths");
+            end if;
+            Leaves.Append (Id);
+            Links.Append (N.Next);
+            return Database.Status.Success;
+         end if;
+         for Position in -1 .. Natural (N.Items.Length) - 1 loop
+            declare
+               Child_Low  : constant Bound :=
+                 (if Position < 0 then Low
+                  else (Present => True, Key => N.Items (Position).Key, Ref => N.Items (Position).Ref));
+               Child_High : constant Bound :=
+                 (if Position = Natural (N.Items.Length) - 1 then High
+                  else (Present => True, Key => N.Items (Position + 1).Key, Ref => N.Items (Position + 1).Ref));
+            begin
+               R := Visit ((if Position < 0 then N.First else N.Items (Position).Child), Depth + 1,
+                           Child_Low, Child_High);
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
+            end;
+         end loop;
+         return Database.Status.Success;
+      end Visit;
+
+      R : Database.Status.Result;
    begin
       if Root = Invalid_Page_Id then
-         return Database.Status.Failure
-           (Database.Status.Corrupt_Index, "invalid btree root page");
+         return Corrupt ("invalid btree root page");
+      elsif not Is_Built (F, Root) then
+         return (if Is_Unwritten (F, Root) then Database.Status.Success
+                 else Corrupt ("index root is neither a B+ tree nor an unwritten page"));
       end if;
-      R := Database.Storage.File_IO.Read_Raw_Page (F, Root, Page);
-      if not Database.Status.Is_Ok (R) or else not Is_Built (F, Root) then
-         return R;
-      end if;
-      R := Pages_Of (F, Root, Pages);
+      R := Visit (Root, 0, (others => <>), (others => <>));
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
-      --  Every node holds its entries in strictly ascending (key, reference) order.
-      for Id of Pages loop
-         declare
-            N     : Node;
-            Order : Database.Indexes.Ordering;
-         begin
-            R := Load (F, Id, N);
-            if not Database.Status.Is_Ok (R) then
-               return R;
-            end if;
-            for I in 1 .. Natural (N.Items.Length) - 1 loop
-               R := Compare (N.Items (I - 1).Key, N.Items (I - 1).Ref, N.Items (I).Key, N.Items (I).Ref, Order);
-               if not Database.Status.Is_Ok (R) or else Order /= Database.Indexes.Less then
-                  return Database.Status.Failure (Database.Status.Corrupt_Index, "B+ tree node is out of order");
-               end if;
-            end loop;
-         end;
+      --  The leaves, met left to right, are chained in that order.
+      for I in 0 .. Natural (Leaves.Length) - 1 loop
+         if Links (I) /= (if I = Natural (Leaves.Length) - 1 then Invalid_Page_Id else Leaves (I + 1)) then
+            return Corrupt ("B+ tree leaf chain does not follow the tree");
+         end if;
       end loop;
       return Database.Status.Success;
    end Validate;

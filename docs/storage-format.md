@@ -93,18 +93,33 @@ The root page of an index never moves, so catalog references stay valid: when
 the root splits, its two halves move to new pages and the root becomes their
 parent. Nodes split when full and are not merged; a leaf emptied by deletes
 stays in the tree. Every node is written through its transaction, so index
-changes are logged in the WAL and rolled back with the transaction.
+changes are logged in the WAL and rolled back with the transaction. Rebuilding
+an index empties its tree in place: the root keeps its page and the other pages
+become free pages.
+
+Pages a transaction allocates or frees are written through the transaction as
+well. A rollback therefore returns a reused free page to the free list, removes
+pages added at the end of the file, and restarts the allocator from the restored
+file. The catalog page (page 1) is saved outside the page log; a write
+transaction keeps the catalog page it started with, and a rollback restores it,
+so a rolled-back index or root change leaves no catalog entry behind.
 
 Earlier versions kept index entries in process memory and wrote nothing to the
 root page they allocated. Such a root (a leaf page without the marker) is an
 unbuilt index: lookups bypass it by scanning the table, and the next insert into
-the table rebuilds it in place from the table rows. An unbuilt root that is not
-an empty leaf page (for example one whose page a rollback removed) is replaced
-by a new root, which the catalog records.
+the table rebuilds it in place from the table rows. Earlier versions also kept
+catalog changes when a transaction rolled back, so a file they wrote can name a
+root whose page the rollback removed or reused; such a root is replaced by a new
+one, which the catalog records.
 
 Index validation checks that every node is readable, carries the marker, and
-holds its entries in strictly ascending order, and that no page is reached
-twice. The integrity check marks every index page as reachable.
+holds its entries in strictly ascending order; that every entry of a subtree
+lies between the separators around it; that all leaves are at the same depth
+and chained left to right; and that no page is reached twice. An unwritten
+root is valid; any other root without the marker is corrupt. The integrity
+check marks every index page as reachable. The SPARK model in
+`Database.Indexes.BTree_Invariants` describes trees of integer keys with fixed
+node limits and is proved separately; it does not describe stored trees.
 
 Secondary indexes may be unique or non-unique. `Null` secondary keys are not
 entered.

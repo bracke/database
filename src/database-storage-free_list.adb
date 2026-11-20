@@ -17,7 +17,7 @@ package body Database.Storage.Free_List is
       end;
    end Initialize_From_File;
 
-   function Allocate
+   function Reserve
      (A    : in out Allocator;
       F    : in out Database.Storage.File_IO.File_Handle;
       Kind : Database.Storage.Pages.Page_Kind;
@@ -50,21 +50,38 @@ package body Database.Storage.Free_List is
               and then Database.Storage.Pages.Get_Kind (Existing) = Database.Storage.Pages.Free_Page
             then
                Database.Storage.Pages.Initialize (Page, Id, Kind);
-               return Database.Storage.File_IO.Write_Page (F, Page);
+               return Database.Status.Success;
             end if;
          end;
       end loop;
 
       Database.Storage.Pages.Initialize (Page, A.Next_Page, Kind);
       A.Next_Page := A.Next_Page + 1;
+      return Database.Status.Success;
+   end Reserve;
+
+   function Allocate
+     (A    : in out Allocator;
+      F    : in out Database.Storage.File_IO.File_Handle;
+      Kind : Database.Storage.Pages.Page_Kind;
+      Page : out Database.Storage.Pages.Page) return Database.Status.Result
+   is
+      R : constant Database.Status.Result := Reserve (A, F, Kind, Page);
+   begin
+      if not Database.Status.Is_Ok (R) then
+         return R;
+      end if;
       return Database.Storage.File_IO.Write_Page (F, Page);
    end Allocate;
 
    function Release
      (A  : in out Allocator;
       Id : Database.Storage.Pages.Page_Id) return Database.Status.Result is
-      pragma Unreferenced (A, Id);
    begin
+      --  Before the first scan the page is found by the scan itself.
+      if A.Scanned then
+         A.Free_Pages.Append (Id);
+      end if;
       return Database.Status.Success;
    end Release;
 

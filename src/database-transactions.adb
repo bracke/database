@@ -1,5 +1,6 @@
 with Database.Catalog;
 with Database.Storage.File_IO;
+with Database.Storage.Free_List;
 with Database.Storage.Table_Heap;
 with Database.Memory_Store;
 with Database.MVCC;
@@ -68,6 +69,7 @@ package body Database.Transactions is
       Tx.Before_Image_Ids.Clear;
       Tx.Before_Image_Pages.Clear;
       Tx.Heap_Tails.Clear;
+      Tx.Catalog_Saved := False;
       Tx.Original_Page_Count := 0;
       Tx.Transaction_Id := 0;
       Tx.Lock_Held := False;
@@ -121,6 +123,11 @@ package body Database.Transactions is
       Tx.Lock_Held := True;
       Id_Counter.Next (Tx.Transaction_Id);
       Tx.Started_At_Version := Database.Commit_Version (DB);
+      if Mode_In = Read_Write and then Database.Backend (DB) = Database.Persistent_Backend then
+         Tx.Catalog_Saved := Database.Status.Is_Ok
+           (Database.Storage.File_IO.Read_Page
+              (DB.File, Database.Catalog.Catalog_Page_Id, Database.Storage.Pages.Catalog_Page, Tx.Catalog_Before));
+      end if;
       Database.MVCC.Register_Snapshot (Tx.Started_At_Version);
       Database.MVCC.Register_Transaction (Tx.Transaction_Id);
       Tx.Last := Database.Status.Success;
@@ -175,6 +182,38 @@ package body Database.Transactions is
       end if;
       return Database.Status.Success;
    end Ensure_Write_State;
+
+   function Allocate_Page
+     (Tx   : in out Transaction;
+      Kind : Database.Storage.Pages.Page_Kind;
+      Page : out Database.Storage.Pages.Page) return Database.Status.Result
+   is
+      R : Database.Status.Result;
+   begin
+      if Tx.Current_State /= Active or else Tx.DB = null then
+         return Database.Status.Failure (Database.Status.Transaction_Error, "transaction not active");
+      end if;
+      R := Database.Storage.Free_List.Reserve (Tx.DB.Page_Allocator, Tx.DB.File, Kind, Page);
+      if not Database.Status.Is_Ok (R) then
+         return R;
+      end if;
+      return Write_Page (Tx, Page);
+   end Allocate_Page;
+
+   function Free_Page
+     (Tx : in out Transaction;
+      Id : Database.Storage.Pages.Page_Id) return Database.Status.Result
+   is
+      Page : Database.Storage.Pages.Page;
+      R    : Database.Status.Result;
+   begin
+      Database.Storage.Pages.Initialize (Page, Id, Database.Storage.Pages.Free_Page);
+      R := Write_Page (Tx, Page);
+      if not Database.Status.Is_Ok (R) then
+         return R;
+      end if;
+      return Database.Storage.Free_List.Release (Tx.DB.Page_Allocator, Id);
+   end Free_Page;
 
    function Heap_Tail
      (Tx    : Transaction;
@@ -279,6 +318,10 @@ package body Database.Transactions is
 
       if Natural (Id) < Tx.Original_Page_Count and then not Already_Saved (Tx, Id) then
          R := Database.Storage.File_IO.Read_Page (Tx.DB.File, Id, Get_Kind (Page), Original);
+         if not Database.Status.Is_Ok (R) then
+            --  The page changes kind, for example when it is allocated from or released to the free list.
+            R := Database.Storage.File_IO.Read_Raw_Page (Tx.DB.File, Id, Original);
+         end if;
          if not Database.Status.Is_Ok (R) then
             Tx.Current_State := Failed;
             Tx.Last := R;
@@ -489,6 +532,17 @@ package body Database.Transactions is
       return Tx.Last;
    end Commit;
 
+   --  Whether the catalog page differs from the one the transaction started with.
+   function Catalog_Changed (Tx : in out Transaction) return Boolean is
+      Current : Database.Storage.Pages.Page;
+   begin
+      return Tx.Catalog_Saved
+        and then (not Database.Status.Is_Ok
+                    (Database.Storage.File_IO.Read_Page
+                       (Tx.DB.File, Database.Catalog.Catalog_Page_Id, Database.Storage.Pages.Catalog_Page, Current))
+                  or else Current.Buffer /= Tx.Catalog_Before.Buffer);
+   end Catalog_Changed;
+
    function Rollback (Tx : in out Transaction) return Database.Status.Result is
       R : Database.Status.Result;
    begin
@@ -507,8 +561,16 @@ package body Database.Transactions is
       Tx.Current_State := Rolling_Back;
       if Tx.Current_Mode = Read_Write
         and then Database.Backend (Tx.DB.all) = Database.Persistent_Backend
-        and then Tx.Has_Writes
+        and then (Tx.Has_Writes or else Catalog_Changed (Tx))
       then
+         if Tx.Catalog_Saved then
+            R := Database.Storage.File_IO.Write_Page (Tx.DB.File, Tx.Catalog_Before);
+            if not Database.Status.Is_Ok (R) then
+               Tx.Current_State := Failed;
+               Tx.Last := R;
+               return R;
+            end if;
+         end if;
          if not Tx.Before_Image_Pages.Is_Empty then
             for I in 0 .. Natural (Tx.Before_Image_Pages.Length) - 1 loop
                R := Database.Storage.File_IO.Write_Page
@@ -520,7 +582,7 @@ package body Database.Transactions is
                end if;
             end loop;
          end if;
-         if Database.Storage.File_IO.Page_Count (Tx.DB.File) > Tx.Original_Page_Count then
+         if Tx.Has_Writes and then Database.Storage.File_IO.Page_Count (Tx.DB.File) > Tx.Original_Page_Count then
             R := Database.Storage.File_IO.Truncate_To_Page_Count
               (Tx.DB.File, Tx.Original_Page_Count);
             if not Database.Status.Is_Ok (R) then
@@ -529,6 +591,8 @@ package body Database.Transactions is
                return R;
             end if;
          end if;
+         --  Pages past the restored end of the file and pages freed by the transaction are gone or in use again.
+         Database.Storage.Free_List.Initialize_From_File (Tx.DB.Page_Allocator, Tx.DB.File);
          R := Database.Storage.File_IO.Flush (Tx.DB.File);
          if not Database.Status.Is_Ok (R) then
             Tx.Current_State := Failed;

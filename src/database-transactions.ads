@@ -135,6 +135,25 @@ package Database.Transactions is
      (Tx   : in out Transaction;
       Page : Database.Storage.Pages.Page) return Database.Status.Result;
 
+   --  Allocate an empty page of Kind and write it through the transaction, so a rollback returns a reused free page
+   --  to the free list and removes a page added at the end of the file.
+   --  @param Tx write transaction of a persistent database.
+   --  @param Kind page kind of the new page.
+   --  @param Page the written empty page.
+   --  @return Status result describing whether the operation succeeded.
+   function Allocate_Page
+     (Tx   : in out Transaction;
+      Kind : Database.Storage.Pages.Page_Kind;
+      Page : out Database.Storage.Pages.Page) return Database.Status.Result;
+
+   --  Rewrite a page as free through the transaction and offer it to the allocator.
+   --  @param Tx write transaction of a persistent database.
+   --  @param Id page that is no longer used.
+   --  @return Status result describing whether the operation succeeded.
+   function Free_Page
+     (Tx : in out Transaction;
+      Id : Database.Storage.Pages.Page_Id) return Database.Status.Result;
+
    --  Return the last page of a table heap as this transaction last appended to it, so an append need not walk the
    --  page chain again. Only this transaction changes the heap while it is active, so the hint stays exact; it ends
    --  with the transaction.
@@ -183,6 +202,10 @@ private
       Before_Image_Ids    : Page_Id_Vectors.Vector;
       Before_Image_Pages  : Page_Vectors.Vector;
       Heap_Tails          : Heap_Tail_Maps.Map;
+      --  The catalog page as the transaction found it. The catalog is saved outside the page log, so a rollback
+      --  restores it from here.
+      Catalog_Before      : Database.Storage.Pages.Page;
+      Catalog_Saved       : Boolean := False;
       Original_Page_Count : Natural := 0;
       Transaction_Id      : Database.Versioning.Transaction_Id := 0;
       Lock_Held           : Boolean := False;

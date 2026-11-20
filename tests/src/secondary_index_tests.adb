@@ -6,6 +6,7 @@ with Ada.Strings.Wide_Wide_Unbounded;
 with Database; use Database;
 with Database.Catalog;
 with Database.Check;
+with Database.Diagnostics;
 with Database.Indexes.BTree;
 with Database.Storage.File_IO;
 with Database.Storage.Pages;
@@ -339,6 +340,35 @@ package body Secondary_Index_Tests is
       return Result;
    end Built;
 
+   --  Count the primary index's entries within Low .. High, through the closed database's file.
+   function Range_Count
+     (Path      : Wide_Wide_String;
+      Root      : Database.Storage.Pages.Page_Id;
+      Low, High : Database.Indexes.BTree.Range_Bound;
+      Code      : out Database.Status.Status_Code) return Natural
+   is
+      F    : Database.Storage.File_IO.File_Handle;
+      Refs : Database.Indexes.BTree.Row_Reference_Vectors.Vector;
+      R    : Database.Status.Result := Database.Storage.File_IO.Open_Read_Only (F, Path);
+   begin
+      Assert (Database.Status.Is_Ok (R), "read-only open failed");
+      R := Database.Indexes.BTree.Range_Find (F, Root, Low, High, Refs);
+      Code := R.Code;
+      R := Database.Storage.File_IO.Close (F);
+      return Natural (Refs.Length);
+   end Range_Count;
+
+   function Valid (Path : Wide_Wide_String; Root : Database.Storage.Pages.Page_Id) return Boolean is
+      F      : Database.Storage.File_IO.File_Handle;
+      R      : Database.Status.Result := Database.Storage.File_IO.Open_Read_Only (F, Path);
+      Result : Boolean;
+   begin
+      Assert (Database.Status.Is_Ok (R), "read-only open failed");
+      Result := Database.Status.Is_Ok (Database.Indexes.BTree.Validate (F, Root));
+      R := Database.Storage.File_IO.Close (F);
+      return Result;
+   end Valid;
+
    procedure Expect_Healthy (DB : in out Database.Handle; Message : String) is
       Tx : Database.Transactions.Transaction;
       CR : Database.Check.Check_Result;
@@ -407,7 +437,25 @@ package body Secondary_Index_Tests is
               "the primary index spans several pages");
       for IX of S.Indexes loop
          Assert (Index_Pages (Path, IX.Root_Page) > 2, "each secondary index spans several pages");
+         Assert (Valid (Path, IX.Root_Page), "each secondary index is structurally valid");
       end loop;
+      declare
+         use Database.Indexes.BTree;
+         Root : constant Database.Storage.Pages.Page_Id := Database.Storage.Pages.Page_Id (S.Primary_Index_Root);
+         Code : Database.Status.Status_Code;
+      begin
+         Assert (Valid (Path, Root), "the primary index is structurally valid");
+         Assert (Range_Count (Path, Root, (Exclusive, Database.Values.From_Integer (100)),
+                              (Inclusive, Database.Values.From_Integer (2_100)), Code) = 2_000
+                 and then Code = Database.Status.Ok, "a bounded range crosses leaves");
+         Assert (Range_Count (Path, Root, (Kind => Unbounded, others => <>),
+                              (Exclusive, Database.Values.From_Integer (11)), Code) = 10
+                 and then Code = Database.Status.Ok, "an exclusive upper bound stops before its key");
+         Assert (Range_Count (Path, Root, (Kind => Unbounded, others => <>),
+                              (Inclusive, Database.Values.From_Text ("x")), Code) = 0
+                 and then Code = Database.Status.Unsupported_Key_Type,
+                 "a bound that cannot be compared with the keys is an error, not an empty range");
+      end;
 
       Database.Open (DB, Path);
       R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
@@ -430,6 +478,31 @@ package body Secondary_Index_Tests is
       R := Database.Transactions.Commit (Tx);
       Assert (Database.Status.Is_Ok (R), "delete commit failed");
       Expect_Healthy (DB, "the table passes the integrity check after deletes");
+
+      --  A rebuild empties the tree in place and frees its other pages, which the next rebuild reuses.
+      declare
+         Root  : constant Database.Storage.Pages.Page_Id := S.Indexes.Element (0).Root_Page;
+         Pages : Natural;
+      begin
+         for Round in 1 .. 2 loop
+            Database.Transactions.Begin_Write (DB, Tx);
+            R := Users.Rebuild_Index (Tx, DB, S, S.Indexes.Element (0).Id);
+            Assert (Database.Status.Is_Ok (R), "rebuild failed");
+            if Round = 2 then
+               Assert (Database.Diagnostics.Page_Count (Tx) = Pages, "a rebuild reuses the pages it freed");
+            end if;
+            Pages := Database.Diagnostics.Page_Count (Tx);
+            R := Database.Transactions.Commit (Tx);
+            Assert (Database.Status.Is_Ok (R), "rebuild commit failed");
+         end loop;
+         R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
+         Assert (S.Indexes.Element (0).Root_Page = Root, "a rebuild keeps the index root");
+      end;
+      Expect_Healthy (DB, "a rebuilt index leaves no orphan pages");
+      Database.Transactions.Begin_Write (DB, Tx);
+      Assert (Count_Where (Tx, DB, S, 2, Database.Values.From_Text (Numbered (3_999).Email)) = 1,
+              "the rebuilt index finds its rows");
+      R := Database.Transactions.Commit (Tx);
       Database.Close (DB);
       Remove_Files (Name);
    end Persistent_Tree_Across_Reopen;
@@ -540,6 +613,61 @@ package body Secondary_Index_Tests is
       Remove_Files (Name);
    end Rollback_Restores_Index;
 
+   --  A rollback undoes catalog changes and returns the pages the transaction allocated, so the next transaction
+   --  extends the file without a gap.
+   procedure Rollback_Restores_Catalog
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Name : constant String := "secondary_rollback_catalog.database";
+      Path : constant Wide_Wide_String := "secondary_rollback_catalog.database";
+      DB   : Database.Handle;
+      Tx   : Database.Transactions.Transaction;
+      S    : Database.Schema.Table_Schema;
+      R    : Database.Status.Result;
+   begin
+      Remove_Files (Name);
+      Database.Create (DB, Path);
+      Add_User_Schema (S);
+      R := Users.Register (DB, S);
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Users.Create_Index (Tx, DB, S, "email_unique", 2, True);
+      R := Users.Insert (Tx, DB, S, Numbered (1));
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "setup commit failed");
+
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Users.Create_Index (Tx, DB, S, "age_index", 3, False);
+      Assert (Database.Status.Is_Ok (R), "index create failed");
+      for Id in 2 .. 600 loop
+         R := Users.Insert (Tx, DB, S, Numbered (Id));
+         Assert (Database.Status.Is_Ok (R), "insert failed");
+      end loop;
+      R := Database.Transactions.Rollback (Tx);
+      Assert (Database.Status.Is_Ok (R), "rollback failed");
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
+      Assert (Natural (S.Indexes.Length) = 1, "a rolled-back index is not in the catalog");
+      Expect_Healthy (DB, "a rollback leaves no orphan or missing pages");
+
+      Database.Transactions.Begin_Write (DB, Tx);
+      for Id in 2 .. 600 loop
+         R := Users.Insert (Tx, DB, S, Numbered (Id));
+         Assert (Database.Status.Is_Ok (R), "insert after rollback failed");
+      end loop;
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "commit after rollback failed");
+      Expect_Healthy (DB, "pages allocated after a rollback continue the file");
+      Database.Close (DB);
+      Database.Open (DB, Path);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
+      Database.Transactions.Begin_Write (DB, Tx);
+      Assert (Count_Where (Tx, DB, S, 2, Database.Values.From_Text (Numbered (450).Email)) = 1,
+              "rows inserted after the rollback are indexed");
+      R := Database.Transactions.Commit (Tx);
+      Database.Close (DB);
+      Remove_Files (Name);
+   end Rollback_Restores_Catalog;
+
    overriding
    procedure Register_Tests (T : in out Case_Type) is
       use AUnit.Test_Cases.Registration;
@@ -558,5 +686,6 @@ package body Secondary_Index_Tests is
         (T, Persistent_Tree_Across_Reopen'Access, "multi-page index trees across reopen");
       Register_Routine (T, Unbuilt_Index_Is_Rebuilt'Access, "unbuilt index bypassed then rebuilt");
       Register_Routine (T, Rollback_Restores_Index'Access, "rollback restores index pages");
+      Register_Routine (T, Rollback_Restores_Catalog'Access, "rollback restores the catalog and allocation");
    end Register_Tests;
 end Secondary_Index_Tests;

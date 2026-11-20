@@ -53,8 +53,7 @@ package body Database.Vacuum is
             begin
                if Key.Kind /= Database.Types.Null_Value then
                   R := Database.Indexes.BTree.Remove_Entry
-                    (Tx, DB.File,
-                     Database.Storage.Pages.Page_Id (Schema.Primary_Index_Root),
+                    (Tx, Database.Storage.Pages.Page_Id (Schema.Primary_Index_Root),
                      Key, Reclaimed_Row.Ref);
                   if not Database.Status.Is_Ok (R) then
                      return R;
@@ -74,7 +73,7 @@ package body Database.Vacuum is
                begin
                   if Key.Kind /= Database.Types.Null_Value then
                      R := Database.Indexes.BTree.Remove_Entry
-                       (Tx, DB.File, IX.Root_Page, Key, Reclaimed_Row.Ref);
+                       (Tx, IX.Root_Page, Key, Reclaimed_Row.Ref);
                      if not Database.Status.Is_Ok (R) then
                         return R;
                      end if;

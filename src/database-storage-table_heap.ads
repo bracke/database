@@ -38,12 +38,11 @@ package Database.Storage.Table_Heap is
       Allocator  : in out Database.Storage.Free_List.Allocator;
       First_Page : out Database.Storage.Pages.Page_Id) return Database.Status.Result;
 
-   --  Public operation `Append_Row`. See the package documentation for transaction, ownership, and error-result
-   --  semantics.
-   --  @param Tx transaction object that scopes the operation.
-   --  @param F f argument supplied to the operation.
-   --  @param Allocator allocator argument supplied to the operation.
-   --  @param First_Page first page argument supplied to the operation.
+   --  Append a row as an uncommitted version of the transaction. New heap pages are allocated through the
+   --  transaction, so a rollback returns them.
+   --  @param Tx write transaction.
+   --  @param F database file.
+   --  @param First_Page first page of the heap; Invalid_Page_Id creates the heap.
    --  @param Schema schema metadata used for validation or registration.
    --  @param Row row value supplied to or returned by the operation.
    --  @param Ref ref argument supplied to the operation.
@@ -51,7 +50,6 @@ package Database.Storage.Table_Heap is
    function Append_Row
      (Tx         : in out Database.Transactions.Transaction;
       F          : in out Database.Storage.File_IO.File_Handle;
-      Allocator  : in out Database.Storage.Free_List.Allocator;
       First_Page : in out Database.Storage.Pages.Page_Id;
       Schema     : Database.Schema.Table_Schema;
       Row        : Database.Rows.Row;

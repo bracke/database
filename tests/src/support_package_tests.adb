@@ -19,7 +19,6 @@ with Database.Schema;
 with Database.Statistics;
 with Database.Status; use Database.Status;
 with Database.Storage.File_IO;
-with Database.Storage.Free_List;
 with Database.Storage.Pages;
 with Database.Tracing;
 with Database.Transactions;
@@ -687,37 +686,36 @@ package body Support_Package_Tests is
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      Path      : constant Wide_Wide_String := "support_btree.db";
-      DB        : Database.Handle;
-      Tx        : Database.Transactions.Transaction;
-      F         : Database.Storage.File_IO.File_Handle;
-      Allocator : Database.Storage.Free_List.Allocator;
-      Root      : Database.Storage.Pages.Page_Id;
-      Ref       : Database.Indexes.Row_Reference;
-      Found     : Database.Indexes.Row_Reference;
-      R         : Database.Status.Result;
+      Path  : constant Wide_Wide_String := "support_btree.db";
+      DB    : Database.Handle;
+      Tx    : Database.Transactions.Transaction;
+      F     : Database.Storage.File_IO.File_Handle;
+      Root  : Database.Storage.Pages.Page_Id;
+      Ref   : constant Database.Indexes.Row_Reference := (Page => 3, Slot_Offset => 1);
+      Found : Database.Indexes.Row_Reference;
+      R     : Database.Status.Result;
    begin
       Remove_File ("support_btree.db");
       Remove_File ("support_btree.db.wal");
-      Database.Open_In_Memory (DB);
+      Database.Create (DB, Path);
       Database.Transactions.Begin_Write (DB, Tx);
-      R := Database.Storage.File_IO.Create (F, Path);
-      Assert
-        (Database.Status.Is_Ok (R), "btree backing file create must succeed");
-      Database.Storage.Free_List.Initialize_From_File (Allocator, F);
-      R := Database.Indexes.BTree.Create (Tx, F, Allocator, Root);
+      R := Database.Indexes.BTree.Create (Tx, Root);
       Assert (Database.Status.Is_Ok (R), "btree create must succeed");
       Assert
         (Root /= Database.Storage.Pages.Invalid_Page_Id,
          "btree root must be allocated");
-      Ref := (Page => 3, Slot_Offset => 1);
-      R :=
-        Database.Indexes.BTree.Insert
-          (Tx, F, Allocator, Root, Database.Values.From_Integer (7), Ref);
+      R := Database.Indexes.BTree.Insert (Tx, Root, Database.Values.From_Integer (7), Ref);
       Assert (Database.Status.Is_Ok (R), "btree insert must succeed");
-      R :=
-        Database.Indexes.BTree.Find
-          (F, Root, Database.Values.From_Integer (7), Found);
+      R := Database.Indexes.BTree.Insert_Duplicate
+        (Tx, Root, Database.Values.From_Text ([1 .. 1_000 => 'x']), Ref);
+      Assert (R.Code = Database.Status.Row_Too_Large, "a key over 1,000 encoded bytes must be rejected");
+      R := Database.Transactions.Commit (Tx);
+      Assert
+        (Database.Status.Is_Ok (R), "write transaction commit must succeed");
+      Database.Close (DB);
+      R := Database.Storage.File_IO.Open_Read_Only (F, Path);
+      Assert (Database.Status.Is_Ok (R), "btree file must open");
+      R := Database.Indexes.BTree.Find (F, Root, Database.Values.From_Integer (7), Found);
       Assert (Database.Status.Is_Ok (R), "btree find must succeed");
       Assert
         (Found.Page = Ref.Page and then Found.Slot_Offset = Ref.Slot_Offset,
@@ -726,11 +724,28 @@ package body Support_Package_Tests is
       Assert (Database.Status.Is_Ok (R), "btree validate must succeed");
       R := Database.Storage.File_IO.Close (F);
       Assert
-        (Database.Status.Is_Ok (R), "btree backing file close must succeed");
-      R := Database.Transactions.Commit (Tx);
-      Assert
-        (Database.Status.Is_Ok (R), "write transaction commit must succeed");
-      Database.Close (DB);
+        (Database.Status.Is_Ok (R), "btree file close must succeed");
+
+      --  A node whose entry claims a longer key than its encoding holds is corrupt.
+      declare
+         Page : Database.Storage.Pages.Page;
+      begin
+         R := Database.Storage.File_IO.Open (F, Path);
+         Assert (Database.Status.Is_Ok (R), "btree file must reopen");
+         Database.Storage.Pages.Initialize (Page, Root, Database.Storage.Pages.BTree_Leaf_Page);
+         Database.Storage.Pages.Set_Payload
+           (Page,
+            [Character'Pos ('B'), Character'Pos ('P'), Character'Pos ('T'), Character'Pos ('1'), 0, 0, 1, 0, 0, 0, 0,
+             0, 50, Database.Byte (Database.Types.Value_Kind'Pos (Database.Types.Integer_Value)),
+             0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 3, 0, 0, 0, 1]);
+         R := Database.Storage.File_IO.Write_Page (F, Page);
+         Assert (Database.Status.Is_Ok (R), "corrupt node must be written");
+         R := Database.Indexes.BTree.Find (F, Root, Database.Values.From_Integer (7), Found);
+         Assert (R.Code = Database.Status.Corrupt_Index, "a key length that disagrees with its key is corrupt");
+         R := Database.Indexes.BTree.Validate (F, Root);
+         Assert (R.Code = Database.Status.Corrupt_Index, "validation reports the corrupt node");
+         R := Database.Storage.File_IO.Close (F);
+      end;
       Remove_File ("support_btree.db");
       Remove_File ("support_btree.db.wal");
    end BTree_Create_Find_Validate;

@@ -70,7 +70,6 @@ package body Database.Storage.Table_Heap is
    function Append_Row
      (Tx         : in out Database.Transactions.Transaction;
       F          : in out Database.Storage.File_IO.File_Handle;
-      Allocator  : in out Database.Storage.Free_List.Allocator;
       First_Page : in out Page_Id;
       Schema     : Database.Schema.Table_Schema;
       Row        : Database.Rows.Row;
@@ -89,10 +88,11 @@ package body Database.Storage.Table_Heap is
          return Database.Status.Failure (Database.Status.Row_Too_Large, "row does not fit table heap page");
       end if;
       if First_Page = Invalid_Page_Id then
-         R := Create_Heap (F, Allocator, First_Page);
+         R := Database.Transactions.Allocate_Page (Tx, Table_Heap_Page, P);
          if not Database.Status.Is_Ok (R) then
             return R;
          end if;
+         First_Page := Get_Id (P);
       end if;
       --  Continue at the page this transaction last appended to instead of walking the chain from its first page.
       Id := Database.Transactions.Heap_Tail (Tx, First_Page);
@@ -130,7 +130,7 @@ package body Database.Storage.Table_Heap is
                if not Database.Status.Is_Ok (R) then
                   return R;
                end if;
-               R := Database.Storage.Free_List.Allocate (Allocator, F, Table_Heap_Page, N);
+               R := Database.Transactions.Allocate_Page (Tx, Table_Heap_Page, N);
                if not Database.Status.Is_Ok (R) then
                   return R;
                end if;

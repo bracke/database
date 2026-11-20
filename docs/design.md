@@ -50,7 +50,15 @@ Appends to a table heap continue at the page the transaction last appended to,
 and the catalog counts its cached rows per table, so neither an insert nor its
 full-text maintenance depends on the size of the table. The page allocator scans
 the file for free pages once per open and checks a remembered free page again
-before reusing it.
+before reusing it. Inside a transaction, pages are allocated and freed through
+the transaction (`Transactions.Allocate_Page` and `Transactions.Free_Page`), so
+a rollback undoes them.
+
+Index maintenance shared by all typed tables (lookups by key, filling an index
+from its table, and building indexes left unbuilt by earlier versions) lives in
+the private package `Database.Tables.Indexing`. The B+ tree's write operations
+take only the transaction and change the tree in the transaction's database;
+its read operations take a file, so read-only handles can use them.
 
 ### Query and Optimization
 

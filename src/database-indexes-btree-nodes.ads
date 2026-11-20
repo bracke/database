@@ -22,10 +22,12 @@ private package Database.Indexes.BTree.Nodes is
    --  @field Key Indexed value.
    --  @field Ref Row reference; together with Key it orders entries, so equal keys are adjacent and distinct.
    --  @field Child Internal nodes only: the child holding the entries at or above this separator.
+   --  @field Key_Length Encoded length of Key (see Key_Size), kept so sizing a node does not encode its keys again.
    type Item is record
-      Key   : Database.Values.Value := Database.Values.Null_Value;
-      Ref   : Database.Indexes.Row_Reference := Database.Indexes.Invalid_Row_Reference;
-      Child : Database.Storage.Pages.Page_Id := Database.Storage.Pages.Invalid_Page_Id;
+      Key        : Database.Values.Value := Database.Values.Null_Value;
+      Ref        : Database.Indexes.Row_Reference := Database.Indexes.Invalid_Row_Reference;
+      Child      : Database.Storage.Pages.Page_Id := Database.Storage.Pages.Invalid_Page_Id;
+      Key_Length : Natural := 0;
    end record;
 
    --  Entries of one node in ascending order.
@@ -95,14 +97,11 @@ private package Database.Indexes.BTree.Nodes is
    --  @return Bytes.
    function Item_Size (N : Node; Entry_Item : Item) return Natural;
 
-   --  Encode a node and write it through the transaction, so it is logged and rolled back with it. A transaction of a
-   --  database without a file (an in-memory one used to drive the tree directly) writes F itself.
-   --  @param Tx Write transaction.
-   --  @param F Database file holding the tree.
+   --  Encode a node and write it through the transaction, so it is logged and rolled back with it.
+   --  @param Tx Write transaction of the database holding the tree.
    --  @param N Node that fits one page.
    --  @return Success, or the write failure.
    function Store
      (Tx : in out Database.Transactions.Transaction;
-      F  : in out Database.Storage.File_IO.File_Handle;
       N  : Node) return Database.Status.Result;
 end Database.Indexes.BTree.Nodes;

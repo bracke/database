@@ -183,7 +183,7 @@ package body Database.Migrations is
                   return R;
                end if;
                R := Database.Storage.Table_Heap.Append_Row
-                 (Tx, DB.File, DB.Page_Allocator, First, New_Schema, New_Row, Ref);
+                 (Tx, DB.File, First, New_Schema, New_Row, Ref);
                if not Database.Status.Is_Ok (R) then
                   return R;
                end if;
@@ -191,7 +191,7 @@ package body Database.Migrations is
                  and then Key.Kind /= Database.Types.Null_Value
                then
                   R := Database.Indexes.BTree.Insert_Duplicate
-                    (Tx, DB.File, DB.Page_Allocator, Root, Key, Ref);
+                    (Tx, Root, Key, Ref);
                   if not Database.Status.Is_Ok (R) then
                      return R;
                   end if;

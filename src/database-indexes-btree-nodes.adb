@@ -172,7 +172,7 @@ package body Database.Indexes.BTree.Nodes is
       return (Hour => Hour, Minute => Minute, Second => Second, Nanosecond => Read_U32 (R));
    end Read_Time;
 
-   function Decode_Key (R : in out Reader; Length : Natural) return Database.Values.Value is
+   function Decode_Key_Value (R : in out Reader; Length : Natural) return Database.Values.Value is
       Start : constant Natural := R.Position;
       Code  : constant Natural := Natural (Next_Byte (R));
    begin
@@ -231,6 +231,17 @@ package body Database.Indexes.BTree.Nodes is
          when Null_Value | Blob_Value | Array_Value =>
             raise Truncated;
       end case;
+   end Decode_Key_Value;
+
+   --  Decode a key of Length bytes; a key whose encoding is shorter or longer than its length is corrupt.
+   function Decode_Key (R : in out Reader; Length : Natural) return Database.Values.Value is
+      Start : constant Natural := R.Position;
+      Key   : constant Database.Values.Value := Decode_Key_Value (R, Length);
+   begin
+      if R.Position /= Start + Length then
+         raise Truncated;
+      end if;
+      return Key;
    end Decode_Key;
 
    ---------------------------------------------------------------------------------------------------------------
@@ -259,7 +270,7 @@ package body Database.Indexes.BTree.Nodes is
    end Compare;
 
    function Item_Size (N : Node; Entry_Item : Item) return Natural is
-     (2 + Key_Size (Entry_Item.Key) + 8 + (if N.Leaf then 0 else 4));
+     (2 + Entry_Item.Key_Length + 8 + (if N.Leaf then 0 else 4));
 
    function Fits (N : Node) return Boolean is
       Total : Natural := Header_Size;
@@ -366,6 +377,7 @@ package body Database.Indexes.BTree.Nodes is
                   Entry_Item : Item;
                begin
                   Entry_Item.Key := Decode_Key (Cursor, Length);
+                  Entry_Item.Key_Length := Length;
                   Entry_Item.Ref.Page := Page_Id (Read_U32 (Cursor));
                   Entry_Item.Ref.Slot_Offset := Read_U32 (Cursor);
                   if not N.Leaf then
@@ -384,18 +396,13 @@ package body Database.Indexes.BTree.Nodes is
 
    function Store
      (Tx : in out Database.Transactions.Transaction;
-      F  : in out Database.Storage.File_IO.File_Handle;
       N  : Node) return Database.Status.Result
    is
-      Owner : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
-      Page  : Database.Storage.Pages.Page;
+      Page : Database.Storage.Pages.Page;
    begin
       Initialize (Page, N.Id, (if N.Leaf then BTree_Leaf_Page else BTree_Internal_Page),
                   (if N.Leaf then N.Next else Invalid_Page_Id));
       Set_Payload (Page, Encode (N));
-      if Owner /= null and then Database."=" (Database.Backend (Owner.all), Database.Persistent_Backend) then
-         return Database.Transactions.Write_Page (Tx, Page);
-      end if;
-      return Database.Storage.File_IO.Write_Page (F, Page);
+      return Database.Transactions.Write_Page (Tx, Page);
    end Store;
 end Database.Indexes.BTree.Nodes;

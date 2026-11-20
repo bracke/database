@@ -5,7 +5,6 @@ with Ada.Containers.Indefinite_Vectors;
 with Ada.Containers.Ordered_Maps;
 with Ada.Unchecked_Deallocation;
 with Ada.Strings.Wide_Wide_Unbounded;
-with Database.Storage.Pages;
 with Database.Storage.Table_Heap;
 with Database.Storage.File_IO;
 with Database.Types;
@@ -349,7 +348,7 @@ package body Database.Catalog is
       if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Allocation_Failure) then
          return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Allocation_Failure);
       end if;
-      Initialize (P, 1, Catalog_Page);
+      Initialize (P, Catalog_Page_Id, Catalog_Page);
       Put_U32 (B, Pos, Natural (State.all.Tables.Length));
       for S of State.all.Tables loop
          Put_U32  (B,
@@ -547,10 +546,10 @@ package body Database.Catalog is
       if Database.Backend (DB) /= Database.Persistent_Backend then
          return Database.Status.Success;
       end if;
-      R := Database.Storage.File_IO.Read_Page (DB.File, 1, Catalog_Page, P);
+      R := Database.Storage.File_IO.Read_Page (DB.File, Catalog_Page_Id, Catalog_Page, P);
       if not Database.Status.Is_Ok (R) then
          --  Newly-created files may not yet have a catalog page.
-         Initialize (P, 1, Catalog_Page);
+         Initialize (P, Catalog_Page_Id, Catalog_Page);
          return Database.Storage.File_IO.Write_Page (DB.File, P);
       end if;
       declare

@@ -1,5 +1,6 @@
 --  In-process catalog registry and persistent catalog save/load support.
 with Database.Schema;
+with Database.Storage.Pages;
 with Database.Status;
 with Database.Rows;
 with Database.Foreign_Keys;
@@ -11,6 +12,9 @@ with Database.Full_Text.Indexes;
 
    --  Public nested package `Database.Catalog`.
 package Database.Catalog is
+   --  Page holding the saved catalog.
+   Catalog_Page_Id : constant Database.Storage.Pages.Page_Id := 1;
+
    --  Perform drop database for the supplied database state or arguments.
    --  @param State_Key state key argument supplied to the operation.
    procedure Drop_Database (State_Key : Natural);

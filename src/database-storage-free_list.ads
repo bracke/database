@@ -16,23 +16,37 @@ package Database.Storage.Free_List is
      (A : in out Allocator;
       F : in out Database.Storage.File_IO.File_Handle);
 
-   --  Public operation `Allocate`. See the package documentation for transaction, ownership, and error-result
-   --  semantics.
-   --  @param A a argument supplied to the operation.
-   --  @param F f argument supplied to the operation.
-   --  @param Kind kind selector controlling the operation.
-   --  @param Page page argument supplied to the operation.
-   --  @return Result produced by the function.
+   --  Reserve a page and write it directly to the file, for allocations outside a transaction such as a table
+   --  registration's heap. Inside a transaction use Database.Transactions.Allocate_Page, which a rollback undoes.
+   --  @param A allocator of the database.
+   --  @param F database file.
+   --  @param Kind page kind of the new page.
+   --  @param Page the written empty page.
+   --  @return Status result describing whether the operation succeeded.
    function Allocate
      (A    : in out Allocator;
       F    : in out Database.Storage.File_IO.File_Handle;
       Kind : Database.Storage.Pages.Page_Kind;
       Page : out Database.Storage.Pages.Page) return Database.Status.Result;
 
-   --  Public operation `Release`. See the package documentation for transaction, ownership, and error-result semantics.
-   --  @param A a argument supplied to the operation.
-   --  @param Id id argument supplied to the operation.
-   --  @return Result produced by the function.
+   --  Choose the page the next allocation uses, a free page or the next page past the end of the file, without
+   --  writing it, so a transaction can write it and keep the free page as its before-image.
+   --  @param A allocator of the database.
+   --  @param F database file.
+   --  @param Kind page kind of the new page.
+   --  @param Page empty page of Kind for the chosen page id.
+   --  @return Status result describing whether the operation succeeded.
+   function Reserve
+     (A    : in out Allocator;
+      F    : in out Database.Storage.File_IO.File_Handle;
+      Kind : Database.Storage.Pages.Page_Kind;
+      Page : out Database.Storage.Pages.Page) return Database.Status.Result;
+
+   --  Remember a page the caller has rewritten as a free page, so the next allocation can reuse it. Each reuse checks
+   --  the page again, so a release undone by a rollback is harmless.
+   --  @param A allocator of the database.
+   --  @param Id released page.
+   --  @return Status result describing whether the operation succeeded.
    function Release
      (A  : in out Allocator;
       Id : Database.Storage.Pages.Page_Id) return Database.Status.Result;

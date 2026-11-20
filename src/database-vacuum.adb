@@ -90,11 +90,21 @@ package body Database.Vacuum is
    function Vacuum
      (Tx : in out Database.Transactions.Transaction) return Database.Status.Result
    is
+      Report : Vacuum_Report;
+   begin
+      return Vacuum (Tx, Report);
+   end Vacuum;
+
+   function Vacuum
+     (Tx     : in out Database.Transactions.Transaction;
+      Report : out Vacuum_Report) return Database.Status.Result
+   is
       DB        : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
       R         : Database.Status.Result;
       Reclaimed : Natural;
       Reclaimed_Rows : Database.Storage.Table_Heap.Reclaimed_Row_Vectors.Vector;
    begin
+      Report := (others => <>);
       if not Database.Transactions.Can_Write (Tx) then
          return Database.Status.Failure
            (Database.Status.Read_Only_Transaction,
@@ -138,14 +148,16 @@ package body Database.Vacuum is
          declare
             Orphans : Database.Indexes.BTree.Page_Id_Vectors.Vector;
          begin
-            if Database.Status.Is_Ok (Database.Check.Orphan_Pages (Tx, Orphans)) then
-               for Id of Orphans loop
-                  R := Database.Transactions.Free_Page (Tx, Id);
-                  if not Database.Status.Is_Ok (R) then
-                     return R;
-                  end if;
-               end loop;
+            if not Database.Status.Is_Ok (Database.Check.Orphan_Pages (Tx, Orphans)) then
+               Report.Reachability_Unknown := True;
             end if;
+            for Id of Orphans loop
+               R := Database.Transactions.Free_Page (Tx, Id);
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
+               Report.Freed_Pages := Report.Freed_Pages + 1;
+            end loop;
          end;
       end if;
 

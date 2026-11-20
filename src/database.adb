@@ -12,7 +12,7 @@ with Database.Full_Text.Tokenizers;
 with Database.Full_Text.Ranking;
 with Database.Validation_Hooks;
 with Database.Memory_Store;
-with Database.Replay;
+with Database.MVCC;
 with Database.Transactions;
 with Database.WAL;
 
@@ -171,22 +171,33 @@ package body Database is
       end if;
    end Create_Encrypted;
 
+   --  Recover the file of DB from its WAL and take over what the WAL knows besides pages.
+   function Recover (DB : in out Handle; Path : Wide_Wide_String) return Result is
+      Summary : Database.WAL.Recovery_Summary;
+      R       : constant Result := Database.WAL.Recover (Path, DB.File, Summary);
+   begin
+      if Database.Status.Is_Ok (R) then
+         DB.Version := Natural'Max (DB.Version, Summary.Max_Commit_Version);
+         --  Rebuild the MVCC committed-transaction map from the replayed WAL
+         --  so visibility and reclamation treat recovered committed rows
+         --  correctly (a fresh process starts with an empty map).
+         for C in Summary.Committed.Iterate loop
+            Database.MVCC.Mark_Committed
+              (Database.WAL.Commit_Maps.Key (C), Database.WAL.Commit_Maps.Element (C));
+         end loop;
+         --  The WAL keeps the records of every transaction since the last checkpoint, rolled back or not, and
+         --  replay tells transactions apart by id.
+         Database.Transactions.Reserve_Ids_Through (Summary.Max_Transaction_Id);
+      end if;
+      return R;
+   end Recover;
+
    procedure Open (DB : out Handle; Path : Wide_Wide_String) is
    begin
       DB.Kind := Closed_Backend;
       DB.Last := Database.Storage.File_IO.Open (DB.File, Path);
       if Database.Status.Is_Ok (DB.Last) then
-         DB.Last := Database.Replay.Replay_WAL (Path, DB.File);
-         if Database.Status.Is_Ok (DB.Last) then
-            DB.Version := Natural'Max (DB.Version, Database.WAL.Max_Commit_Version (Path));
-            --  Rebuild the MVCC committed-transaction map from the replayed WAL
-            --  so visibility and reclamation treat recovered committed rows
-            --  correctly (a fresh process starts with an empty map).
-            Database.WAL.Restore_Committed_Lifecycles (Path);
-            --  The WAL keeps the records of every transaction since the last checkpoint, rolled back or not, and
-            --  replay tells transactions apart by id.
-            Database.Transactions.Reserve_Ids_Through (Database.WAL.Max_Transaction_Id (Path));
-         end if;
+         DB.Last := Recover (DB, Path);
       end if;
       if Database.Status.Is_Ok (DB.Last) then
          DB.Kind := Persistent_Backend;
@@ -272,17 +283,7 @@ package body Database is
       DB.Kind := Closed_Backend;
       DB.Last := Database.Storage.File_IO.Open_Encrypted (DB.File, Path, Key);
       if Database.Status.Is_Ok (DB.Last) then
-         DB.Last := Database.Replay.Replay_WAL (Path, DB.File);
-         if Database.Status.Is_Ok (DB.Last) then
-            DB.Version := Natural'Max (DB.Version, Database.WAL.Max_Commit_Version (Path));
-            --  Rebuild the MVCC committed-transaction map from the replayed WAL
-            --  so visibility and reclamation treat recovered committed rows
-            --  correctly (a fresh process starts with an empty map).
-            Database.WAL.Restore_Committed_Lifecycles (Path);
-            --  The WAL keeps the records of every transaction since the last checkpoint, rolled back or not, and
-            --  replay tells transactions apart by id.
-            Database.Transactions.Reserve_Ids_Through (Database.WAL.Max_Transaction_Id (Path));
-         end if;
+         DB.Last := Recover (DB, Path);
       end if;
       if Database.Status.Is_Ok (DB.Last) then
          DB.Kind := Persistent_Backend;

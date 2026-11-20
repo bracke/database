@@ -1,6 +1,9 @@
 with AUnit.Assertions;
 
 with Ada.Directories;
+with Ada.Strings.Fixed;
+with Ada.Strings.Unbounded;
+with Ada.Text_IO;
 with Ada.Streams.Stream_IO;
 with Database;
 with Database.Checkpointing;
@@ -377,6 +380,48 @@ package body WAL_Tests is
       Remove_File ("wal_reopen.database.wal");
    end Reopen_Reuses_Clean_Close;
 
+   --  The SPARK proof of the payload rules compiles against a copy of the record kinds in spark_stubs, which must name
+   --  the same kinds in the same order as the WAL itself.
+   procedure SPARK_Stub_Matches_Record_Kinds
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+
+      --  The literals of Record_Kind in the source file at Path, without spaces or line breaks.
+      function Record_Kinds (Path : String) return String is
+         use Ada.Strings.Unbounded;
+         File   : Ada.Text_IO.File_Type;
+         Kinds  : Unbounded_String;
+         Inside : Boolean := False;
+      begin
+         Ada.Text_IO.Open (File, Ada.Text_IO.In_File, Path);
+         while not Ada.Text_IO.End_Of_File (File) loop
+            declare
+               Line : constant String := Ada.Text_IO.Get_Line (File);
+            begin
+               if Ada.Strings.Fixed.Index (Line, "type Record_Kind is") > 0 then
+                  Inside := True;
+               elsif Inside then
+                  for C of Line loop
+                     if C /= ' ' then
+                        Append (Kinds, C);
+                     end if;
+                  end loop;
+                  exit when Ada.Strings.Fixed.Index (Line, ");") > 0;
+               end if;
+            end;
+         end loop;
+         Ada.Text_IO.Close (File);
+         return To_String (Kinds);
+      end Record_Kinds;
+
+      Kinds : constant String := Record_Kinds ("../src/database-wal.ads");
+   begin
+      Assert (Kinds'Length > 0, "the WAL record kinds were not found");
+      Assert (Record_Kinds ("../spark_stubs/database-wal.ads") = Kinds,
+              "spark_stubs/database-wal.ads lists other record kinds than src/database-wal.ads");
+   end SPARK_Stub_Matches_Record_Kinds;
+
    overriding
    procedure Register_Tests (T : in out Case_Type) is
       use AUnit.Test_Cases.Registration;
@@ -409,5 +454,7 @@ package body WAL_Tests is
          "full-text WAL rejects non-full-text page");
       Register_Routine
         (T, Reopen_Reuses_Clean_Close'Access, "reopening a cleanly closed WAL continues its sequence");
+      Register_Routine
+        (T, SPARK_Stub_Matches_Record_Kinds'Access, "the SPARK stub lists the WAL record kinds");
    end Register_Tests;
 end WAL_Tests;

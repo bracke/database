@@ -1,4 +1,5 @@
 with Database.Storage.File_IO;
+with Database.Storage.Free_List;
 with Database.WAL;
 with Database.Metrics;
 with Database.Events;
@@ -46,6 +47,9 @@ package body Database.Checkpointing is
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
+      --  Replay may have undone a transaction whose rollback failed and cut the file back, so the free pages and the
+      --  end of the file are found again.
+      Database.Storage.Free_List.Initialize_From_File (DB.Page_Allocator, DB.File);
       Database.Metrics.Increment_Checkpoints;
       Database.Events.Emit_Event ((Database.Events.Checkpoint_End,
         Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("checkpoint end")));

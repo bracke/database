@@ -101,7 +101,8 @@ cannot be told apart from pages other structures use. The integrity check then
 reports them as orphan pages until vacuum frees them: vacuum returns every table
 heap and index page that no catalog root reaches to the free list, but only when
 every heap chain and index tree can be followed to its end, since the pages
-behind a broken link would otherwise look unreachable.
+behind a broken link would otherwise look unreachable. Its report says how many
+pages it freed, or that it freed none for that reason.
 
 Pages a transaction allocates or frees are written through the transaction as
 well. A rollback therefore returns a reused free page to the free list, removes
@@ -168,8 +169,13 @@ records, stamped with their LSN so the frames of later committed transactions ar
 written over them again, and then cuts the file back to the length of its begin
 record, unless a committed transaction wrote a page past it. It then appends an
 abort record for the transaction, so a later replay of the same log leaves it
-alone. Transaction ids are reserved past every id in the WAL on open, because
-replay tells transactions apart by id.
+alone. Full-text undo records follow the same rule. Recovery reads the WAL twice,
+once to learn how each transaction ended and once to apply its records, and the
+first pass also yields the highest commit version, the committed transactions for
+MVCC visibility, and the highest transaction id; new transaction ids start past
+it, because replay tells transactions apart by id. A checkpoint replays the WAL
+the same way and then finds the free pages and the end of the file again, since a
+transaction whose rollback failed may have been undone.
 
 ## Versioning strategy
 

@@ -825,13 +825,16 @@ package body Secondary_Index_Tests is
       --  The replaced tree, its old root and the chain below it, is unreachable until vacuum frees it.
       declare
          Orphans : Database.Indexes.BTree.Page_Id_Vectors.Vector;
+         Report  : Database.Vacuum.Vacuum_Report;
       begin
          Database.Transactions.Begin_Write (DB, Tx);
          R := Database.Check.Orphan_Pages (Tx, Orphans);
          Assert (Database.Status.Is_Ok (R) and then Natural (Orphans.Length) = Depth + 2,
                  "the pages of the replaced tree are unreachable");
-         R := Database.Vacuum.Vacuum (Tx);
+         R := Database.Vacuum.Vacuum (Tx, Report);
          Assert (Database.Status.Is_Ok (R), "vacuum failed");
+         Assert (Report.Freed_Pages = Depth + 2 and then not Report.Reachability_Unknown,
+                 "vacuum reports the pages it freed");
          R := Database.Transactions.Commit (Tx);
          Assert (Database.Status.Is_Ok (R), "vacuum commit failed");
          Expect_Healthy (DB, "vacuum frees the pages of a replaced tree");
@@ -857,8 +860,8 @@ package body Secondary_Index_Tests is
    begin
       Remove_Files (Name_A);
       Remove_Files (Name_B);
-      Database.Create (A, "secondary_foreign_a.database");
-      Database.Create (B, "secondary_foreign_b.database");
+      Database.Create (A, Ada.Characters.Conversions.To_Wide_Wide_String (Name_A));
+      Database.Create (B, Ada.Characters.Conversions.To_Wide_Wide_String (Name_B));
       Add_User_Schema (S);
       R := Users.Register (B, S);
       Assert (Database.Status.Is_Ok (R), "register failed");

@@ -485,7 +485,15 @@ package body Database.Transactions is
       end if;
       if Tx.Current_Mode = Read_Write and then Database.Backend (Tx.DB.all) = Database.Persistent_Backend then
          --  Catalog changes are staged in memory until here, so the page is logged like every other page.
-         R := Database.Catalog.Save (Tx);
+         declare
+            Catalog_Page : Database.Storage.Pages.Page;
+            Changed      : Boolean;
+         begin
+            R := Database.Catalog.Pending_Page (Tx.DB.all, Catalog_Page, Changed);
+            if Database.Status.Is_Ok (R) and then Changed then
+               R := Write_Page (Tx, Catalog_Page);
+            end if;
+         end;
          if not Database.Status.Is_Ok (R) then
             Tx.Current_State := Failed;
             Tx.Last := R;

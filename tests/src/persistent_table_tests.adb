@@ -326,101 +326,6 @@ package body Persistent_Table_Tests is
       end if;
    end Transaction_State_Rejections;
 
-   --  Primary-key reuse across an uncheckpointed restart. A separate process
-   --  inserts and deletes key 6, then exits abruptly leaving an uncheckpointed
-   --  WAL; a second process reopens (replaying the WAL) and must be able to
-   --  re-insert and delete key 6. This is only reproducible across real
-   --  processes -- two handles in one process would open the second read-only
-   --  -- so it drives the wal_reuse_child helper. Regression guard for the
-   --  MVCC replay reconstruction / persisted-tombstone visibility fix: a
-   --  replayed committed deletion must stay deleted (otherwise the re-insert
-   --  fails DUPLICATE_KEY and the delete fails NOT_FOUND).
-   procedure Reused_Key_After_Uncheckpointed_Restart
-     (T : in out AUnit.Test_Cases.Test_Case'Class)
-   is
-      pragma Unreferenced (T);
-      Path : constant String := "persistent_reuse.database";
-
-      procedure Cleanup is
-      begin
-         if Ada.Directories.Exists (Path) then
-            Ada.Directories.Delete_File (Path);
-         end if;
-         if Ada.Directories.Exists (Path & ".wal") then
-            Ada.Directories.Delete_File (Path & ".wal");
-         end if;
-         if Ada.Directories.Exists (Path & ".fts") then
-            Ada.Directories.Delete_File (Path & ".fts");
-         end if;
-      end Cleanup;
-
-      function Run_Phase (Phase : String) return Boolean is
-         Args    : GNAT.OS_Lib.Argument_List (1 .. 2);
-         Success : Boolean;
-      begin
-         Args (1) := new String'(Phase);
-         Args (2) := new String'(Path);
-         GNAT.OS_Lib.Spawn ("./bin/wal_reuse_child", Args, Success);
-         GNAT.OS_Lib.Free (Args (1));
-         GNAT.OS_Lib.Free (Args (2));
-         return Success;
-      end Run_Phase;
-   begin
-      Cleanup;
-      Assert (Run_Phase ("setup"),
-              "wal_reuse_child setup phase did not exit cleanly");
-      Assert (Run_Phase ("verify"),
-              "reused key not recoverable after uncheckpointed restart "
-              & "(replayed committed deletion resurrected the row)");
-      Cleanup;
-   end Reused_Key_After_Uncheckpointed_Restart;
-
-   --  Transaction ids must not be reused after a *clean* checkpoint restart
-   --  (no WAL to replay). The setup_clean phase writes many committed rows and
-   --  closes cleanly; verify_txid reopens in a fresh process and asserts the
-   --  first write transaction gets an id above the persisted rows' ids -- the
-   --  open-time reservation derived from the heap. Guards against transaction
-   --  id reuse aliasing the process-global MVCC lifecycle map.
-   procedure Transaction_Ids_Not_Reused_After_Restart
-     (T : in out AUnit.Test_Cases.Test_Case'Class)
-   is
-      pragma Unreferenced (T);
-      Path : constant String := "persistent_txid.database";
-
-      procedure Cleanup is
-      begin
-         if Ada.Directories.Exists (Path) then
-            Ada.Directories.Delete_File (Path);
-         end if;
-         if Ada.Directories.Exists (Path & ".wal") then
-            Ada.Directories.Delete_File (Path & ".wal");
-         end if;
-         if Ada.Directories.Exists (Path & ".fts") then
-            Ada.Directories.Delete_File (Path & ".fts");
-         end if;
-      end Cleanup;
-
-      function Run_Phase (Phase : String) return Boolean is
-         Args    : GNAT.OS_Lib.Argument_List (1 .. 2);
-         Success : Boolean;
-      begin
-         Args (1) := new String'(Phase);
-         Args (2) := new String'(Path);
-         GNAT.OS_Lib.Spawn ("./bin/wal_reuse_child", Args, Success);
-         GNAT.OS_Lib.Free (Args (1));
-         GNAT.OS_Lib.Free (Args (2));
-         return Success;
-      end Run_Phase;
-   begin
-      Cleanup;
-      Assert (Run_Phase ("setup_clean"),
-              "wal_reuse_child setup_clean phase did not exit cleanly");
-      Assert (Run_Phase ("verify_txid"),
-              "transaction id reused after clean checkpoint restart "
-              & "(recovered high-water mark not applied)");
-      Cleanup;
-   end Transaction_Ids_Not_Reused_After_Restart;
-
    --  Run one phase of wal_reuse_child on Path in its own process.
    function Run_Child_Phase (Phase, Path : String) return Boolean is
       Args    : GNAT.OS_Lib.Argument_List := [new String'(Phase), new String'(Path)];
@@ -444,7 +349,53 @@ package body Persistent_Table_Tests is
       Remove (Path);
       Remove (Path & ".wal");
       Remove (Path & ".fts");
+      Remove (Path & ".txid");
    end Remove_Database;
+
+   --  Primary-key reuse across an uncheckpointed restart. A separate process
+   --  inserts and deletes key 6, then exits abruptly leaving an uncheckpointed
+   --  WAL; a second process reopens (replaying the WAL) and must be able to
+   --  re-insert and delete key 6. This is only reproducible across real
+   --  processes -- two handles in one process would open the second read-only
+   --  -- so it drives the wal_reuse_child helper. Regression guard for the
+   --  MVCC replay reconstruction / persisted-tombstone visibility fix: a
+   --  replayed committed deletion must stay deleted (otherwise the re-insert
+   --  fails DUPLICATE_KEY and the delete fails NOT_FOUND).
+   procedure Reused_Key_After_Uncheckpointed_Restart
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Path : constant String := "persistent_reuse.database";
+   begin
+      Remove_Database (Path);
+      Assert (Run_Child_Phase ("setup", Path),
+              "wal_reuse_child setup phase did not exit cleanly");
+      Assert (Run_Child_Phase ("verify", Path),
+              "reused key not recoverable after uncheckpointed restart "
+              & "(replayed committed deletion resurrected the row)");
+      Remove_Database (Path);
+   end Reused_Key_After_Uncheckpointed_Restart;
+
+   --  Transaction ids must not be reused after a *clean* checkpoint restart
+   --  (no WAL to replay). The setup_clean phase writes many committed rows and
+   --  closes cleanly; verify_txid reopens in a fresh process and asserts the
+   --  first write transaction gets an id above the persisted rows' ids -- the
+   --  open-time reservation derived from the heap. Guards against transaction
+   --  id reuse aliasing the process-global MVCC lifecycle map.
+   procedure Transaction_Ids_Not_Reused_After_Restart
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Path : constant String := "persistent_txid.database";
+   begin
+      Remove_Database (Path);
+      Assert (Run_Child_Phase ("setup_clean", Path),
+              "wal_reuse_child setup_clean phase did not exit cleanly");
+      Assert (Run_Child_Phase ("verify_txid", Path),
+              "transaction id reused after clean checkpoint restart "
+              & "(recovered high-water mark not applied)");
+      Remove_Database (Path);
+   end Transaction_Ids_Not_Reused_After_Restart;
 
    --  A transaction the process ends before it commits is undone on the next open: the pages it changed get their
    --  images back and the pages it added go, and it stays undone when the log is replayed again after later work.

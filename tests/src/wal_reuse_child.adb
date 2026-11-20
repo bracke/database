@@ -24,6 +24,7 @@ with Ada.Command_Line;
 with Ada.Characters.Conversions; use Ada.Characters.Conversions;
 with Ada.Directories;
 with Ada.Streams.Stream_IO;
+with Ada.Text_IO;
 with Ada.Strings.Wide_Wide_Unbounded; use Ada.Strings.Wide_Wide_Unbounded;
 
 with GNAT.OS_Lib;
@@ -232,11 +233,42 @@ begin
          if not Database.Status.Is_Ok (Status) then
             Fail (3);
          end if;
+         --  The verify phase checks that no later transaction reuses its id.
+         declare
+            Id_File : Ada.Text_IO.File_Type;
+         begin
+            Ada.Text_IO.Create (Id_File, Ada.Text_IO.Out_File, Path & ".txid");
+            Ada.Text_IO.Put_Line (Id_File, Natural'Image (Natural (Database.Transactions.Id (Tx))));
+            Ada.Text_IO.Close (Id_File);
+         end;
          GNAT.OS_Lib.OS_Exit (0);
 
       elsif Phase = "verify_crash" then
          Database.Open (DB, WPath);   --  undoes the interrupted transaction
          Status := T.Register (DB => DB, Schema => Schema);
+
+         --  Later work is logged after the interrupted transaction, under an
+         --  id of its own: replay tells transactions apart by id.
+         declare
+            Id_File     : Ada.Text_IO.File_Type;
+            Interrupted : Natural;
+         begin
+            Ada.Text_IO.Open (Id_File, Ada.Text_IO.In_File, Path & ".txid");
+            Interrupted := Natural'Value (Ada.Text_IO.Get_Line (Id_File));
+            Ada.Text_IO.Close (Id_File);
+            Database.Transactions.Begin_Write (DB, Tx);
+            if Natural (Database.Transactions.Id (Tx)) <= Interrupted then
+               Fail (12);   --  the interrupted transaction's id is used again
+            end if;
+         end;
+         Status := T.Insert (Tx, DB, Schema, (Id => 60));
+         if Database.Status.Is_Ok (Status) then
+            Status := Database.Transactions.Commit (Tx);
+         end if;
+         if not Database.Status.Is_Ok (Status) then
+            Fail (8);
+         end if;
+
          if not Healthy then
             Fail (4);   --  pages of the interrupted transaction remain
          elsif not Present (1) then
@@ -245,16 +277,6 @@ begin
             Fail (6);   --  its insert remains
          elsif Registered ("extra") then
             Fail (7);   --  its registration remains
-         end if;
-
-         --  Later work is logged after the interrupted transaction.
-         Database.Transactions.Begin_Write (DB, Tx);
-         Status := T.Insert (Tx, DB, Schema, (Id => 60));
-         if Database.Status.Is_Ok (Status) then
-            Status := Database.Transactions.Commit (Tx);
-         end if;
-         if not Database.Status.Is_Ok (Status) then
-            Fail (8);
          end if;
          GNAT.OS_Lib.OS_Exit (0);
 

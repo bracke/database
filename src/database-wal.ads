@@ -3,6 +3,7 @@ with Database.Status;
 with Database.Storage.File_IO;
 with Database.Storage.Pages;
 with Database.Log_Sequence;
+with Ada.Containers.Ordered_Maps;
 with Ada.Streams.Stream_IO;
 with Ada.Strings.Wide_Wide_Unbounded;
 
@@ -157,38 +158,41 @@ package Database.WAL is
      (W   : in out WAL_Handle;
       LSN : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result;
 
+   --  Commit versions by the id of the transaction that committed them.
+   package Commit_Maps is new Ada.Containers.Ordered_Maps (Natural, Natural);
+
+   --  What recovery found in a WAL besides the pages it wrote.
+   type Recovery_Summary is record
+      --  The committed transactions, so visibility treats their rows as committed in a process that never ran them.
+      Committed          : Commit_Maps.Map;
+      --  The highest commit version, or zero.
+      Max_Commit_Version : Natural := 0;
+      --  The highest transaction id in any record, or zero. A new transaction must not reuse one, or replay would take
+      --  the records of the old transaction for its own.
+      Max_Transaction_Id : Natural := 0;
+   end record;
+
    --  Recover the database file from its WAL: write the page images of committed transactions, and undo the
    --  transactions that have neither a commit nor an abort record, which a crash interrupted. Their pages get their
    --  images from before the transaction back, the file is cut back to its length before them unless a committed
    --  transaction wrote past it, and an abort record is appended for each so a later replay leaves them alone.
+   --  The WAL is read twice: once to learn how each transaction ended, once to apply its records.
+   --  @param Database_Path path of the database whose WAL is replayed.
+   --  @param F the open database file.
+   --  @param Summary what the WAL holds besides pages; empty when there is no WAL.
+   --  @return Status result; Replay_Failure or a WAL corruption status when the WAL cannot be applied.
+   function Recover
+     (Database_Path : Wide_Wide_String;
+      F             : in out Database.Storage.File_IO.File_Handle;
+      Summary       : out Recovery_Summary) return Database.Status.Result;
+
+   --  Recover the database file from its WAL, as Recover does, without the summary.
    --  @param Database_Path path of the database whose WAL is replayed.
    --  @param F the open database file.
    --  @return Status result; Replay_Failure or a WAL corruption status when the WAL cannot be applied.
    function Replay_Committed
      (Database_Path : Wide_Wide_String;
       F             : in out Database.Storage.File_IO.File_Handle) return Database.Status.Result;
-
-   --  Return the highest commit version recorded in a WAL file, or zero when
-   --  no committed transaction version is present.
-   function Max_Commit_Version (Database_Path : Wide_Wide_String) return Natural;
-
-   --  Return the highest transaction id in a WAL file, or zero when there is none. A new transaction must not reuse
-   --  one, or replay would take the records of the old transaction for its own.
-   --  @param Database_Path path of the database whose WAL is read.
-   --  @return The highest transaction id in the WAL.
-   function Max_Transaction_Id (Database_Path : Wide_Wide_String) return Natural;
-
-   --  Reconstruct the global MVCC transaction-lifecycle map after recovery.
-   --  Scans the WAL commit records and marks each committed transaction as
-   --  committed (with its commit version) in Database.MVCC. A fresh process
-   --  starts with an empty map, so without this a replayed committed row's
-   --  creating/deleting transaction reads back as Unknown -- resurrecting a
-   --  committed deletion for visibility and blocking space reclamation of the
-   --  dead row. Call it during open-time recovery, after Replay_WAL. Safe to
-   --  call when no WAL exists (it does nothing). Transactions whose id exceeds
-   --  the tracked range are left Unknown and rely on the visibility rules'
-   --  persisted-tombstone handling instead.
-   procedure Restore_Committed_Lifecycles (Database_Path : Wide_Wide_String);
 
    --  Return validate for the supplied database state or arguments.
    --  @param Database_Path database path argument supplied to the operation.

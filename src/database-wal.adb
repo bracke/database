@@ -1,13 +1,11 @@
 with Ada.Characters.Conversions;
 with Ada.Calendar;
 with Ada.Containers.Indefinite_Ordered_Maps;
-with Ada.Containers.Ordered_Maps;
 with Ada.Containers.Ordered_Sets;
 with Ada.Directories;
 with Ada.Streams;
 with Database.Metrics;
 with Database.Fault_Hooks;
-with Database.MVCC;
 with Database.Tracing;
 with Database.WAL.Payload_Rules;
 with Interfaces.C;
@@ -713,11 +711,16 @@ package body Database.WAL is
    --  whatever the page holds now, and it takes the sequence number of its record, so that the images of later
    --  committed transactions are written over it again.
    function Restore_Page_Image
-     (F       : in out Database.Storage.File_IO.File_Handle;
-      Payload : Stream_Element_Array;
-      LSN     : Log_Sequence_Number) return Database.Status.Result is
+     (F                 : in out Database.Storage.File_IO.File_Handle;
+      Payload           : Stream_Element_Array;
+      LSN               : Log_Sequence_Number;
+      Require_Full_Text : Boolean) return Database.Status.Result is
       P : Database.Storage.Pages.Page := From_Stream (Payload);
    begin
+      if Require_Full_Text and then not Is_Full_Text_Page (P) then
+         return Database.Status.Failure
+           (Database.Status.WAL_Corruption, "full-text WAL image contains non-full-text page");
+      end if;
       Set_Last_LSN (P, LSN);
       return Database.Storage.File_IO.Write_Page (F, P);
    end Restore_Page_Image;
@@ -1111,16 +1114,19 @@ package body Database.WAL is
            (Database.Status.IOError, "WAL validation failed");
    end Validate;
 
-   function Replay_Committed
+   function Recover
      (Database_Path : Wide_Wide_String;
-      F             : in out Database.Storage.File_IO.File_Handle) return Database.Status.Result is
-      Committed, Finished : Id_Sets.Set;
+      F             : in out Database.Storage.File_IO.File_Handle;
+      Summary       : out Recovery_Summary) return Database.Status.Result is
+      Finished      : Id_Sets.Set;
+      --  Transactions with an undo record or a begin record, which are undone unless they finished.
+      Undoable      : Id_Sets.Set;
       --  The length of the database file before each transaction's first write.
-      Begun               : Count_Maps.Map;
+      Begun         : Count_Maps.Map;
       --  One past the highest page a committed transaction writes.
-      Committed_End       : Natural := 0;
-      Keep                : Natural := Natural'Last;
-      R                   : Database.Status.Result;
+      Committed_End : Natural := 0;
+      Keep          : Natural := Natural'Last;
+      R             : Database.Status.Result;
 
       function Note
         (H       : Stream_Element_Array;
@@ -1130,14 +1136,19 @@ package body Database.WAL is
          pragma Unreferenced (LSN);
          Tx : constant Natural := Get_U32 (H, 17);
       begin
+         Summary.Max_Transaction_Id := Natural'Max (Summary.Max_Transaction_Id, Tx);
          case K is
             when Commit_Record =>
-               Committed.Include (Tx);
+               Summary.Committed.Include (Tx, Get_U32 (Payload, 0));
+               Summary.Max_Commit_Version := Natural'Max (Summary.Max_Commit_Version, Get_U32 (Payload, 0));
                Finished.Include (Tx);
             when Abort_Record =>
                Finished.Include (Tx);
             when Begin_Record =>
                Begun.Include (Tx, Get_U32 (Payload, 0));
+               Undoable.Include (Tx);
+            when Page_Undo_Record | Full_Text_Undo_Record =>
+               Undoable.Include (Tx);
             when others =>
                null;
          end case;
@@ -1152,22 +1163,14 @@ package body Database.WAL is
          Tx : constant Natural := Get_U32 (H, 17);
       begin
          case K is
-            when Page_Frame =>
-               if Committed.Contains (Tx) then
+            when Page_Frame | Full_Text_Redo_Record =>
+               if Summary.Committed.Contains (Tx) then
                   Committed_End := Natural'Max (Committed_End, Get_U32 (H, 21) + 1);
-                  return Apply_Page_Image (F, Payload, LSN, False);
+                  return Apply_Page_Image (F, Payload, LSN, Require_Full_Text => K = Full_Text_Redo_Record);
                end if;
-            when Page_Undo_Record =>
+            when Page_Undo_Record | Full_Text_Undo_Record =>
                if not Finished.Contains (Tx) then
-                  return Restore_Page_Image (F, Payload, LSN);
-               end if;
-            when Full_Text_Redo_Record =>
-               if Committed.Contains (Tx) then
-                  return Apply_Page_Image (F, Payload, LSN, True);
-               end if;
-            when Full_Text_Undo_Record =>
-               if not Committed.Contains (Tx) then
-                  return Apply_Page_Image (F, Payload, LSN, True);
+                  return Restore_Page_Image (F, Payload, LSN, Require_Full_Text => K = Full_Text_Undo_Record);
                end if;
             when others =>
                null;
@@ -1178,6 +1181,7 @@ package body Database.WAL is
       function Scan_Notes is new Scan_Records (Note);
       function Scan_Applies is new Scan_Records (Apply);
    begin
+      Summary := (others => <>);
       if not Exists (Database_Path) then
          return Database.Status.Success;
       end if;
@@ -1195,135 +1199,52 @@ package body Database.WAL is
       if not Database.Status.Is_Ok (R) then
          return R;
       end if;
+      Undoable.Difference (Finished);
+      if Undoable.Is_Empty then
+         return Database.Storage.File_IO.Flush (F);
+      end if;
 
-      for C in Begun.Iterate loop
-         if not Finished.Contains (Count_Maps.Key (C)) then
-            Keep := Natural'Min (Keep, Count_Maps.Element (C));
+      for Tx of Undoable loop
+         if Begun.Contains (Tx) then
+            Keep := Natural'Min (Keep, Begun.Element (Tx));
          end if;
       end loop;
-      if Keep /= Natural'Last then
-         Keep := Natural'Max (Keep, Committed_End);
-         if Database.Storage.File_IO.Page_Count (F) > Keep then
-            R := Database.Storage.File_IO.Truncate_To_Page_Count (F, Keep);
-            if not Database.Status.Is_Ok (R) then
-               return R;
-            end if;
-         end if;
+      Keep := Natural'Max (Keep, Committed_End);
+      if Keep < Database.Storage.File_IO.Page_Count (F) then
+         R := Database.Storage.File_IO.Truncate_To_Page_Count (F, Keep);
+      end if;
+      if Database.Status.Is_Ok (R) then
          R := Database.Storage.File_IO.Flush (F);
-         if not Database.Status.Is_Ok (R) then
-            return R;
+      end if;
+      if not Database.Status.Is_Ok (R) then
+         return R;
+      end if;
+      declare
+         W : WAL_Handle;
+         L : Log_Sequence_Number;
+      begin
+         R := Open (W, Database_Path);
+         for Tx of Undoable loop
+            exit when not Database.Status.Is_Ok (R);
+            R := Append_Abort (W, Tx, L);
+         end loop;
+         if Database.Status.Is_Ok (R) then
+            R := Flush (W);
          end if;
          declare
-            W : WAL_Handle;
-            L : Log_Sequence_Number;
+            CR : constant Database.Status.Result := Close (W);
          begin
-            R := Open (W, Database_Path);
-            for C in Begun.Iterate loop
-               exit when not Database.Status.Is_Ok (R);
-               if not Finished.Contains (Count_Maps.Key (C)) then
-                  R := Append_Abort (W, Count_Maps.Key (C), L);
-               end if;
-            end loop;
-            if Database.Status.Is_Ok (R) then
-               R := Flush (W);
-            end if;
-            declare
-               CR : constant Database.Status.Result := Close (W);
-            begin
-               if Database.Status.Is_Ok (R) then
-                  R := CR;
-               end if;
-            end;
-            if not Database.Status.Is_Ok (R) then
-               return R;
-            end if;
+            return (if Database.Status.Is_Ok (R) then CR else R);
          end;
-      end if;
-      return Database.Storage.File_IO.Flush (F);
+      end;
+   end Recover;
+
+   function Replay_Committed
+     (Database_Path : Wide_Wide_String;
+      F             : in out Database.Storage.File_IO.File_Handle) return Database.Status.Result is
+      Summary : Recovery_Summary;
+   begin
+      return Recover (Database_Path, F, Summary);
    end Replay_Committed;
-
-   function Max_Commit_Version (Database_Path : Wide_Wide_String) return Natural is
-      Max : Natural := 0;
-
-      function Note
-        (H       : Stream_Element_Array;
-         K       : Record_Kind;
-         LSN     : Log_Sequence_Number;
-         Payload : Stream_Element_Array) return Database.Status.Result is
-         pragma Unreferenced (H, LSN);
-      begin
-         if K = Commit_Record then
-            Max := Natural'Max (Max, Get_U32 (Payload, 0));
-         end if;
-         return Database.Status.Success;
-      end Note;
-
-      function Scan is new Scan_Records (Note);
-   begin
-      if Exists (Database_Path) then
-         declare
-            R : constant Database.Status.Result := Scan (Database_Path);
-            pragma Unreferenced (R);
-         begin
-            null;
-         end;
-      end if;
-      return Max;
-   end Max_Commit_Version;
-
-   function Max_Transaction_Id (Database_Path : Wide_Wide_String) return Natural is
-      Max : Natural := 0;
-
-      function Note
-        (H       : Stream_Element_Array;
-         K       : Record_Kind;
-         LSN     : Log_Sequence_Number;
-         Payload : Stream_Element_Array) return Database.Status.Result is
-         pragma Unreferenced (K, LSN, Payload);
-      begin
-         Max := Natural'Max (Max, Get_U32 (H, 17));
-         return Database.Status.Success;
-      end Note;
-
-      function Scan is new Scan_Records (Note);
-   begin
-      if Exists (Database_Path) then
-         declare
-            R : constant Database.Status.Result := Scan (Database_Path);
-            pragma Unreferenced (R);
-         begin
-            null;
-         end;
-      end if;
-      return Max;
-   end Max_Transaction_Id;
-
-   procedure Restore_Committed_Lifecycles (Database_Path : Wide_Wide_String) is
-      function Note
-        (H       : Stream_Element_Array;
-         K       : Record_Kind;
-         LSN     : Log_Sequence_Number;
-         Payload : Stream_Element_Array) return Database.Status.Result is
-         pragma Unreferenced (LSN);
-      begin
-         if K = Commit_Record then
-            --  Header offset 17 holds the transaction id; payload
-            --  offset 0 holds the commit version (see Append_Commit).
-            Database.MVCC.Mark_Committed (Get_U32 (H, 17), Get_U32 (Payload, 0));
-         end if;
-         return Database.Status.Success;
-      end Note;
-
-      function Scan is new Scan_Records (Note);
-   begin
-      if Exists (Database_Path) then
-         declare
-            R : constant Database.Status.Result := Scan (Database_Path);
-            pragma Unreferenced (R);
-         begin
-            null;
-         end;
-      end if;
-   end Restore_Committed_Lifecycles;
 
 end Database.WAL;

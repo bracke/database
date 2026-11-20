@@ -585,25 +585,18 @@ package body Database.Catalog is
       return Database.Storage.File_IO.Write_Page (DB.File, P);
    end Save;
 
-   function Save (Tx : in out Database.Transactions.Transaction) return Database.Status.Result is
-      DB      : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
-      P       : Database.Storage.Pages.Page;
-      Changed : Boolean;
-      R       : Database.Status.Result;
+   function Pending_Page
+     (DB      : in out Database.Handle;
+      P       : out Database.Storage.Pages.Page;
+      Changed : out Boolean) return Database.Status.Result
+   is
+      R : constant Database.Status.Result := Compare (DB, P, Changed);
    begin
-      if DB = null or else Database.Backend (DB.all) /= Database.Persistent_Backend then
-         return Database.Status.Success;
-      end if;
-      R := Compare (DB.all, P, Changed);
       if not Database.Status.Is_Ok (R) or else not Changed then
          return R;
       end if;
-      R := Injected_Write_Failure;
-      if not Database.Status.Is_Ok (R) then
-         return R;
-      end if;
-      return Database.Transactions.Write_Page (Tx, P);
-   end Save;
+      return Injected_Write_Failure;
+   end Pending_Page;
 
    function Load (DB : in out Database.Handle) return Database.Status.Result is
       use Database.Storage.Pages;

@@ -2,7 +2,6 @@
 with Database.Schema;
 with Database.Storage.Pages;
 with Database.Status;
-with Database.Transactions;
 with Database.Rows;
 with Database.Foreign_Keys;
 with Database.Check_Constraints;
@@ -68,11 +67,16 @@ package Database.Catalog is
    --  @return Status result; Row_Too_Large when the catalog no longer fits its page.
    function Save (DB : in out Database.Handle) return Database.Status.Result;
 
-   --  Write the catalog staged in memory to its page through the write transaction, which logs it like every other
-   --  page; nothing is written when the page already holds it. Commit calls this before its commit record.
-   --  @param Tx active write transaction of a database.
+   --  The catalog page a committing write transaction writes through its log: the catalog staged in memory, when its
+   --  page holds something else. Fault injection makes it fail as a catalog write would.
+   --  @param DB persistent database.
+   --  @param P the catalog page to write.
+   --  @param Changed False when the page already holds the catalog, so nothing is to be written.
    --  @return Status result; Row_Too_Large when the catalog does not fit its page.
-   function Save (Tx : in out Database.Transactions.Transaction) return Database.Status.Result;
+   function Pending_Page
+     (DB      : in out Database.Handle;
+      P       : out Database.Storage.Pages.Page;
+      Changed : out Boolean) return Database.Status.Result;
 
    --  Test whether the catalog page holds the catalog as it is in memory.
    --  @param DB database handle.

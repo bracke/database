@@ -15,6 +15,10 @@ package body Database.Indexes.BTree is
    function Too_Deep return Database.Status.Result is
      (Database.Status.Failure (Database.Status.Corrupt_Index, "B+ tree path exceeds the page count"));
 
+   --  Internal nodes are never merged and keep at least one separator, so every level at least doubles the pages
+   --  below it: a tree of 2**32 pages is at most 32 levels high. A deeper path can only come from a corrupt file.
+   Max_Height : constant := 64;
+
    function Corrupt (Message : Wide_Wide_String) return Database.Status.Result is
      (Database.Status.Failure (Database.Status.Corrupt_Index, Message));
 
@@ -31,6 +35,12 @@ package body Database.Indexes.BTree is
    function Not_Writable return Database.Status.Result is
      (Database.Status.Failure
         (Database.Status.Transaction_Error, "index pages change only in a write transaction of a persistent database"));
+
+   function Walk
+     (F           : in out Database.Storage.File_IO.File_Handle;
+      Root        : Page_Id;
+      Check_Order : Boolean;
+      Pages       : out Page_Id_Vectors.Vector) return Database.Status.Result;
 
    --  Whether Key lies on the inner side of Bound: above a lower bound (Low) or below an upper one.
    function Within_Bound
@@ -320,7 +330,8 @@ package body Database.Indexes.BTree is
       if DB = null then
          return Not_Writable;
       elsif Is_Built (DB.File, Root) then
-         R := Pages_Of (DB.File, Root, Pages);
+         --  Only the pages of a sound tree are freed; a corrupt one could name pages that other structures use.
+         R := Walk (DB.File, Root, Check_Order => True, Pages => Pages);
          if not Database.Status.Is_Ok (R) then
             return R;
          end if;
@@ -535,48 +546,16 @@ package body Database.Indexes.BTree is
       return R;
    end Range_Find;
 
-   function Pages_Of
-     (F     : in out Database.Storage.File_IO.File_Handle;
-      Root  : Database.Storage.Pages.Page_Id;
-      Pages : out Page_Id_Vectors.Vector) return Database.Status.Result
-   is
-      Seen : Page_Sets.Set;
-      Next : Natural := 0;
-      N    : Node;
-      R    : Database.Status.Result;
-   begin
-      Pages.Clear;
-      Pages.Append (Root);
-      if not Is_Built (F, Root) then
-         return Database.Status.Success;
-      end if;
-      Seen.Insert (Root);
-      while Next < Natural (Pages.Length) loop
-         R := Load (F, Pages (Next), N);
-         if not Database.Status.Is_Ok (R) then
-            return R;
-         end if;
-         if not N.Leaf then
-            for Position in -1 .. Natural (N.Items.Length) - 1 loop
-               declare
-                  Child : constant Page_Id := (if Position < 0 then N.First else N.Items (Position).Child);
-               begin
-                  if Seen.Contains (Child) then
-                     return Corrupt ("B+ tree page is reached twice");
-                  end if;
-                  Seen.Insert (Child);
-                  Pages.Append (Child);
-               end;
-            end loop;
-         end if;
-         Next := Next + 1;
-      end loop;
-      return Database.Status.Success;
-   end Pages_Of;
-
-   function Validate
-     (F    : in out Database.Storage.File_IO.File_Handle;
-      Root : Database.Storage.Pages.Page_Id) return Database.Status.Result
+   --  Walk the tree at a built Root depth first, listing every page in Pages, root first. Every walk checks that each
+   --  node is readable, that no page is reached twice, and that the tree is no higher than Max_Height. With Check_Order
+   --  it also checks the order of the entries: every node strictly ascending, every entry of a subtree between the
+   --  separators around it, all leaves at the same depth and chained left to right. Pages holds the pages reached
+   --  before a failure.
+   function Walk
+     (F           : in out Database.Storage.File_IO.File_Handle;
+      Root        : Page_Id;
+      Check_Order : Boolean;
+      Pages       : out Page_Id_Vectors.Vector) return Database.Status.Result
    is
       --  A separator bounding a subtree, or no bound.
       type Bound is record
@@ -585,7 +564,6 @@ package body Database.Indexes.BTree is
          Ref     : Database.Indexes.Row_Reference;
       end record;
 
-      Limit      : constant Natural := Database.Storage.File_IO.Page_Count (F);
       Seen       : Page_Sets.Set;
       Leaves     : Page_Id_Vectors.Vector;
       Links      : Page_Id_Vectors.Vector;
@@ -605,21 +583,10 @@ package body Database.Indexes.BTree is
            and then (if Lower then Order /= Database.Indexes.Less else Order = Database.Indexes.Less);
       end Respects;
 
-      function Visit (Id : Page_Id; Depth : Natural; Low, High : Bound) return Database.Status.Result is
-         N     : Node;
+      function Check_Entries (N : Node; Low, High : Bound) return Database.Status.Result is
          Order : Database.Indexes.Ordering;
          R     : Database.Status.Result;
       begin
-         if Depth > Limit then
-            return Too_Deep;
-         elsif Seen.Contains (Id) then
-            return Corrupt ("B+ tree page is reached twice");
-         end if;
-         Seen.Insert (Id);
-         R := Load (F, Id, N);
-         if not Database.Status.Is_Ok (R) then
-            return R;
-         end if;
          for I in 0 .. Natural (N.Items.Length) - 1 loop
             if I > 0 then
                R := Compare (N.Items (I - 1).Key, N.Items (I - 1).Ref, N.Items (I).Key, N.Items (I).Ref, Order);
@@ -633,10 +600,31 @@ package body Database.Indexes.BTree is
                return Corrupt ("B+ tree entry lies outside its parent's separators");
             end if;
          end loop;
+         return Database.Status.Success;
+      end Check_Entries;
+
+      function Visit (Id : Page_Id; Depth : Natural; Low, High : Bound) return Database.Status.Result is
+         N : Node;
+         R : Database.Status.Result;
+      begin
+         if Depth > Max_Height then
+            return Too_Deep;
+         elsif Seen.Contains (Id) then
+            return Corrupt ("B+ tree page is reached twice");
+         end if;
+         Seen.Insert (Id);
+         Pages.Append (Id);
+         R := Load (F, Id, N);
+         if Database.Status.Is_Ok (R) and then Check_Order then
+            R := Check_Entries (N, Low, High);
+         end if;
+         if not Database.Status.Is_Ok (R) then
+            return R;
+         end if;
          if N.Leaf then
             if Leaf_Depth < 0 then
                Leaf_Depth := Depth;
-            elsif Leaf_Depth /= Depth then
+            elsif Leaf_Depth /= Depth and then Check_Order then
                return Corrupt ("B+ tree leaves are at different depths");
             end if;
             Leaves.Append (Id);
@@ -662,16 +650,9 @@ package body Database.Indexes.BTree is
          return Database.Status.Success;
       end Visit;
 
-      R : Database.Status.Result;
+      R : constant Database.Status.Result := Visit (Root, 0, (others => <>), (others => <>));
    begin
-      if Root = Invalid_Page_Id then
-         return Corrupt ("invalid btree root page");
-      elsif not Is_Built (F, Root) then
-         return (if Is_Unwritten (F, Root) then Database.Status.Success
-                 else Corrupt ("index root is neither a B+ tree nor an unwritten page"));
-      end if;
-      R := Visit (Root, 0, (others => <>), (others => <>));
-      if not Database.Status.Is_Ok (R) then
+      if not Database.Status.Is_Ok (R) or else not Check_Order then
          return R;
       end if;
       --  The leaves, met left to right, are chained in that order.
@@ -681,6 +662,34 @@ package body Database.Indexes.BTree is
          end if;
       end loop;
       return Database.Status.Success;
+   end Walk;
+
+   function Pages_Of
+     (F     : in out Database.Storage.File_IO.File_Handle;
+      Root  : Database.Storage.Pages.Page_Id;
+      Pages : out Page_Id_Vectors.Vector) return Database.Status.Result is
+   begin
+      if not Is_Built (F, Root) then
+         Pages.Clear;
+         Pages.Append (Root);
+         return Database.Status.Success;
+      end if;
+      return Walk (F, Root, Check_Order => False, Pages => Pages);
+   end Pages_Of;
+
+   function Validate
+     (F    : in out Database.Storage.File_IO.File_Handle;
+      Root : Database.Storage.Pages.Page_Id) return Database.Status.Result
+   is
+      Pages : Page_Id_Vectors.Vector;
+   begin
+      if Root = Invalid_Page_Id then
+         return Corrupt ("invalid btree root page");
+      elsif not Is_Built (F, Root) then
+         return (if Is_Unwritten (F, Root) then Database.Status.Success
+                 else Corrupt ("index root is neither a B+ tree nor an unwritten page"));
+      end if;
+      return Walk (F, Root, Check_Order => True, Pages => Pages);
    end Validate;
 
 end Database.Indexes.BTree;

@@ -21,11 +21,12 @@ package Database.Catalog is
    --  Clear the catalog registry owned by the given handle state key.
    --  @param State_Key handle-owned state key selecting the catalog registry.
    procedure Clear (State_Key : Natural);
-   --  Public operation `Register`. See the package documentation for transaction, ownership, and error-result
-   --  semantics.
+   --  Register a table. A persistent table without a heap gets one, allocated directly; inside a write transaction
+   --  the caller allocates the heap through the transaction first, so a rollback returns it.
    --  @param DB database handle used by the operation.
    --  @param Schema schema metadata used for validation or registration.
-   --  @return Status result describing whether the operation succeeded.
+   --  @return Status result; Already_Exists for a registered name, Transaction_Error for a heap that would be
+   --  allocated beside an active write transaction.
    function Register
      (DB     : in out Database.Handle;
       Schema : in out Database.Schema.Table_Schema) return Database.Status.Result;
@@ -59,10 +60,25 @@ package Database.Catalog is
    function Stage_Update_Table
      (DB     : in out Database.Handle;
       Schema : Database.Schema.Table_Schema) return Database.Status.Result;
-   --  Public operation `Save`. See the package documentation for transaction, ownership, and error-result semantics.
+   --  Save the catalog to its page. While a write transaction is active the change is only checked to fit and stays
+   --  staged in memory: the transaction writes the page through its log when it commits, and a rollback reloads the
+   --  catalog from the page. Catalog changes are therefore made only inside the write transaction, never beside it.
    --  @param DB database handle used by the operation.
-   --  @return Result produced by the function.
+   --  @return Status result; Row_Too_Large when the catalog no longer fits its page.
    function Save (DB : in out Database.Handle) return Database.Status.Result;
+
+   --  Encode the catalog as its page.
+   --  @param DB persistent database.
+   --  @param P the catalog page.
+   --  @return Status result; Row_Too_Large when the catalog does not fit its page.
+   function Encode
+     (DB : in out Database.Handle;
+      P  : out Database.Storage.Pages.Page) return Database.Status.Result;
+
+   --  Test whether the catalog page holds the catalog as it is in memory.
+   --  @param DB database handle.
+   --  @return True when nothing is staged, and always for a database that is not persistent.
+   function Is_Saved (DB : in out Database.Handle) return Boolean;
    --  Public operation `Load`. See the package documentation for transaction, ownership, and error-result semantics.
    --  @param DB database handle used by the operation.
    --  @return Result produced by the function.

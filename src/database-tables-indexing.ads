@@ -14,7 +14,7 @@ private package Database.Tables.Indexing is
    --  @param Schema table schema.
    --  @param Row_Value row.
    --  @param Column column id.
-   --  @return The value, or Null_Value when the row has no such column.
+   --  @return The value, or Null_Value when the schema has no such column or the row was stored before it was added.
    function Index_Value
      (Schema    : Database.Schema.Table_Schema;
       Row_Value : Database.Rows.Row;

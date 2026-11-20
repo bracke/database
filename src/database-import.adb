@@ -848,6 +848,12 @@ package body Database.Import is
                S.Primary_Index_Root := 0;
                S.Indexes.Clear;
                S.Primary_Key_Columns := Imported_PK_Columns;
+               R := Database.Storage.Table_Heap.Create_Heap (Tx, First);
+               if not Database.Status.Is_Ok (R) then
+                  Ada.Streams.Stream_IO.Close (F);
+                  return R;
+               end if;
+               S.Heap_First_Page := Natural (First);
                R := Database.Catalog.Register (DB.all, S);
                if not Database.Status.Is_Ok (R) then
                   Ada.Streams.Stream_IO.Close (F);

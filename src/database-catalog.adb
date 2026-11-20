@@ -205,6 +205,11 @@ package body Database.Catalog is
       Schema.Table_Id :=
         Database.Catalog.Rules.Next_Table_Id (Natural (State.all.Tables.Length));
       if Database.Backend (DB) = Database.Persistent_Backend and then Schema.Heap_First_Page = 0 then
+         if DB.Lock.Writer_Active then
+            return Database.Status.Failure
+              (Database.Status.Transaction_Error,
+               "a table registered in a write transaction needs a heap allocated through it");
+         end if;
          declare
             First : Database.Storage.Pages.Page_Id;
             R : Database.Status.Result;
@@ -331,23 +336,16 @@ package body Database.Catalog is
       end;
    end Get_Text;
 
-   function Save (DB : in out Database.Handle) return Database.Status.Result is
+   function Encode
+     (DB : in out Database.Handle;
+      P  : out Database.Storage.Pages.Page) return Database.Status.Result
+   is
       use Database.Storage.Pages;
-      P : Page;
       B : Byte_Array (0 .. Payload_Capacity - 1) := [others => 0];
       Pos : Natural := 0;
       Key   : constant Natural := Database.Catalog_State_Key (DB);
       State : constant Catalog_State_Access := State_For (Key);
    begin
-      if Database.Backend (DB) /= Database.Persistent_Backend then
-         return Database.Status.Success;
-      end if;
-      if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Partial_Metadata_Persistence) then
-         return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Partial_Metadata_Persistence);
-      end if;
-      if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Allocation_Failure) then
-         return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Allocation_Failure);
-      end if;
       Initialize (P, Catalog_Page_Id, Catalog_Page);
       Put_U32 (B, Pos, Natural (State.all.Tables.Length));
       for S of State.all.Tables loop
@@ -527,9 +525,41 @@ package body Database.Catalog is
             Set_Payload (P, D);
          end;
       end if;
-      return Database.Storage.File_IO.Write_Page (DB.File, P);
+      return Database.Status.Success;
    exception
       when others => return Database.Status.Failure (Database.Status.Row_Too_Large, "catalog exceeds one page");
+   end Encode;
+
+   function Is_Saved (DB : in out Database.Handle) return Boolean is
+      Wanted, Stored : Database.Storage.Pages.Page;
+   begin
+      return Database.Backend (DB) /= Database.Persistent_Backend
+        or else (Database.Status.Is_Ok (Encode (DB, Wanted))
+                 and then Database.Status.Is_Ok
+                   (Database.Storage.File_IO.Read_Page
+                      (DB.File, Catalog_Page_Id, Database.Storage.Pages.Catalog_Page, Stored))
+                 and then Database.Storage.Pages.Payload (Wanted) = Database.Storage.Pages.Payload (Stored));
+   end Is_Saved;
+
+   function Save (DB : in out Database.Handle) return Database.Status.Result is
+      P : Database.Storage.Pages.Page;
+      R : Database.Status.Result;
+   begin
+      if Database.Backend (DB) /= Database.Persistent_Backend then
+         return Database.Status.Success;
+      end if;
+      if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Partial_Metadata_Persistence) then
+         return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Partial_Metadata_Persistence);
+      end if;
+      if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Allocation_Failure) then
+         return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Allocation_Failure);
+      end if;
+      --  Encoding even a change that is only staged reports a catalog that has outgrown its page at the change.
+      R := Encode (DB, P);
+      if not Database.Status.Is_Ok (R) or else DB.Lock.Writer_Active then
+         return R;
+      end if;
+      return Database.Storage.File_IO.Write_Page (DB.File, P);
    end Save;
 
    function Load (DB : in out Database.Handle) return Database.Status.Result is

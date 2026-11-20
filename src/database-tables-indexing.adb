@@ -1,12 +1,9 @@
-with Ada.Containers;
 with Database.Catalog;
 with Database.Indexes.BTree;
 with Database.Storage.Table_Heap;
 with Database.Types;
 
 package body Database.Tables.Indexing is
-   use type Ada.Containers.Count_Type;
-   use type Database.Storage.Pages.Page_Id;
    use type Database.Types.Value_Kind;
 
    function Index_Value
@@ -15,12 +12,11 @@ package body Database.Tables.Indexing is
       Column    : Natural) return Database.Values.Value is
       Pos : constant Natural := Database.Schema.Find_Column_Id_Position (Schema, Column);
    begin
-      if Pos = Natural'Last then
+      --  A row stored before its column was added holds no value for it.
+      if Pos = Natural'Last or else Pos >= Database.Rows.Column_Count (Row_Value) then
          return Database.Values.Null_Value;
       end if;
       return Database.Rows.Get (Row_Value, Pos);
-   exception
-      when others => return Database.Values.Null_Value;
    end Index_Value;
 
    --  The column a table's primary index is keyed on, or Natural'Last for a table without a primary key.
@@ -46,7 +42,7 @@ package body Database.Tables.Indexing is
         (Kind => Database.Indexes.BTree.Inclusive, Key => Key);
    begin
       Ref := Database.Indexes.Invalid_Row_Reference;
-      if Root = Database.Storage.Pages.Invalid_Page_Id or else Root = 0 then
+      if Root = Database.Storage.Pages.Invalid_Page_Id then
          return Database.Status.Failure (Database.Status.Not_Found, "row not found");
       end if;
       if Database.Indexes.BTree.Is_Built (DB.File, Root) then

@@ -202,10 +202,6 @@ private
       Before_Image_Ids    : Page_Id_Vectors.Vector;
       Before_Image_Pages  : Page_Vectors.Vector;
       Heap_Tails          : Heap_Tail_Maps.Map;
-      --  The catalog page as the transaction found it. The catalog is saved outside the page log, so a rollback
-      --  restores it from here.
-      Catalog_Before      : Database.Storage.Pages.Page;
-      Catalog_Saved       : Boolean := False;
       Original_Page_Count : Natural := 0;
       Transaction_Id      : Database.Versioning.Transaction_Id := 0;
       Lock_Held           : Boolean := False;

@@ -482,7 +482,7 @@ package body Secondary_Index_Tests is
       --  A rebuild empties the tree in place and frees its other pages, which the next rebuild reuses.
       declare
          Root  : constant Database.Storage.Pages.Page_Id := S.Indexes.Element (0).Root_Page;
-         Pages : Natural;
+         Pages : Natural := 0;
       begin
          for Round in 1 .. 2 loop
             Database.Transactions.Begin_Write (DB, Tx);
@@ -668,6 +668,163 @@ package body Secondary_Index_Tests is
       Remove_Files (Name);
    end Rollback_Restores_Catalog;
 
+   --  A table registered in a rolled-back transaction leaves neither a catalog entry nor a page behind, whether or
+   --  not the transaction wrote rows first; a committed registration survives a reopen.
+   procedure Rollback_Removes_Registration
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Name   : constant String := "secondary_rollback_register.database";
+      Path   : constant Wide_Wide_String := "secondary_rollback_register.database";
+      DB     : Database.Handle;
+      Tx     : Database.Transactions.Transaction;
+      S      : Database.Schema.Table_Schema;
+      Orders : Database.Schema.Table_Schema;
+      Found  : Database.Schema.Table_Schema;
+      R      : Database.Status.Result;
+
+      procedure New_Orders is
+      begin
+         Orders := (others => <>);
+         Add_User_Schema (Orders);
+         Orders.Name := Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("orders");
+      end New_Orders;
+   begin
+      Remove_Files (Name);
+      Database.Create (DB, Path);
+      Add_User_Schema (S);
+      R := Users.Register (DB, S);
+      Assert (Database.Status.Is_Ok (R), "register without a transaction failed");
+
+      for Writes_First in Boolean loop
+         New_Orders;
+         Database.Transactions.Begin_Write (DB, Tx);
+         if Writes_First then
+            R := Users.Insert (Tx, DB, S, Numbered (1));
+            Assert (Database.Status.Is_Ok (R), "insert failed");
+         end if;
+         R := Users.Register (Tx, DB, Orders);
+         Assert (Database.Status.Is_Ok (R), "register in a transaction failed");
+         R := Database.Transactions.Rollback (Tx);
+         Assert (Database.Status.Is_Ok (R), "rollback failed");
+         R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "orders", Found);
+         Assert (R.Code = Database.Status.Not_Found, "a rolled-back table is not in the catalog");
+         Expect_Healthy (DB, "a rolled-back registration leaves no orphan page");
+      end loop;
+
+      New_Orders;
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Users.Register (Tx, DB, Orders);
+      Assert (Database.Status.Is_Ok (R), "register in a transaction failed");
+      R := Users.Insert (Tx, DB, Orders, Numbered (7));
+      Assert (Database.Status.Is_Ok (R), "insert into the new table failed");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "commit failed");
+      Database.Close (DB);
+      Database.Open (DB, Path);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "orders", Found);
+      Assert (Database.Status.Is_Ok (R), "a committed table survives a reopen");
+      Expect_Healthy (DB, "a committed registration is consistent after a reopen");
+      Database.Close (DB);
+
+      --  Checking a registered table is a lookup, which a read-only handle allows.
+      Database.Open_Read_Only (DB, Path);
+      New_Orders;
+      R := Users.Register (DB, Orders);
+      Assert (Database.Status.Is_Ok (R), "a registered table is checked through a read-only handle");
+      Assert (Orders.Heap_First_Page = Found.Heap_First_Page, "the check returns the registered schema");
+      Database.Close (DB);
+      Remove_Files (Name);
+   end Rollback_Removes_Registration;
+
+   --  A tree deeper than any real one is reported as corrupt rather than walked, and rebuilding the index replaces it.
+   procedure Corrupt_Tree_Is_Replaced
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      use type Database.Storage.Pages.Page_Id;
+      Name  : constant String := "secondary_corrupt_tree.database";
+      Path  : constant Wide_Wide_String := "secondary_corrupt_tree.database";
+      Depth : constant := 70;
+      DB    : Database.Handle;
+      Tx    : Database.Transactions.Transaction;
+      S     : Database.Schema.Table_Schema;
+      Root  : Database.Storage.Pages.Page_Id;
+      R     : Database.Status.Result;
+   begin
+      Remove_Files (Name);
+      Database.Create (DB, Path);
+      Add_User_Schema (S);
+      R := Users.Register (DB, S);
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Users.Create_Index (Tx, DB, S, "age_index", 3, False);
+      for Id in 1 .. 20 loop
+         R := Users.Insert (Tx, DB, S, Numbered (Id));
+      end loop;
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "setup commit failed");
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
+      Root := S.Indexes.First_Element.Root_Page;
+      Database.Close (DB);
+
+      --  Hang a chain of internal nodes with one child each below the root.
+      declare
+         F     : Database.Storage.File_IO.File_Handle;
+         Page  : Database.Storage.Pages.Page;
+         Pages : Database.Indexes.BTree.Page_Id_Vectors.Vector;
+         First : Database.Storage.Pages.Page_Id;
+
+         procedure Put_Node (Id, Child : Database.Storage.Pages.Page_Id; Leaf : Boolean) is
+            C : constant Natural := Natural (Child);
+         begin
+            Database.Storage.Pages.Initialize
+              (Page, Id,
+               (if Leaf then Database.Storage.Pages.BTree_Leaf_Page else Database.Storage.Pages.BTree_Internal_Page));
+            Database.Storage.Pages.Set_Payload
+              (Page,
+               [Character'Pos ('B'), Character'Pos ('P'), Character'Pos ('T'), Character'Pos ('1'),
+                (if Leaf then 0 else 1), 0, 0,
+                Database.Byte (C / 16#1000000#), Database.Byte (C / 16#10000# mod 256),
+                Database.Byte (C / 16#100# mod 256), Database.Byte (C mod 256)]);
+            R := Database.Storage.File_IO.Write_Page (F, Page);
+            Assert (Database.Status.Is_Ok (R), "corrupt node must be written");
+         end Put_Node;
+      begin
+         R := Database.Storage.File_IO.Open (F, Path);
+         Assert (Database.Status.Is_Ok (R), "file must open");
+         First := Database.Storage.Pages.Page_Id (Database.Storage.File_IO.Page_Count (F));
+         for I in 0 .. Depth - 1 loop
+            Put_Node (First + Database.Storage.Pages.Page_Id (I), First + Database.Storage.Pages.Page_Id (I + 1),
+                      Leaf => False);
+         end loop;
+         Put_Node (First + Depth, Database.Storage.Pages.Invalid_Page_Id, Leaf => True);
+         Put_Node (Root, First, Leaf => False);
+         R := Database.Indexes.BTree.Validate (F, Root);
+         Assert (R.Code = Database.Status.Corrupt_Index, "a tree deeper than any real one is corrupt");
+         R := Database.Indexes.BTree.Pages_Of (F, Root, Pages);
+         Assert (R.Code = Database.Status.Corrupt_Index, "listing the pages of a too deep tree fails");
+         R := Database.Storage.File_IO.Close (F);
+      end;
+
+      Database.Open (DB, Path);
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Users.Rebuild_Index (Tx, DB, S, S.Indexes.First_Element.Id);
+      Assert (Database.Status.Is_Ok (R), "rebuilding a corrupt index failed");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "rebuild commit failed");
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), "users", S);
+      Assert (S.Indexes.First_Element.Root_Page /= Root, "a corrupt tree gets a new root");
+      Root := S.Indexes.First_Element.Root_Page;
+      Database.Transactions.Begin_Write (DB, Tx);
+      Assert (Count_Where (Tx, DB, S, 3, Database.Values.From_Integer (Numbered (5).Age)) >= 1,
+              "the rebuilt index finds its rows");
+      R := Database.Transactions.Commit (Tx);
+      Database.Close (DB);
+      Assert (Valid (Path, Root), "the rebuilt index is valid");
+      Remove_Files (Name);
+   end Corrupt_Tree_Is_Replaced;
+
    overriding
    procedure Register_Tests (T : in out Case_Type) is
       use AUnit.Test_Cases.Registration;
@@ -687,5 +844,7 @@ package body Secondary_Index_Tests is
       Register_Routine (T, Unbuilt_Index_Is_Rebuilt'Access, "unbuilt index bypassed then rebuilt");
       Register_Routine (T, Rollback_Restores_Index'Access, "rollback restores index pages");
       Register_Routine (T, Rollback_Restores_Catalog'Access, "rollback restores the catalog and allocation");
+      Register_Routine (T, Rollback_Removes_Registration'Access, "rollback removes a table registration");
+      Register_Routine (T, Corrupt_Tree_Is_Replaced'Access, "a corrupt tree is rejected and replaced");
    end Register_Tests;
 end Secondary_Index_Tests;

@@ -94,15 +94,15 @@ the root splits, its two halves move to new pages and the root becomes their
 parent. Nodes split when full and are not merged; a leaf emptied by deletes
 stays in the tree. Every node is written through its transaction, so index
 changes are logged in the WAL and rolled back with the transaction. Rebuilding
-an index empties its tree in place: the root keeps its page and the other pages
-become free pages.
+an index empties a sound tree in place: the root keeps its page and the other
+pages become free pages. A tree that fails validation is replaced by a new root
+instead, and its pages are left alone, because pages named by a corrupt tree
+cannot be told apart from pages other structures use.
 
 Pages a transaction allocates or frees are written through the transaction as
 well. A rollback therefore returns a reused free page to the free list, removes
 pages added at the end of the file, and restarts the allocator from the restored
-file. The catalog page (page 1) is saved outside the page log; a write
-transaction keeps the catalog page it started with, and a rollback restores it,
-so a rolled-back index or root change leaves no catalog entry behind.
+file.
 
 Earlier versions kept index entries in process memory and wrote nothing to the
 root page they allocated. Such a root (a leaf page without the marker) is an
@@ -115,7 +115,10 @@ one, which the catalog records.
 Index validation checks that every node is readable, carries the marker, and
 holds its entries in strictly ascending order; that every entry of a subtree
 lies between the separators around it; that all leaves are at the same depth
-and chained left to right; and that no page is reached twice. An unwritten
+and chained left to right; that no page is reached twice; and that the tree is
+at most 64 levels high. Internal nodes are never merged and keep at least one
+separator, so a real tree of 2^32 pages has at most 32 levels; a deeper path
+comes from a corrupt file and is reported instead of followed. An unwritten
 root is valid; any other root without the marker is corrupt. The integrity
 check marks every index page as reachable. The SPARK model in
 `Database.Indexes.BTree_Invariants` describes trees of integer keys with fixed
@@ -129,6 +132,15 @@ entered.
 The catalog records table names, stable table ids, schema versions, stable column
 ids, heap roots, primary index roots, and secondary index metadata. Schema
 changes update catalog metadata transactionally.
+
+While a write transaction is active, catalog changes are staged in memory. They
+are checked to fit the page when they are made, and the commit writes the catalog
+page through the transaction, so it is logged in the WAL, recovered after a crash,
+and restored by a rollback like any other page; a rollback reloads the catalog
+from its page. Only a database without an active writer, such as one being
+created, opened, or closed, writes the catalog page directly. A table registered
+in a write transaction gets its heap page through that transaction; registering a
+table without one runs in a write transaction of its own.
 
 ## Write-ahead log
 

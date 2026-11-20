@@ -69,7 +69,6 @@ package body Database.Transactions is
       Tx.Before_Image_Ids.Clear;
       Tx.Before_Image_Pages.Clear;
       Tx.Heap_Tails.Clear;
-      Tx.Catalog_Saved := False;
       Tx.Original_Page_Count := 0;
       Tx.Transaction_Id := 0;
       Tx.Lock_Held := False;
@@ -123,11 +122,6 @@ package body Database.Transactions is
       Tx.Lock_Held := True;
       Id_Counter.Next (Tx.Transaction_Id);
       Tx.Started_At_Version := Database.Commit_Version (DB);
-      if Mode_In = Read_Write and then Database.Backend (DB) = Database.Persistent_Backend then
-         Tx.Catalog_Saved := Database.Status.Is_Ok
-           (Database.Storage.File_IO.Read_Page
-              (DB.File, Database.Catalog.Catalog_Page_Id, Database.Storage.Pages.Catalog_Page, Tx.Catalog_Before));
-      end if;
       Database.MVCC.Register_Snapshot (Tx.Started_At_Version);
       Database.MVCC.Register_Transaction (Tx.Transaction_Id);
       Tx.Last := Database.Status.Success;
@@ -207,6 +201,9 @@ package body Database.Transactions is
       Page : Database.Storage.Pages.Page;
       R    : Database.Status.Result;
    begin
+      if Tx.Current_State /= Active or else Tx.DB = null then
+         return Database.Status.Failure (Database.Status.Transaction_Error, "transaction not active");
+      end if;
       Database.Storage.Pages.Initialize (Page, Id, Database.Storage.Pages.Free_Page);
       R := Write_Page (Tx, Page);
       if not Database.Status.Is_Ok (R) then
@@ -437,6 +434,22 @@ package body Database.Transactions is
       return Database.Status.Success;
    end Validate_Deferred_Constraints;
 
+   --  Write the catalog staged in memory to its page through the transaction, unless the page already holds it.
+   function Save_Catalog (Tx : in out Transaction) return Database.Status.Result is
+      Wanted, Stored : Database.Storage.Pages.Page;
+      R              : constant Database.Status.Result := Database.Catalog.Encode (Tx.DB.all, Wanted);
+   begin
+      if not Database.Status.Is_Ok (R)
+        or else (Database.Status.Is_Ok
+                   (Database.Storage.File_IO.Read_Page
+                      (Tx.DB.File, Database.Catalog.Catalog_Page_Id, Database.Storage.Pages.Catalog_Page, Stored))
+                 and then Database.Storage.Pages.Payload (Wanted) = Database.Storage.Pages.Payload (Stored))
+      then
+         return R;
+      end if;
+      return Write_Page (Tx, Wanted);
+   end Save_Catalog;
+
    function Commit (Tx : in out Transaction) return Database.Status.Result is
       R : Database.Status.Result;
    begin
@@ -451,6 +464,15 @@ package body Database.Transactions is
          Tx.Last := Database.Status.Failure (Database.Status.Transaction_Error, "transaction not active");
          return Tx.Last;
       end if;
+      if Tx.Current_Mode = Read_Write and then Database.Backend (Tx.DB.all) = Database.Persistent_Backend then
+         --  Catalog changes are staged in memory until here, so the page is logged like every other page.
+         R := Save_Catalog (Tx);
+         if not Database.Status.Is_Ok (R) then
+            Tx.Current_State := Failed;
+            Tx.Last := R;
+            return R;
+         end if;
+      end if;
       Tx.Current_State := Committing;
       R := Validate_Deferred_Constraints (Tx);
       if not Database.Status.Is_Ok (R) then
@@ -459,12 +481,6 @@ package body Database.Transactions is
          return R;
       end if;
       if Tx.Current_Mode = Read_Write and then Database.Backend (Tx.DB.all) = Database.Persistent_Backend then
-         R := Database.Catalog.Save (Tx.DB.all);
-         if not Database.Status.Is_Ok (R) then
-            Tx.Current_State := Failed;
-            Tx.Last := R;
-            return R;
-         end if;
          R := Database.Storage.File_IO.Flush (Tx.DB.File);
          if not Database.Status.Is_Ok (R) then
             Tx.Current_State := Failed;
@@ -532,17 +548,6 @@ package body Database.Transactions is
       return Tx.Last;
    end Commit;
 
-   --  Whether the catalog page differs from the one the transaction started with.
-   function Catalog_Changed (Tx : in out Transaction) return Boolean is
-      Current : Database.Storage.Pages.Page;
-   begin
-      return Tx.Catalog_Saved
-        and then (not Database.Status.Is_Ok
-                    (Database.Storage.File_IO.Read_Page
-                       (Tx.DB.File, Database.Catalog.Catalog_Page_Id, Database.Storage.Pages.Catalog_Page, Current))
-                  or else Current.Buffer /= Tx.Catalog_Before.Buffer);
-   end Catalog_Changed;
-
    function Rollback (Tx : in out Transaction) return Database.Status.Result is
       R : Database.Status.Result;
    begin
@@ -561,16 +566,8 @@ package body Database.Transactions is
       Tx.Current_State := Rolling_Back;
       if Tx.Current_Mode = Read_Write
         and then Database.Backend (Tx.DB.all) = Database.Persistent_Backend
-        and then (Tx.Has_Writes or else Catalog_Changed (Tx))
+        and then (Tx.Has_Writes or else not Database.Catalog.Is_Saved (Tx.DB.all))
       then
-         if Tx.Catalog_Saved then
-            R := Database.Storage.File_IO.Write_Page (Tx.DB.File, Tx.Catalog_Before);
-            if not Database.Status.Is_Ok (R) then
-               Tx.Current_State := Failed;
-               Tx.Last := R;
-               return R;
-            end if;
-         end if;
          if not Tx.Before_Image_Pages.Is_Empty then
             for I in 0 .. Natural (Tx.Before_Image_Pages.Length) - 1 loop
                R := Database.Storage.File_IO.Write_Page

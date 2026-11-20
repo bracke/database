@@ -27,8 +27,7 @@ package Database.Storage.Table_Heap is
    package Reclaimed_Row_Vectors is new Ada.Containers.Indefinite_Vectors
      (Index_Type => Natural, Element_Type => Reclaimed_Row);
 
-   --  Public operation `Create_Heap`. See the package documentation for transaction, ownership, and error-result
-   --  semantics.
+   --  Create an empty heap outside any transaction, writing its page directly.
    --  @param F f argument supplied to the operation.
    --  @param Allocator allocator argument supplied to the operation.
    --  @param First_Page first page argument supplied to the operation.
@@ -36,6 +35,14 @@ package Database.Storage.Table_Heap is
    function Create_Heap
      (F          : in out Database.Storage.File_IO.File_Handle;
       Allocator  : in out Database.Storage.Free_List.Allocator;
+      First_Page : out Database.Storage.Pages.Page_Id) return Database.Status.Result;
+
+   --  Create an empty heap through a write transaction, so a rollback returns its page.
+   --  @param Tx write transaction of a persistent database.
+   --  @param First_Page first page of the new heap.
+   --  @return Status result describing whether the operation succeeded.
+   function Create_Heap
+     (Tx         : in out Database.Transactions.Transaction;
       First_Page : out Database.Storage.Pages.Page_Id) return Database.Status.Result;
 
    --  Append a row as an uncommitted version of the transaction. New heap pages are allocated through the

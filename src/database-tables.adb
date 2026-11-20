@@ -74,7 +74,9 @@ package body Database.Tables is
          return S;
       end Current_Schema;
 
-      function Register
+      --  Check a table that is already registered against Schema and replace Schema by it; Not_Found for a table
+      --  that is not registered yet.
+      function Registered
         (DB     : in out Database.Handle;
          Schema : in out Database.Schema.Table_Schema) return Database.Status.Result is
          Existing : Database.Schema.Table_Schema;
@@ -110,22 +112,61 @@ package body Database.Tables is
                end loop;
             end if;
             Schema := Existing;
-            return Database.Status.Success;
-         elsif R.Code /= Database.Status.Not_Found then
-            return R;
          end if;
-         return Database.Catalog.Register (DB, Schema);
-      end Register;
+         return R;
+      end Registered;
 
       function Register
         (Tx     : in out Database.Transactions.Transaction;
          DB     : in out Database.Handle;
          Schema : in out Database.Schema.Table_Schema) return Database.Status.Result is
+         R : Database.Status.Result;
       begin
          if not Write_Tx_Ok (Tx) then
             return Read_Only_Write_Error;
          end if;
-         return Register (DB, Schema);
+         R := Registered (DB, Schema);
+         if R.Code /= Database.Status.Not_Found then
+            return R;
+         end if;
+         --  The heap is allocated through the transaction, so a rollback returns its page with the catalog entry.
+         if Database.Backend (DB) = Database.Persistent_Backend and then Schema.Heap_First_Page = 0 then
+            declare
+               First : Database.Storage.Pages.Page_Id;
+            begin
+               R := Database.Storage.Table_Heap.Create_Heap (Tx, First);
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
+               Schema.Heap_First_Page := Natural (First);
+            end;
+         end if;
+         return Database.Catalog.Register (DB, Schema);
+      end Register;
+
+      function Register
+        (DB     : in out Database.Handle;
+         Schema : in out Database.Schema.Table_Schema) return Database.Status.Result is
+         Tx : Database.Transactions.Transaction;
+         R  : Database.Status.Result;
+      begin
+         --  A registered table is only looked up, so a read-only handle can check its tables.
+         R := Registered (DB, Schema);
+         if R.Code /= Database.Status.Not_Found then
+            return R;
+         end if;
+         --  The write lock keeps the change apart from any other writer's transaction; the transactional Register
+         --  checks again under it.
+         Database.Transactions.Begin_Write (DB, Tx);
+         if not Database.Transactions.Is_Active (Tx) then
+            return Database.Transactions.Result (Tx);
+         end if;
+         R := Register (Tx, DB, Schema);
+         if Database.Status.Is_Ok (R) then
+            return Database.Transactions.Commit (Tx);
+         end if;
+         Database.Transactions.Rollback (Tx);
+         return R;
       end Register;
 
       function Column_Exists
@@ -536,13 +577,12 @@ package body Database.Tables is
          if Database.Backend (DB) /= Database.Persistent_Backend then
             return Database.Status.Success;
          end if;
-         --  The tree is emptied in place, freeing its other pages, so the catalog keeps its root; only a root that
-         --  holds no index at all is replaced.
+         --  A sound tree is emptied in place, freeing its other pages, so the catalog keeps its root. A corrupt tree,
+         --  or a root that holds no index at all, is replaced; the pages of a corrupt tree are left alone, because
+         --  they cannot be told apart from pages that other structures use.
          Root := Target.Root_Page;
-         if Database.Indexes.BTree.Is_Built (DB.File, Root) or else Database.Indexes.BTree.Is_Unwritten (DB.File, Root)
-         then
-            R := Database.Indexes.BTree.Clear (Tx, Root);
-         else
+         R := Database.Indexes.BTree.Clear (Tx, Root);
+         if R.Code = Database.Status.Corrupt_Index then
             R := Database.Indexes.BTree.Create (Tx, Root);
          end if;
          if Database.Status.Is_Ok (R) then

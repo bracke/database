@@ -40,16 +40,17 @@ package Database.Tables is
       --  Public type `Cursor`.
       type Cursor is private;
 
-      --  Public operation `Register`. See the package documentation for transaction, ownership, and error-result
-      --  semantics.
+      --  Register a table in a write transaction of its own, or check an already registered one against Schema.
+      --  Checking needs no transaction. Registering waits for any other write transaction to end, so a caller that
+      --  holds one uses the overload with a transaction instead.
       --  @param DB database handle used by the operation.
       --  @param Schema schema metadata used for validation or registration.
       --  @return Status result describing whether the operation succeeded.
       function Register
         (DB     : in out Database.Handle;
          Schema : in out Database.Schema.Table_Schema) return Database.Status.Result;
-      --  Public operation `Register`. See the package documentation for transaction, ownership, and error-result
-      --  semantics.
+      --  Register a table, or check an already registered one against Schema, as part of a write transaction; a
+      --  rollback removes the table and returns its heap page.
       --  @param Tx transaction object that scopes the operation.
       --  @param DB database handle used by the operation.
       --  @param Schema schema metadata used for validation or registration.

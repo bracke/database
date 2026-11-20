@@ -67,6 +67,17 @@ package body Database.Storage.Table_Heap is
       return Database.Status.Success;
    end Create_Heap;
 
+   function Create_Heap
+     (Tx         : in out Database.Transactions.Transaction;
+      First_Page : out Page_Id) return Database.Status.Result
+   is
+      P : Page;
+      R : constant Database.Status.Result := Database.Transactions.Allocate_Page (Tx, Table_Heap_Page, P);
+   begin
+      First_Page := (if Database.Status.Is_Ok (R) then Get_Id (P) else Invalid_Page_Id);
+      return R;
+   end Create_Heap;
+
    function Append_Row
      (Tx         : in out Database.Transactions.Transaction;
       F          : in out Database.Storage.File_IO.File_Handle;

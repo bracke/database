@@ -52,7 +52,11 @@ full-text maintenance depends on the size of the table. The page allocator scans
 the file for free pages once per open and checks a remembered free page again
 before reusing it. Inside a transaction, pages are allocated and freed through
 the transaction (`Transactions.Allocate_Page` and `Transactions.Free_Page`), so
-a rollback undoes them.
+a rollback undoes them. Catalog changes made in a write transaction are staged
+in memory and written by its commit through the same page log; `Catalog.Save`
+writes the page directly only when no writer is active. Every catalog change
+therefore belongs to a write transaction: `Typed.Register` without one starts its
+own, and waits for any other writer to finish.
 
 Index maintenance shared by all typed tables (lookups by key, filling an index
 from its table, and building indexes left unbuilt by earlier versions) lives in

@@ -139,10 +139,10 @@ package Database.Indexes.BTree is
       Root : Database.Storage.Pages.Page_Id) return Boolean;
 
    --  Make Root an empty built index, keeping its page, so the caller can fill it from the table. Pages of the tree
-   --  below a built root are freed.
+   --  below a built root are freed once the whole tree has been validated.
    --  @param Tx write transaction.
    --  @param Root root page of a built or unwritten index.
-   --  @return Status result; Corrupt_Index for any other root.
+   --  @return Status result; Corrupt_Index for any other root and for a built tree that fails Validate.
    function Clear
      (Tx   : in out Database.Transactions.Transaction;
       Root : Database.Storage.Pages.Page_Id) return Database.Status.Result;
@@ -150,8 +150,9 @@ package Database.Indexes.BTree is
    --  List every page of an index: its root, internal nodes, and leaves.
    --  @param F database file.
    --  @param Root root page of the index.
-   --  @param Pages pages in breadth-first order; only Root for an unbuilt index.
-   --  @return Status result; Corrupt_Index when a node is unreadable or reached twice.
+   --  @param Pages pages, root first and depth first; only Root for an unbuilt index, and the pages reached before
+   --  a failure.
+   --  @return Status result; Corrupt_Index when a node is unreadable or reached twice, or the tree is implausibly high.
    function Pages_Of
      (F     : in out Database.Storage.File_IO.File_Handle;
       Root  : Database.Storage.Pages.Page_Id;

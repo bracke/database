@@ -421,6 +421,57 @@ package body Persistent_Table_Tests is
       Cleanup;
    end Transaction_Ids_Not_Reused_After_Restart;
 
+   --  Run one phase of wal_reuse_child on Path in its own process.
+   function Run_Child_Phase (Phase, Path : String) return Boolean is
+      Args    : GNAT.OS_Lib.Argument_List := [new String'(Phase), new String'(Path)];
+      Success : Boolean;
+   begin
+      GNAT.OS_Lib.Spawn ("./bin/wal_reuse_child", Args, Success);
+      for A of Args loop
+         GNAT.OS_Lib.Free (A);
+      end loop;
+      return Success;
+   end Run_Child_Phase;
+
+   procedure Remove_Database (Path : String) is
+      procedure Remove (File : String) is
+      begin
+         if Ada.Directories.Exists (File) then
+            Ada.Directories.Delete_File (File);
+         end if;
+      end Remove;
+   begin
+      Remove (Path);
+      Remove (Path & ".wal");
+      Remove (Path & ".fts");
+   end Remove_Database;
+
+   --  A transaction the process ends before it commits is undone on the next open: the pages it changed get their
+   --  images back and the pages it added go, and it stays undone when the log is replayed again after later work.
+   procedure Interrupted_Transaction_Is_Undone
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Path : constant String := "persistent_interrupted.database";
+   begin
+      Assert (Run_Child_Phase ("setup_crash", Path), "the interrupted transaction could not be set up");
+      Assert (Run_Child_Phase ("verify_crash", Path), "recovery left the interrupted transaction's work");
+      Assert (Run_Child_Phase ("verify_crash_again", Path), "a second recovery did not keep the work straight");
+      Remove_Database (Path);
+   end Interrupted_Transaction_Is_Undone;
+
+   --  A committed catalog page whose write to the file was lost comes back from the log on the next open.
+   procedure Lost_Catalog_Write_Is_Replayed
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Path : constant String := "persistent_lost_catalog.database";
+   begin
+      Assert (Run_Child_Phase ("setup_lost_catalog", Path), "the lost catalog write could not be set up");
+      Assert (Run_Child_Phase ("verify_lost_catalog", Path), "recovery did not restore the committed catalog page");
+      Remove_Database (Path);
+   end Lost_Catalog_Write_Is_Replayed;
+
    overriding
    procedure Register_Tests (T : in out Case_Type) is
       use AUnit.Test_Cases.Registration;
@@ -449,5 +500,9 @@ package body Persistent_Table_Tests is
         (T,
          Transaction_Ids_Not_Reused_After_Restart'Access,
          "transaction ids not reused after clean checkpoint restart");
+      Register_Routine
+        (T, Interrupted_Transaction_Is_Undone'Access, "an interrupted transaction is undone on recovery");
+      Register_Routine
+        (T, Lost_Catalog_Write_Is_Replayed'Access, "a lost committed catalog write is replayed");
    end Register_Tests;
 end Persistent_Table_Tests;

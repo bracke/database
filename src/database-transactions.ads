@@ -126,6 +126,13 @@ package Database.Transactions is
    --  @return Result produced by the function.
    function Owning_Database (Tx : in out Transaction) return access Database.Handle;
 
+   --  Test whether Tx is a transaction of DB. An operation given both must not let one database's transaction change
+   --  another.
+   --  @param Tx transaction.
+   --  @param DB database handle.
+   --  @return True when Tx was begun on DB.
+   function Belongs_To (Tx : Transaction; DB : Database.Handle) return Boolean;
+
    --  Public operation `Write_Page`. See the package documentation for transaction, ownership, and error-result
    --  semantics.
    --  @param Tx transaction object that scopes the operation.

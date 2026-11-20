@@ -1,5 +1,6 @@
 with Ada.Containers;
 with Database.Catalog;
+with Database.Check;
 with Database.Full_Text;
 with Database.Indexes;
 with Database.Indexes.BTree;
@@ -131,6 +132,21 @@ package body Database.Vacuum is
                end if;
             end;
          end loop;
+
+         --  Pages nothing reaches any more, such as a corrupt index tree that a rebuild replaced, go back to the
+         --  free list. A database whose roots cannot all be followed keeps them, as their use is not known.
+         declare
+            Orphans : Database.Indexes.BTree.Page_Id_Vectors.Vector;
+         begin
+            if Database.Status.Is_Ok (Database.Check.Orphan_Pages (Tx, Orphans)) then
+               for Id of Orphans loop
+                  R := Database.Transactions.Free_Page (Tx, Id);
+                  if not Database.Status.Is_Ok (R) then
+                     return R;
+                  end if;
+               end loop;
+            end if;
+         end;
       end if;
 
       return Database.Status.Success;

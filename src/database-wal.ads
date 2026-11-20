@@ -17,7 +17,10 @@ package Database.WAL is
       Commit_Record,
       Checkpoint_Record,
       Full_Text_Redo_Record,
-      Full_Text_Undo_Record);
+      Full_Text_Undo_Record,
+      Page_Undo_Record,
+      Begin_Record,
+      Abort_Record);
 
    --  Return wal path for the supplied database state or arguments.
    --  @param Database_Path database path argument supplied to the operation.
@@ -98,6 +101,42 @@ package Database.WAL is
       Page           : Database.Storage.Pages.Page;
       LSN            : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result;
 
+   --  Append the image a page had before a transaction first changed it. Recovery writes the image back for a
+   --  transaction that has neither a commit nor an abort record.
+   --  @param W open WAL.
+   --  @param Transaction_Id transaction that changes the page.
+   --  @param Page the page as it was before the transaction changed it.
+   --  @param LSN sequence number of the record.
+   --  @return Status result describing whether the operation succeeded.
+   function Append_Page_Undo
+     (W              : in out WAL_Handle;
+      Transaction_Id : Natural;
+      Page           : Database.Storage.Pages.Page;
+      LSN            : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result;
+
+   --  Append the start of a transaction's writes, with the length of the database file before them. Recovery cuts the
+   --  file back to that length for a transaction that has neither a commit nor an abort record.
+   --  @param W open WAL.
+   --  @param Transaction_Id transaction about to write its first page.
+   --  @param Page_Count number of pages in the database file before the transaction's first write.
+   --  @param LSN sequence number of the record.
+   --  @return Status result describing whether the operation succeeded.
+   function Append_Begin
+     (W              : in out WAL_Handle;
+      Transaction_Id : Natural;
+      Page_Count     : Natural;
+      LSN            : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result;
+
+   --  Append the end of a transaction whose writes were undone, so recovery does not undo them again over later work.
+   --  @param W open WAL.
+   --  @param Transaction_Id transaction that rolled back.
+   --  @param LSN sequence number of the record.
+   --  @return Status result describing whether the operation succeeded.
+   function Append_Abort
+     (W              : in out WAL_Handle;
+      Transaction_Id : Natural;
+      LSN            : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result;
+
    --  Return append commit for the supplied database state or arguments.
    --  @param W w argument supplied to the operation.
    --  @param Transaction_Id transaction id argument supplied to the operation.
@@ -118,10 +157,13 @@ package Database.WAL is
      (W   : in out WAL_Handle;
       LSN : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result;
 
-   --  Return replay committed for the supplied database state or arguments.
-   --  @param Database_Path database path argument supplied to the operation.
-   --  @param F f argument supplied to the operation.
-   --  @return Result produced by the function.
+   --  Recover the database file from its WAL: write the page images of committed transactions, and undo the
+   --  transactions that have neither a commit nor an abort record, which a crash interrupted. Their pages get their
+   --  images from before the transaction back, the file is cut back to its length before them unless a committed
+   --  transaction wrote past it, and an abort record is appended for each so a later replay leaves them alone.
+   --  @param Database_Path path of the database whose WAL is replayed.
+   --  @param F the open database file.
+   --  @return Status result; Replay_Failure or a WAL corruption status when the WAL cannot be applied.
    function Replay_Committed
      (Database_Path : Wide_Wide_String;
       F             : in out Database.Storage.File_IO.File_Handle) return Database.Status.Result;
@@ -129,6 +171,12 @@ package Database.WAL is
    --  Return the highest commit version recorded in a WAL file, or zero when
    --  no committed transaction version is present.
    function Max_Commit_Version (Database_Path : Wide_Wide_String) return Natural;
+
+   --  Return the highest transaction id in a WAL file, or zero when there is none. A new transaction must not reuse
+   --  one, or replay would take the records of the old transaction for its own.
+   --  @param Database_Path path of the database whose WAL is read.
+   --  @return The highest transaction id in the WAL.
+   function Max_Transaction_Id (Database_Path : Wide_Wide_String) return Natural;
 
    --  Reconstruct the global MVCC transaction-lifecycle map after recovery.
    --  Scans the WAL commit records and marks each committed transaction as

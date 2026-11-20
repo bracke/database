@@ -13,16 +13,26 @@
 --        back as an untracked transaction, so the row resurrected: the insert
 --        returned DUPLICATE_KEY (and a later delete NOT_FOUND). Exits 0 only
 --        when both the re-insert and the delete succeed.
+--
+--  It also ends the process in the middle of a transaction (setup_crash), and
+--  checks that recovery undoes it (verify_crash) and leaves it undone after
+--  later work (verify_crash_again); and it loses the write of a committed
+--  catalog page (setup_lost_catalog) for recovery to restore
+--  (verify_lost_catalog).
 
 with Ada.Command_Line;
 with Ada.Characters.Conversions; use Ada.Characters.Conversions;
 with Ada.Directories;
+with Ada.Streams.Stream_IO;
 with Ada.Strings.Wide_Wide_Unbounded; use Ada.Strings.Wide_Wide_Unbounded;
 
 with GNAT.OS_Lib;
 
 with Database;
+with Database.Catalog;
+with Database.Check;
 with Database.Status;
+with Database.Storage.Pages;
 with Database.Types;
 with Database.Values;
 with Database.Rows;
@@ -53,10 +63,10 @@ procedure WAL_Reuse_Child is
      (Row_Type => Item, Key_Type => Natural, To_Row => To_Row,
       From_Row => From_Row, Key_Of => Key_Of, Key_Value => Key_Value);
 
-   function Make_Schema return Database.Schema.Table_Schema is
+   function Make_Schema (Name : Wide_Wide_String := "items") return Database.Schema.Table_Schema is
       S : Database.Schema.Table_Schema;
    begin
-      S.Name := To_Unbounded_Wide_Wide_String ("items");
+      S.Name := To_Unbounded_Wide_Wide_String (Name);
       Database.Schema.Add_Column
         (S, Name => "id", Kind => Database.Types.Integer_Value,
          Nullable => False, Primary_Key => True);
@@ -74,6 +84,33 @@ procedure WAL_Reuse_Child is
    begin
       GNAT.OS_Lib.OS_Exit (Code);
    end Fail;
+
+   function Healthy return Boolean is
+      Check_Tx : Database.Transactions.Transaction;
+      Result   : Database.Check.Check_Result;
+   begin
+      Database.Transactions.Begin_Read (DB, Check_Tx);
+      Result := Database.Check.Check_Database (Check_Tx);
+      Database.Transactions.Commit (Check_Tx);
+      return Result.Success;
+   end Healthy;
+
+   function Present (Key : Natural) return Boolean is
+      Read_Tx : Database.Transactions.Transaction;
+      Found   : Item;
+      R       : Database.Status.Result;
+   begin
+      Database.Transactions.Begin_Read (DB, Read_Tx);
+      R := T.Find (Read_Tx, DB, Schema, Key, Found);
+      Database.Transactions.Commit (Read_Tx);
+      return Database.Status.Is_Ok (R);
+   end Present;
+
+   function Registered (Name : Wide_Wide_String) return Boolean is
+      Found : Database.Schema.Table_Schema;
+   begin
+      return Database.Status.Is_Ok (Database.Catalog.Find_By_Name (Database.Catalog_State_Key (DB), Name, Found));
+   end Registered;
 
    procedure Remove (Name : String) is
    begin
@@ -166,6 +203,127 @@ begin
          else
             Fail (3);   --  transaction id was reused after restart
          end if;
+
+      elsif Phase = "setup_crash" then
+         Remove (Path);
+         Remove (Path & ".wal");
+         Remove (Path & ".fts");
+
+         Database.Create (DB, WPath);
+         Status := T.Register (DB => DB, Schema => Schema);
+         Database.Transactions.Begin_Write (DB, Tx);
+         for K in 1 .. 50 loop
+            Status := T.Insert (Tx, DB, Schema, (Id => K));
+         end loop;
+         Status := Database.Transactions.Commit (Tx);
+
+         --  A transaction that grows the file, changes pages the file had and
+         --  registers a table, ended by the process before it commits.
+         Database.Transactions.Begin_Write (DB, Tx);
+         for K in 51 .. 2_000 loop
+            Status := T.Insert (Tx, DB, Schema, (Id => K));
+         end loop;
+         Status := T.Delete (Tx, DB, Schema, 1);
+         declare
+            Extra : Database.Schema.Table_Schema := Make_Schema ("extra");
+         begin
+            Status := T.Register (Tx, DB, Extra);
+         end;
+         if not Database.Status.Is_Ok (Status) then
+            Fail (3);
+         end if;
+         GNAT.OS_Lib.OS_Exit (0);
+
+      elsif Phase = "verify_crash" then
+         Database.Open (DB, WPath);   --  undoes the interrupted transaction
+         Status := T.Register (DB => DB, Schema => Schema);
+         if not Healthy then
+            Fail (4);   --  pages of the interrupted transaction remain
+         elsif not Present (1) then
+            Fail (5);   --  its delete remains
+         elsif Present (51) then
+            Fail (6);   --  its insert remains
+         elsif Registered ("extra") then
+            Fail (7);   --  its registration remains
+         end if;
+
+         --  Later work is logged after the interrupted transaction.
+         Database.Transactions.Begin_Write (DB, Tx);
+         Status := T.Insert (Tx, DB, Schema, (Id => 60));
+         if Database.Status.Is_Ok (Status) then
+            Status := Database.Transactions.Commit (Tx);
+         end if;
+         if not Database.Status.Is_Ok (Status) then
+            Fail (8);
+         end if;
+         GNAT.OS_Lib.OS_Exit (0);
+
+      elsif Phase = "verify_crash_again" then
+         Database.Open (DB, WPath);   --  replays the same log once more
+         Status := T.Register (DB => DB, Schema => Schema);
+         if not Healthy then
+            Fail (9);
+         elsif not Present (60) then
+            Fail (10);   --  the later work was undone with the interrupted transaction
+         elsif Present (51) or else not Present (1) then
+            Fail (11);   --  the interrupted transaction came back
+         end if;
+         Database.Close (DB);
+         GNAT.OS_Lib.OS_Exit (0);
+
+      elsif Phase = "setup_lost_catalog" then
+         Remove (Path);
+         Remove (Path & ".wal");
+         Remove (Path & ".fts");
+
+         Database.Create (DB, WPath);
+         Database.Close (DB);
+         declare
+            use Ada.Streams;
+            Catalog_At : constant Stream_IO.Positive_Count :=
+              Stream_IO.Positive_Count (Database.Storage.Pages.Page_Size + 1);
+            File       : Stream_IO.File_Type;
+            Old_Page   : Stream_Element_Array (1 .. Database.Storage.Pages.Page_Size);
+            Last       : Stream_Element_Offset;
+         begin
+            Stream_IO.Open (File, Stream_IO.In_File, Path);
+            Stream_IO.Set_Index (File, Catalog_At);
+            Stream_IO.Read (File, Old_Page, Last);
+            Stream_IO.Close (File);
+
+            --  Registering commits the catalog page through the WAL.
+            Database.Open (DB, WPath);
+            Status := T.Register (DB => DB, Schema => Schema);
+            if not Database.Status.Is_Ok (Status) then
+               Fail (20);
+            end if;
+
+            --  Lose the write of the page: put the page as it was back.
+            declare
+               Content : Stream_Element_Array (1 .. Stream_Element_Offset (Ada.Directories.Size (Path)));
+               At_Page : constant Stream_Element_Offset := Stream_Element_Offset (Catalog_At);
+            begin
+               --  The database still has the file open.
+               Stream_IO.Open (File, Stream_IO.In_File, Path, Form => "shared=no");
+               Stream_IO.Read (File, Content, Last);
+               Stream_IO.Close (File);
+               Content (At_Page .. At_Page + Old_Page'Length - 1) := Old_Page;
+               Stream_IO.Create (File, Stream_IO.Out_File, Path, Form => "shared=no");
+               Stream_IO.Write (File, Content);
+               Stream_IO.Close (File);
+            end;
+         end;
+         GNAT.OS_Lib.OS_Exit (0);
+
+      elsif Phase = "verify_lost_catalog" then
+         Database.Open (DB, WPath);   --  writes the committed catalog page again
+         if not Registered ("items") then
+            Fail (21);
+         elsif not Healthy then
+            Fail (22);
+         end if;
+         Database.Close (DB);
+         GNAT.OS_Lib.OS_Exit (0);
 
       else
          Fail (64);

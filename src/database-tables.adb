@@ -43,21 +43,24 @@ package body Database.Tables is
          return Database.Visibility.Is_Visible (Tx, M);
       end Visible_To;
 
-      function Read_Tx_Ok (Tx : Database.Transactions.Transaction) return Boolean is
-      begin
-         return Database.Transactions.Can_Read (Tx);
-      end Read_Tx_Ok;
+      --  A transaction of another database than DB would leave DB's changes outside any transaction.
+      function Read_Tx_Ok (Tx : Database.Transactions.Transaction; DB : Database.Handle) return Boolean is
+        (Database.Transactions.Can_Read (Tx) and then Database.Transactions.Belongs_To (Tx, DB));
 
-      function Write_Tx_Ok (Tx : Database.Transactions.Transaction) return Boolean is
-      begin
-         return Database.Transactions.Can_Write (Tx);
-      end Write_Tx_Ok;
+      function Write_Tx_Ok (Tx : Database.Transactions.Transaction; DB : Database.Handle) return Boolean is
+        (Database.Transactions.Can_Write (Tx) and then Database.Transactions.Belongs_To (Tx, DB));
 
-      function Read_Only_Write_Error return Database.Status.Result is
-      begin
-         return Database.Status.Failure
-           (Database.Status.Read_Only_Transaction, "write attempted in read-only transaction");
-      end Read_Only_Write_Error;
+      function Foreign_Tx_Error return Database.Status.Result is
+        (Database.Status.Failure (Database.Status.Invalid_Argument, "transaction belongs to another database"));
+
+      function Read_Tx_Error (Tx : Database.Transactions.Transaction) return Database.Status.Result is
+        (if Database.Transactions.Can_Read (Tx) then Foreign_Tx_Error
+         else Database.Status.Failure (Database.Status.Transaction_Error, "transaction required"));
+
+      function Write_Tx_Error (Tx : Database.Transactions.Transaction) return Database.Status.Result is
+        (if Database.Transactions.Can_Write (Tx) then Foreign_Tx_Error
+         else Database.Status.Failure
+           (Database.Status.Read_Only_Transaction, "write attempted in read-only transaction"));
 
       function Current_Schema
         (DB     : in out Database.Handle;
@@ -122,8 +125,8 @@ package body Database.Tables is
          Schema : in out Database.Schema.Table_Schema) return Database.Status.Result is
          R : Database.Status.Result;
       begin
-         if not Write_Tx_Ok (Tx) then
-            return Read_Only_Write_Error;
+         if not Write_Tx_Ok (Tx, DB) then
+            return Write_Tx_Error (Tx);
          end if;
          R := Registered (DB, Schema);
          if R.Code /= Database.Status.Not_Found then
@@ -508,8 +511,8 @@ package body Database.Tables is
          R : Database.Status.Result;
          IX : Database.Indexes.Index_Metadata;
       begin
-         if not Write_Tx_Ok (Tx) then
-            return Read_Only_Write_Error;
+         if not Write_Tx_Ok (Tx, DB) then
+            return Write_Tx_Error (Tx);
          end if;
          for Existing_IX of S.Indexes loop
             if Ada.Strings.Wide_Wide_Unbounded.To_Wide_Wide_String (Existing_IX.Name) = Name then
@@ -558,8 +561,8 @@ package body Database.Tables is
          Root : Database.Storage.Pages.Page_Id;
          R : Database.Status.Result;
       begin
-         if not Write_Tx_Ok (Tx) then
-            return Read_Only_Write_Error;
+         if not Write_Tx_Ok (Tx, DB) then
+            return Write_Tx_Error (Tx);
          end if;
          if S.Indexes.Length > 0 then
             for I in 0 .. Natural (S.Indexes.Length) - 1 loop
@@ -607,8 +610,8 @@ package body Database.Tables is
          IX : Database.Indexes.Index_Metadata;
          Kind : Database.Types.Value_Kind := Database.Types.Null_Value;
       begin
-         if not Write_Tx_Ok (Tx) then
-            return Read_Only_Write_Error;
+         if not Write_Tx_Ok (Tx, DB) then
+            return Write_Tx_Error (Tx);
          end if;
          if Columns.Length = 0 then
             return Database.Status.Failure (Database.Status.Invalid_Argument,
@@ -649,8 +652,8 @@ package body Database.Tables is
          IX : Database.Indexes.Index_Metadata;
          Kind : Database.Types.Value_Kind := Database.Types.Null_Value;
       begin
-         if not Write_Tx_Ok (Tx) then
-            return Read_Only_Write_Error;
+         if not Write_Tx_Ok (Tx, DB) then
+            return Write_Tx_Error (Tx);
          end if;
          if not Column_Exists (S, Column, Kind) then
             return Database.Status.Failure (Database.Status.Invalid_Argument, "partial index column does not exist");
@@ -682,8 +685,8 @@ package body Database.Tables is
          S : Database.Schema.Table_Schema := Current_Schema (DB, Schema);
          IX : Database.Indexes.Index_Metadata;
       begin
-         if not Write_Tx_Ok (Tx) then
-            return Read_Only_Write_Error;
+         if not Write_Tx_Ok (Tx, DB) then
+            return Write_Tx_Error (Tx);
          end if;
          if not Database.Expressions.Is_Deterministic (Database.Catalog_State_Key (DB), Expression) then
             return Database.Status.Failure (Database.Status.Invalid_Argument,
@@ -718,8 +721,8 @@ package body Database.Tables is
          Key   : Database.Values.Value;
          Ref   : Database.Indexes.Row_Reference;
       begin
-         if not Write_Tx_Ok (Tx) then
-            return Read_Only_Write_Error;
+         if not Write_Tx_Ok (Tx, DB) then
+            return Write_Tx_Error (Tx);
          end if;
          V := Apply_Generated_And_Checks (Database.Catalog_State_Key (DB), S, Row_Value);
          if not Database.Status.Is_Ok (V) then
@@ -882,8 +885,8 @@ package body Database.Tables is
          Row_Value : Database.Rows.Row;
          R : Database.Status.Result;
       begin
-         if not Read_Tx_Ok (Tx) then
-            return Database.Status.Failure (Database.Status.Transaction_Error, "transaction required");
+         if not Read_Tx_Ok (Tx, DB) then
+            return Read_Tx_Error (Tx);
          end if;
          if Database.Schema.Primary_Key_Index (S) = Natural'Last then
             return Database.Status.Failure (Database.Status.Schema_Mismatch, "missing primary key");
@@ -942,8 +945,8 @@ package body Database.Tables is
          Row_Value : Database.Rows.Row;
          R : Database.Status.Result;
       begin
-         if not Write_Tx_Ok (Tx) then
-            return Read_Only_Write_Error;
+         if not Write_Tx_Ok (Tx, DB) then
+            return Write_Tx_Error (Tx);
          end if;
          if Database.Backend (DB) = Database.Persistent_Backend then
             if S.Primary_Index_Root = 0 then
@@ -1029,8 +1032,8 @@ package body Database.Tables is
          C : out Cursor) return Database.Status.Result is
          R : Database.Status.Result;
       begin
-         if not Read_Tx_Ok (Tx) then
-            return Database.Status.Failure (Database.Status.Transaction_Error, "transaction required");
+         if not Read_Tx_Ok (Tx, DB) then
+            return Read_Tx_Error (Tx);
          end if;
          C.Has_Current := False;
          C.Owner_Tx_Id := Database.Transactions.Id (Tx);
@@ -1123,8 +1126,8 @@ package body Database.Tables is
          C : in out Cursor) return Database.Status.Result is
          R : Database.Status.Result;
       begin
-         if not Read_Tx_Ok (Tx) then
-            return Database.Status.Failure (Database.Status.Transaction_Error, "transaction required");
+         if not Read_Tx_Ok (Tx, DB) then
+            return Read_Tx_Error (Tx);
          end if;
          declare
             State : constant Database.Cursors.Cursor_State  :=

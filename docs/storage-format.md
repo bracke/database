@@ -97,7 +97,11 @@ changes are logged in the WAL and rolled back with the transaction. Rebuilding
 an index empties a sound tree in place: the root keeps its page and the other
 pages become free pages. A tree that fails validation is replaced by a new root
 instead, and its pages are left alone, because pages named by a corrupt tree
-cannot be told apart from pages other structures use.
+cannot be told apart from pages other structures use. The integrity check then
+reports them as orphan pages until vacuum frees them: vacuum returns every table
+heap and index page that no catalog root reaches to the free list, but only when
+every heap chain and index tree can be followed to its end, since the pages
+behind a broken link would otherwise look unreachable.
 
 Pages a transaction allocates or frees are written through the transaction as
 well. A rollback therefore returns a reused free page to the free list, removes
@@ -146,9 +150,26 @@ table without one runs in a write transaction of its own.
 
 For a database file `app.db`, the WAL path is `app.db.wal`. The WAL contains append-only physical page frames, durable commit records, and checkpoint records. Page headers carry their last-applied LSN so replay and checkpoint can skip already-applied frames safely.
 
+A transaction's first page write is preceded by a begin record holding the number
+of pages the file had, and the first write to each page the file already had by an
+undo record holding the page as it was. A transaction that rolls back restores its
+pages from memory, cuts the file back, and appends an abort record. Record kinds:
+page frame 1, commit 2, checkpoint 3, full-text redo 4, full-text undo 5, page undo
+6, begin 7, abort 8.
+
 ## Recovery strategy
 
 Opening a persistent database checks the WAL before loading catalog state. Recovery validates record structure, checksums, and LSN ordering, then replays only frames belonging to transactions with durable commit records. Truncated tails are treated as interrupted appends and ignored safely.
+
+A transaction with neither a commit nor an abort record was interrupted, for
+example by the process ending, and its page writes are already in the file.
+Recovery undoes it: in log order it writes back the page images of its undo
+records, stamped with their LSN so the frames of later committed transactions are
+written over them again, and then cuts the file back to the length of its begin
+record, unless a committed transaction wrote a page past it. It then appends an
+abort record for the transaction, so a later replay of the same log leaves it
+alone. Transaction ids are reserved past every id in the WAL on open, because
+replay tells transactions apart by id.
 
 ## Versioning strategy
 

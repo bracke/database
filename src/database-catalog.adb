@@ -530,15 +530,40 @@ package body Database.Catalog is
       when others => return Database.Status.Failure (Database.Status.Row_Too_Large, "catalog exceeds one page");
    end Encode;
 
+   --  Encode the catalog as Wanted and tell whether its page holds something else.
+   function Compare
+     (DB      : in out Database.Handle;
+      Wanted  : out Database.Storage.Pages.Page;
+      Changed : out Boolean) return Database.Status.Result is
+      Stored : Database.Storage.Pages.Page;
+      R      : constant Database.Status.Result := Encode (DB, Wanted);
+   begin
+      Changed := not (Database.Status.Is_Ok (R)
+                      and then Database.Status.Is_Ok
+                        (Database.Storage.File_IO.Read_Page
+                           (DB.File, Catalog_Page_Id, Database.Storage.Pages.Catalog_Page, Stored))
+                      and then Database.Storage.Pages.Payload (Wanted) = Database.Storage.Pages.Payload (Stored));
+      return R;
+   end Compare;
+
+   --  The failures fault injection makes a catalog write report.
+   function Injected_Write_Failure return Database.Status.Result is
+   begin
+      if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Partial_Metadata_Persistence) then
+         return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Partial_Metadata_Persistence);
+      end if;
+      if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Allocation_Failure) then
+         return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Allocation_Failure);
+      end if;
+      return Database.Status.Success;
+   end Injected_Write_Failure;
+
    function Is_Saved (DB : in out Database.Handle) return Boolean is
-      Wanted, Stored : Database.Storage.Pages.Page;
+      Wanted  : Database.Storage.Pages.Page;
+      Changed : Boolean;
    begin
       return Database.Backend (DB) /= Database.Persistent_Backend
-        or else (Database.Status.Is_Ok (Encode (DB, Wanted))
-                 and then Database.Status.Is_Ok
-                   (Database.Storage.File_IO.Read_Page
-                      (DB.File, Catalog_Page_Id, Database.Storage.Pages.Catalog_Page, Stored))
-                 and then Database.Storage.Pages.Payload (Wanted) = Database.Storage.Pages.Payload (Stored));
+        or else (Database.Status.Is_Ok (Compare (DB, Wanted, Changed)) and then not Changed);
    end Is_Saved;
 
    function Save (DB : in out Database.Handle) return Database.Status.Result is
@@ -548,11 +573,9 @@ package body Database.Catalog is
       if Database.Backend (DB) /= Database.Persistent_Backend then
          return Database.Status.Success;
       end if;
-      if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Partial_Metadata_Persistence) then
-         return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Partial_Metadata_Persistence);
-      end if;
-      if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Allocation_Failure) then
-         return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Allocation_Failure);
+      R := Injected_Write_Failure;
+      if not Database.Status.Is_Ok (R) then
+         return R;
       end if;
       --  Encoding even a change that is only staged reports a catalog that has outgrown its page at the change.
       R := Encode (DB, P);
@@ -560,6 +583,26 @@ package body Database.Catalog is
          return R;
       end if;
       return Database.Storage.File_IO.Write_Page (DB.File, P);
+   end Save;
+
+   function Save (Tx : in out Database.Transactions.Transaction) return Database.Status.Result is
+      DB      : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
+      P       : Database.Storage.Pages.Page;
+      Changed : Boolean;
+      R       : Database.Status.Result;
+   begin
+      if DB = null or else Database.Backend (DB.all) /= Database.Persistent_Backend then
+         return Database.Status.Success;
+      end if;
+      R := Compare (DB.all, P, Changed);
+      if not Database.Status.Is_Ok (R) or else not Changed then
+         return R;
+      end if;
+      R := Injected_Write_Failure;
+      if not Database.Status.Is_Ok (R) then
+         return R;
+      end if;
+      return Database.Transactions.Write_Page (Tx, P);
    end Save;
 
    function Load (DB : in out Database.Handle) return Database.Status.Result is

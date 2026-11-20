@@ -6,5 +6,8 @@ is
       Commit_Record,
       Checkpoint_Record,
       Full_Text_Redo_Record,
-      Full_Text_Undo_Record);
+      Full_Text_Undo_Record,
+      Page_Undo_Record,
+      Begin_Record,
+      Abort_Record);
 end Database.WAL;

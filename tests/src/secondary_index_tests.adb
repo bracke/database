@@ -17,6 +17,7 @@ with Database.Status; use Database.Status;
 with Database.Tables;
 with Database.Transactions;
 with Database.Types;
+with Database.Vacuum;
 with Database.Values;
 
 package body Secondary_Index_Tests is
@@ -820,10 +821,71 @@ package body Secondary_Index_Tests is
       Assert (Count_Where (Tx, DB, S, 3, Database.Values.From_Integer (Numbered (5).Age)) >= 1,
               "the rebuilt index finds its rows");
       R := Database.Transactions.Commit (Tx);
+
+      --  The replaced tree, its old root and the chain below it, is unreachable until vacuum frees it.
+      declare
+         Orphans : Database.Indexes.BTree.Page_Id_Vectors.Vector;
+      begin
+         Database.Transactions.Begin_Write (DB, Tx);
+         R := Database.Check.Orphan_Pages (Tx, Orphans);
+         Assert (Database.Status.Is_Ok (R) and then Natural (Orphans.Length) = Depth + 2,
+                 "the pages of the replaced tree are unreachable");
+         R := Database.Vacuum.Vacuum (Tx);
+         Assert (Database.Status.Is_Ok (R), "vacuum failed");
+         R := Database.Transactions.Commit (Tx);
+         Assert (Database.Status.Is_Ok (R), "vacuum commit failed");
+         Expect_Healthy (DB, "vacuum frees the pages of a replaced tree");
+      end;
       Database.Close (DB);
       Assert (Valid (Path, Root), "the rebuilt index is valid");
       Remove_Files (Name);
    end Corrupt_Tree_Is_Replaced;
+
+   --  A transaction of one database is refused for another, which would otherwise be changed outside any transaction.
+   procedure Foreign_Transaction_Is_Refused
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Name_A : constant String := "secondary_foreign_a.database";
+      Name_B : constant String := "secondary_foreign_b.database";
+      A, B   : Database.Handle;
+      Tx     : Database.Transactions.Transaction;
+      S      : Database.Schema.Table_Schema;
+      Orders : Database.Schema.Table_Schema;
+      Item   : User_Row;
+      R      : Database.Status.Result;
+   begin
+      Remove_Files (Name_A);
+      Remove_Files (Name_B);
+      Database.Create (A, "secondary_foreign_a.database");
+      Database.Create (B, "secondary_foreign_b.database");
+      Add_User_Schema (S);
+      R := Users.Register (B, S);
+      Assert (Database.Status.Is_Ok (R), "register failed");
+
+      Database.Transactions.Begin_Write (A, Tx);
+      R := Users.Insert (Tx, B, S, Numbered (1));
+      Assert (R.Code = Database.Status.Invalid_Argument, "an insert through another database's transaction is refused");
+      Add_User_Schema (Orders);
+      Orders.Name := Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("orders");
+      R := Users.Register (Tx, B, Orders);
+      Assert (R.Code = Database.Status.Invalid_Argument,
+              "a registration through another database's transaction is refused");
+      R := Database.Transactions.Rollback (Tx);
+
+      Database.Transactions.Begin_Read (A, Tx);
+      R := Users.Find (Tx, B, S, 1, Item);
+      Assert (R.Code = Database.Status.Invalid_Argument, "a read through another database's transaction is refused");
+      R := Database.Transactions.Commit (Tx);
+
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (B), "orders", Orders);
+      Assert (R.Code = Database.Status.Not_Found, "the refused registration left no table");
+      Expect_Healthy (B, "the refused operations left the database unchanged");
+      Database.Close (A);
+      Database.Close (B);
+      Remove_Files (Name_A);
+      Remove_Files (Name_B);
+   end Foreign_Transaction_Is_Refused;
 
    overriding
    procedure Register_Tests (T : in out Case_Type) is
@@ -845,6 +907,7 @@ package body Secondary_Index_Tests is
       Register_Routine (T, Rollback_Restores_Index'Access, "rollback restores index pages");
       Register_Routine (T, Rollback_Restores_Catalog'Access, "rollback restores the catalog and allocation");
       Register_Routine (T, Rollback_Removes_Registration'Access, "rollback removes a table registration");
-      Register_Routine (T, Corrupt_Tree_Is_Replaced'Access, "a corrupt tree is rejected and replaced");
+      Register_Routine (T, Corrupt_Tree_Is_Replaced'Access, "a corrupt tree is rejected, replaced and reclaimed");
+      Register_Routine (T, Foreign_Transaction_Is_Refused'Access, "another database's transaction is refused");
    end Register_Tests;
 end Secondary_Index_Tests;

@@ -183,6 +183,9 @@ package body Database is
             --  so visibility and reclamation treat recovered committed rows
             --  correctly (a fresh process starts with an empty map).
             Database.WAL.Restore_Committed_Lifecycles (Path);
+            --  The WAL keeps the records of every transaction since the last checkpoint, rolled back or not, and
+            --  replay tells transactions apart by id.
+            Database.Transactions.Reserve_Ids_Through (Database.WAL.Max_Transaction_Id (Path));
          end if;
       end if;
       if Database.Status.Is_Ok (DB.Last) then
@@ -276,6 +279,9 @@ package body Database is
             --  so visibility and reclamation treat recovered committed rows
             --  correctly (a fresh process starts with an empty map).
             Database.WAL.Restore_Committed_Lifecycles (Path);
+            --  The WAL keeps the records of every transaction since the last checkpoint, rolled back or not, and
+            --  replay tells transactions apart by id.
+            Database.Transactions.Reserve_Ids_Through (Database.WAL.Max_Transaction_Id (Path));
          end if;
       end if;
       if Database.Status.Is_Ok (DB.Last) then

@@ -1,7 +1,9 @@
 --  Integrity checking for catalog, heaps, indexes, pages, and free-list state.
 with Ada.Containers.Indefinite_Vectors;
 with Database.Schema;
+with Database.Status;
 with Database.Indexes;
+with Database.Indexes.BTree;
 with Database.Storage.Pages;
 with Database.Transactions;
 
@@ -70,6 +72,16 @@ package Database.Check is
    --  @return Result produced by the function.
    function Check_Database
      (Tx : in out Database.Transactions.Transaction) return Check_Result;
+
+   --  Find the table heap and index pages that no catalog root reaches, such as the pages of an index tree that a
+   --  rebuild replaced because it was corrupt. They are found only when every root can be followed to its end, since
+   --  the pages behind a broken link would otherwise look unreachable although they are in use.
+   --  @param Tx active transaction of a database.
+   --  @param Pages the unreachable pages; empty for a database that is not persistent.
+   --  @return Status result; Corrupt_File when a root cannot be followed.
+   function Orphan_Pages
+     (Tx    : in out Database.Transactions.Transaction;
+      Pages : out Database.Indexes.BTree.Page_Id_Vectors.Vector) return Database.Status.Result;
 
    --  Public operation `Check_Catalog`. See the package documentation for transaction, ownership, and error-result
    --  semantics.

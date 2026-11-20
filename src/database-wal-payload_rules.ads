@@ -5,6 +5,9 @@ is
    Full_Text_Payload_Length  : constant Natural := 4096;
    Commit_Payload_Length     : constant Natural := 4;
    Checkpoint_Payload_Length : constant Natural := 0;
+   Page_Undo_Payload_Length  : constant Natural := 4096;
+   Begin_Payload_Length      : constant Natural := 4;
+   Abort_Payload_Length      : constant Natural := 0;
 
    function Expected_Payload_Length (Kind : Record_Kind) return Natural
      with
@@ -15,7 +18,10 @@ is
             when Commit_Record => Expected_Payload_Length'Result = Commit_Payload_Length,
             when Checkpoint_Record => Expected_Payload_Length'Result = Checkpoint_Payload_Length,
             when Full_Text_Redo_Record | Full_Text_Undo_Record =>
-              Expected_Payload_Length'Result = Full_Text_Payload_Length);
+              Expected_Payload_Length'Result = Full_Text_Payload_Length,
+            when Page_Undo_Record => Expected_Payload_Length'Result = Page_Undo_Payload_Length,
+            when Begin_Record => Expected_Payload_Length'Result = Begin_Payload_Length,
+            when Abort_Record => Expected_Payload_Length'Result = Abort_Payload_Length);
 
    function Payload_Length_Is_Valid
      (Kind   : Record_Kind;

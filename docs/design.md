@@ -37,7 +37,11 @@ The `Cache_Hits` and `Cache_Misses` metrics count its use.
 ### Transactions and Recovery
 
 The transaction layer coordinates rollback journal behavior, WAL logging,
-checkpointing, replay, MVCC visibility, and transaction isolation.
+checkpointing, replay, MVCC visibility, and transaction isolation. Pages are
+written in place as a transaction goes, after their new image and, for a page the
+file already had, their old image are in the WAL, so recovery redoes committed
+transactions and undoes one a crash interrupted; see
+[storage-format.md](storage-format.md#recovery-strategy).
 
 ### Indexing
 
@@ -56,7 +60,9 @@ a rollback undoes them. Catalog changes made in a write transaction are staged
 in memory and written by its commit through the same page log; `Catalog.Save`
 writes the page directly only when no writer is active. Every catalog change
 therefore belongs to a write transaction: `Typed.Register` without one starts its
-own, and waits for any other writer to finish.
+own, and waits for any other writer to finish. The typed table operations refuse a
+transaction begun on another database than the handle they are given, which would
+otherwise change that database outside any transaction.
 
 Index maintenance shared by all typed tables (lookups by key, filling an index
 from its table, and building indexes left unbuilt by earlier versions) lives in

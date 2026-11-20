@@ -12,6 +12,12 @@ is
             return Checkpoint_Payload_Length;
          when Full_Text_Redo_Record | Full_Text_Undo_Record =>
             return Full_Text_Payload_Length;
+         when Page_Undo_Record =>
+            return Page_Undo_Payload_Length;
+         when Begin_Record =>
+            return Begin_Payload_Length;
+         when Abort_Record =>
+            return Abort_Payload_Length;
       end case;
    end Expected_Payload_Length;
 

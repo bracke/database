@@ -1,6 +1,5 @@
 with Ada.Containers;
 with Database.Catalog;
-with Database.Status;
 with Database.Rows;
 with Database.Storage.File_IO;
 with Database.Storage.Free_List;
@@ -8,7 +7,6 @@ with Database.Storage.Table_Heap;
 with Database.WAL;
 with Database.Backup_Format;
 with Database.Invariant_Checks;
-with Database.Indexes.BTree;
 with Database.Extensions;
 with Database.Values;
 with Database.Types;
@@ -61,6 +59,79 @@ package body Database.Check is
          Reachable (Natural (Id)) := True;
       end if;
    end Mark;
+
+   --  Mark the pages reachable from the catalog roots of DB: the header and catalog pages, every table heap chain and
+   --  every index tree. Problems found on the way are added to R. Complete is False when a root could not be followed
+   --  to its end, so pages behind it are not marked although they may be in use.
+   procedure Mark_Reachable
+     (DB        : in out Database.Handle;
+      Reachable : in out Boolean_Array;
+      R         : in out Check_Result;
+      Complete  : out Boolean)
+   is
+      Count : constant Natural := Reachable'Last;
+      P     : Page;
+      SR    : Database.Status.Result;
+
+      --  Mark every page of the index tree at Root: its root, internal nodes, and leaves.
+      procedure Mark_Index (Root : Page_Id; Missing : Wide_Wide_String) is
+         Pages : Database.Indexes.BTree.Page_Id_Vectors.Vector;
+         IR    : Database.Status.Result;
+      begin
+         if Root = Invalid_Page_Id then
+            return;
+         end if;
+         IR := Database.Indexes.BTree.Pages_Of (DB.File, Root, Pages);
+         if not Database.Status.Is_Ok (IR) then
+            Complete := False;
+            Add_Error (R, Invalid_Index, To_Wide_Wide_String (IR.Message), Root);
+         end if;
+         for Id of Pages loop
+            if Natural (Id) >= Count then
+               Complete := False;
+               Add_Error (R, Missing_Page, Missing, Id);
+            else
+               Mark (Reachable, Id);
+            end if;
+         end loop;
+      end Mark_Index;
+   begin
+      Complete := True;
+      Mark (Reachable, 0);
+      Mark (Reachable, 1);
+      for I in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB)) - 1 loop
+         declare
+            S     : constant Database.Schema.Table_Schema :=
+              Database.Catalog.Table_At (Database.Catalog_State_Key (DB), I);
+            Id    : Page_Id := Page_Id (S.Heap_First_Page);
+            Guard : Natural := 0;
+         begin
+            while Id /= Invalid_Page_Id and then Guard <= Count loop
+               if Natural (Id) >= Count then
+                  Complete := False;
+                  Add_Error (R, Missing_Page, "table heap references missing page", Id);
+                  exit;
+               end if;
+               Mark (Reachable, Id);
+               SR := Database.Storage.File_IO.Read_Page (DB.File, Id, Table_Heap_Page, P);
+               if not Database.Status.Is_Ok (SR) then
+                  Complete := False;
+                  exit;
+               end if;
+               Id := Get_Next (P);
+               Guard := Guard + 1;
+            end loop;
+            if Guard > Count then
+               Complete := False;
+               Add_Error (R, Invalid_Page, "loop in table heap pages", Page_Id (S.Heap_First_Page));
+            end if;
+            Mark_Index (Page_Id (S.Primary_Index_Root), "primary index references missing page");
+            for IX of S.Indexes loop
+               Mark_Index (IX.Root_Page, "index references missing page");
+            end loop;
+         end;
+      end loop;
+   end Mark_Reachable;
 
    function Check_Catalog
      (Tx : in out Database.Transactions.Transaction) return Check_Result is
@@ -306,32 +377,12 @@ package body Database.Check is
 
       if Database.Backend (DB.all) = Database.Persistent_Backend then
          declare
-            Count : constant Natural := Database.Storage.File_IO.Page_Count (DB.File);
+            Count     : constant Natural := Database.Storage.File_IO.Page_Count (DB.File);
             Reachable : Boolean_Array (0 .. Count) := [others => False];
-            Free     : Boolean_Array (0 .. Count) := [others => False];
-            P        : Page;
-            SR       : Database.Status.Result;
-
-            --  Mark every page of the index tree at Root: its root, internal nodes, and leaves.
-            procedure Mark_Index (Root : Page_Id; Missing : Wide_Wide_String) is
-               Pages : Database.Indexes.BTree.Page_Id_Vectors.Vector;
-               IR    : Database.Status.Result;
-            begin
-               if Root = Invalid_Page_Id then
-                  return;
-               end if;
-               IR := Database.Indexes.BTree.Pages_Of (DB.File, Root, Pages);
-               if not Database.Status.Is_Ok (IR) then
-                  Add_Error (R, Invalid_Index, To_Wide_Wide_String (IR.Message), Root);
-               end if;
-               for Id of Pages loop
-                  if Natural (Id) >= Count then
-                     Add_Error (R, Missing_Page, Missing, Id);
-                  else
-                     Mark (Reachable, Id);
-                  end if;
-               end loop;
-            end Mark_Index;
+            Free      : Boolean_Array (0 .. Count) := [others => False];
+            P         : Page;
+            SR        : Database.Status.Result;
+            Complete  : Boolean;
          begin
             if Count = 0 then
                Add_Error (R, Missing_Page, "database file has no header page");
@@ -341,64 +392,32 @@ package body Database.Check is
             if not Database.Status.Is_Ok (SR) then
                Add_Error (R, Invalid_Free_List, To_Wide_Wide_String (SR.Message));
             end if;
-            Mark (Reachable, 0);
-            Mark (Reachable, 1);
-            if Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) > 0 then
-               for I in 0 .. Database.Catalog.Table_Count (Database.Catalog_State_Key (DB.all)) - 1 loop
-                  declare
-                     S : constant Database.Schema.Table_Schema := Database.Catalog.Table_At (Database.Catalog_State_Key (DB.all), I);
-                  begin
-                     declare
-                        Id : Page_Id := Page_Id (S.Heap_First_Page);
-                        Guard : Natural := 0;
-                     begin
-                        while Id /= Invalid_Page_Id and then Guard <= Count loop
-                           if Natural (Id) >= Count then
-                              Add_Error (R, Missing_Page, "table heap references missing page", Id);
-                              exit;
-                           end if;
-                           Mark (Reachable, Id);
-                           SR := Database.Storage.File_IO.Read_Page (DB.File, Id, Table_Heap_Page, P);
-                           exit when not Database.Status.Is_Ok (SR);
-                           Id := Get_Next (P);
-                           Guard := Guard + 1;
-                        end loop;
-                        if Guard > Count then
-                           Add_Error (R, Invalid_Page, "loop in table heap pages", Page_Id (S.Heap_First_Page));
-                        end if;
-                     end;
-                        Mark_Index (Page_Id (S.Primary_Index_Root), "primary index references missing page");
-                        for IX of S.Indexes loop
-                           Mark_Index (IX.Root_Page, "index references missing page");
-                        end loop;
-                  end;
-               end loop;
-            end if;
-               for N in 0 .. Count - 1 loop
-                  SR := Database.Storage.File_IO.Read_Raw_Page (DB.File, Page_Id (N), P);
+            Mark_Reachable (DB.all, Reachable, R, Complete);
+            for N in 0 .. Count - 1 loop
+               SR := Database.Storage.File_IO.Read_Raw_Page (DB.File, Page_Id (N), P);
+               if not Database.Status.Is_Ok (SR) then
+                  Add_Error (R, Corrupt_Page, Kind_Name (SR), Page_Id (N));
+               else
+                  if Natural (Get_Id (P)) /= N then
+                     Add_Error (R, Invalid_Page, "page id does not match file position", Page_Id (N));
+                  end if;
+                  SR := Database.Storage.Pages.Validate (P, Page_Id (N), Get_Kind (P));
                   if not Database.Status.Is_Ok (SR) then
-                     Add_Error (R, Corrupt_Page, Kind_Name (SR), Page_Id (N));
-                  else
-                     if Natural (Get_Id (P)) /= N then
-                        Add_Error (R, Invalid_Page, "page id does not match file position", Page_Id (N));
-                     end if;
-                     SR := Database.Storage.Pages.Validate (P, Page_Id (N), Get_Kind (P));
-                     if not Database.Status.Is_Ok (SR) then
-                        Add_Error (R, Corrupt_Page, To_Wide_Wide_String (SR.Message), Page_Id (N));
-                     end if;
-                     if Get_Kind (P) = Free_Page then
-                        Free (N) := True;
-                     end if;
+                     Add_Error (R, Corrupt_Page, To_Wide_Wide_String (SR.Message), Page_Id (N));
                   end if;
-               end loop;
-               for N in 2 .. Count - 1 loop
-                  if not Reachable (N) and then not Free (N) then
-                     Add_Error (R, Orphan_Page, "allocated page is not reachable from catalog roots", Page_Id (N));
+                  if Get_Kind (P) = Free_Page then
+                     Free (N) := True;
                   end if;
-                  if Reachable (N) and then Free (N) then
-                     Add_Error (R, Invalid_Free_List, "free page is referenced by an active structure", Page_Id (N));
-                  end if;
-               end loop;
+               end if;
+            end loop;
+            for N in 2 .. Count - 1 loop
+               if not Reachable (N) and then not Free (N) then
+                  Add_Error (R, Orphan_Page, "allocated page is not reachable from catalog roots", Page_Id (N));
+               end if;
+               if Reachable (N) and then Free (N) then
+                  Add_Error (R, Invalid_Free_List, "free page is referenced by an active structure", Page_Id (N));
+               end if;
+            end loop;
          end;
       end if;
       return R;
@@ -407,6 +426,43 @@ package body Database.Check is
          Add_Error (R, Internal_Error, "database check raised unexpectedly");
          return R;
    end Check_Database;
+
+   function Orphan_Pages
+     (Tx    : in out Database.Transactions.Transaction;
+      Pages : out Database.Indexes.BTree.Page_Id_Vectors.Vector) return Database.Status.Result
+   is
+      DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
+   begin
+      Pages.Clear;
+      if DB = null or else not Database.Transactions.Can_Read (Tx) then
+         return Database.Status.Failure (Database.Status.Transaction_Error, "transaction required");
+      end if;
+      if Database.Backend (DB.all) /= Database.Persistent_Backend then
+         return Database.Status.Success;
+      end if;
+      declare
+         Count     : constant Natural := Database.Storage.File_IO.Page_Count (DB.File);
+         Reachable : Boolean_Array (0 .. Count) := [others => False];
+         CR        : Check_Result;
+         Complete  : Boolean;
+         P         : Page;
+      begin
+         Mark_Reachable (DB.all, Reachable, CR, Complete);
+         if not Complete then
+            return Database.Status.Failure
+              (Database.Status.Corrupt_File, "not every page reachable from the catalog roots can be followed");
+         end if;
+         for N in 2 .. Count - 1 loop
+            if not Reachable (N)
+              and then Database.Status.Is_Ok (Database.Storage.File_IO.Read_Raw_Page (DB.File, Page_Id (N), P))
+              and then Get_Kind (P) in Table_Heap_Page | BTree_Internal_Page | BTree_Leaf_Page
+            then
+               Pages.Append (Page_Id (N));
+            end if;
+         end loop;
+      end;
+      return Database.Status.Success;
+   end Orphan_Pages;
 
    function Check_Full_Text_Index
      (Tx   : in out Database.Transactions.Transaction;

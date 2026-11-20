@@ -1,7 +1,8 @@
 with Ada.Characters.Conversions;
 with Ada.Calendar;
 with Ada.Containers.Indefinite_Ordered_Maps;
-with Ada.Containers.Vectors;
+with Ada.Containers.Ordered_Maps;
+with Ada.Containers.Ordered_Sets;
 with Ada.Directories;
 with Ada.Streams;
 with Database.Metrics;
@@ -264,6 +265,9 @@ package body Database.WAL is
          when Checkpoint_Record      => return 3;
          when Full_Text_Redo_Record  => return 4;
          when Full_Text_Undo_Record  => return 5;
+         when Page_Undo_Record       => return 6;
+         when Begin_Record           => return 7;
+         when Abort_Record           => return 8;
       end case;
    end Kind_Code;
 
@@ -279,6 +283,12 @@ package body Database.WAL is
          when 4 => K := Full_Text_Redo_Record;
          return True;
          when 5 => K := Full_Text_Undo_Record;
+         return True;
+         when 6 => K := Page_Undo_Record;
+         return True;
+         when 7 => K := Begin_Record;
+         return True;
+         when 8 => K := Abort_Record;
          return True;
          when others => return False;
       end case;
@@ -591,6 +601,37 @@ package body Database.WAL is
         (W, Full_Text_Undo_Record, Transaction_Id, Page, LSN);
    end Append_Full_Text_Undo;
 
+   function Append_Page_Undo
+     (W              : in out WAL_Handle;
+      Transaction_Id : Natural;
+      Page           : Database.Storage.Pages.Page;
+      LSN            : out Log_Sequence_Number) return Database.Status.Result is
+   begin
+      return Append_Record
+        (W, Page_Undo_Record, Transaction_Id, Natural (Get_Id (Page)), Page_Kind'Pos (Get_Kind (Page)),
+         To_Stream (Page), LSN);
+   end Append_Page_Undo;
+
+   function Append_Begin
+     (W              : in out WAL_Handle;
+      Transaction_Id : Natural;
+      Page_Count     : Natural;
+      LSN            : out Log_Sequence_Number) return Database.Status.Result is
+      Payload : Stream_Element_Array (0 .. 3) := [others => 0];
+   begin
+      Put_U32 (Payload, 0, Page_Count);
+      return Append_Record (W, Begin_Record, Transaction_Id, 0, 0, Payload, LSN);
+   end Append_Begin;
+
+   function Append_Abort
+     (W              : in out WAL_Handle;
+      Transaction_Id : Natural;
+      LSN            : out Log_Sequence_Number) return Database.Status.Result is
+      Empty : Stream_Element_Array (1 .. 0);
+   begin
+      return Append_Record (W, Abort_Record, Transaction_Id, 0, 0, Empty, LSN);
+   end Append_Abort;
+
    function Append_Commit
      (W              : in out WAL_Handle;
       Transaction_Id : Natural;
@@ -633,17 +674,8 @@ package body Database.WAL is
       return Append_Record (W, Checkpoint_Record, 0, 0, 0, Empty, LSN);
    end Append_Checkpoint;
 
-   package Natural_Vectors is new Ada.Containers.Vectors (Index_Type => Natural, Element_Type => Natural);
-
-   function Is_Committed (Ids : Natural_Vectors.Vector; Tx_Id : Natural) return Boolean is
-   begin
-      for Id of Ids loop
-         if Id = Tx_Id then
-            return True;
-         end if;
-      end loop;
-      return False;
-   end Is_Committed;
+   package Id_Sets is new Ada.Containers.Ordered_Sets (Natural);
+   package Count_Maps is new Ada.Containers.Ordered_Maps (Natural, Natural);
 
    function Apply_Page_Image
      (F                  : in out Database.Storage.File_IO.File_Handle;
@@ -676,6 +708,19 @@ package body Database.WAL is
 
       return Database.Status.Success;
    end Apply_Page_Image;
+
+   --  Write back the image a page had before an unfinished transaction changed it. Unlike a redo image it is written
+   --  whatever the page holds now, and it takes the sequence number of its record, so that the images of later
+   --  committed transactions are written over it again.
+   function Restore_Page_Image
+     (F       : in out Database.Storage.File_IO.File_Handle;
+      Payload : Stream_Element_Array;
+      LSN     : Log_Sequence_Number) return Database.Status.Result is
+      P : Database.Storage.Pages.Page := From_Stream (Payload);
+   begin
+      Set_Last_LSN (P, LSN);
+      return Database.Storage.File_IO.Write_Page (F, P);
+   end Restore_Page_Image;
 
    function Read_Header
      (File : in out File_Type;
@@ -756,11 +801,81 @@ package body Database.WAL is
                return Database.Status.Failure
                  (Database.Status.WAL_Corruption,
                   "invalid WAL full-text undo payload length");
+            when Page_Undo_Record =>
+               return Database.Status.Failure
+                 (Database.Status.WAL_Corruption,
+                  "invalid WAL page undo payload length");
+            when Begin_Record =>
+               return Database.Status.Failure
+                 (Database.Status.WAL_Corruption,
+                  "invalid WAL begin payload length");
+            when Abort_Record =>
+               return Database.Status.Failure
+                 (Database.Status.WAL_Corruption,
+                  "invalid WAL abort payload length");
          end case;
       end if;
 
       return Database.Status.Success;
    end Validate_Payload_Length;
+
+   --  Read the records of the WAL of Database_Path in order and pass each complete one to Visit. A short trailing
+   --  record, left by a power loss during an append, ends the scan; a complete record that fails validation ends it
+   --  with that failure, as does Visit returning one.
+   generic
+      with function Visit
+        (H       : Stream_Element_Array;
+         K       : Record_Kind;
+         LSN     : Log_Sequence_Number;
+         Payload : Stream_Element_Array) return Database.Status.Result;
+   function Scan_Records (Database_Path : Wide_Wide_String) return Database.Status.Result;
+
+   function Scan_Records (Database_Path : Wide_Wide_String) return Database.Status.Result is
+      File : File_Type;
+      H    : Stream_Element_Array (0 .. Header_Size - 1);
+      Last : Log_Sequence_Number := Database.Log_Sequence.Invalid_LSN;
+      K    : Record_Kind;
+      L    : Log_Sequence_Number;
+      R    : Database.Status.Result := Database.Status.Success;
+   begin
+      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
+      while Database.Status.Is_Ok (R) and then not End_Of_File (File) loop
+         exit when not Read_Header (File, H);
+         declare
+            Len : constant Natural := Get_U32 (H, 26);
+         begin
+            --  The length is checked before the payload is allocated, so a corrupt header cannot ask for any amount.
+            R := Validate_Payload_Length (H, Len);
+            exit when not Database.Status.Is_Ok (R);
+            declare
+               Payload      : Stream_Element_Array (0 .. Stream_Element_Offset (Len) - 1);
+               Payload_Last : Stream_Element_Offset := Payload'Last;
+            begin
+               if Len > 0 then
+                  Read (File, Payload, Payload_Last);
+               end if;
+               exit when Payload_Last /= Payload'Last;
+               R := Validate_Header (H, Payload, Last, K, L);
+               if Database.Status.Is_Ok (R) then
+                  R := Visit (H, K, L, Payload);
+               end if;
+            end;
+         end;
+      end loop;
+      Ada.Streams.Stream_IO.Close (File);
+      return R;
+   exception
+      when others =>
+         begin
+            if Ada.Streams.Stream_IO.Is_Open (File) then
+               Ada.Streams.Stream_IO.Close (File);
+            end if;
+         exception
+            when others =>
+               null;
+         end;
+         return Database.Status.Failure (Database.Status.Replay_Failure, "WAL replay failed");
+   end Scan_Records;
 
    function Truncate_WAL_File
      (Database_Path : Wide_Wide_String;
@@ -999,13 +1114,69 @@ package body Database.WAL is
    function Replay_Committed
      (Database_Path : Wide_Wide_String;
       F             : in out Database.Storage.File_IO.File_Handle) return Database.Status.Result is
-      File : File_Type;
-      H : Stream_Element_Array (0 .. Header_Size - 1);
-      Last : Log_Sequence_Number := Database.Log_Sequence.Invalid_LSN;
-      K : Record_Kind;
-      L : Log_Sequence_Number;
-      Committed : Natural_Vectors.Vector;
-      R : Database.Status.Result;
+      Committed, Finished : Id_Sets.Set;
+      --  The length of the database file before each transaction's first write.
+      Begun               : Count_Maps.Map;
+      --  One past the highest page a committed transaction writes.
+      Committed_End       : Natural := 0;
+      Keep                : Natural := Natural'Last;
+      R                   : Database.Status.Result;
+
+      function Note
+        (H       : Stream_Element_Array;
+         K       : Record_Kind;
+         LSN     : Log_Sequence_Number;
+         Payload : Stream_Element_Array) return Database.Status.Result is
+         pragma Unreferenced (LSN);
+         Tx : constant Natural := Get_U32 (H, 17);
+      begin
+         case K is
+            when Commit_Record =>
+               Committed.Include (Tx);
+               Finished.Include (Tx);
+            when Abort_Record =>
+               Finished.Include (Tx);
+            when Begin_Record =>
+               Begun.Include (Tx, Get_U32 (Payload, 0));
+            when others =>
+               null;
+         end case;
+         return Database.Status.Success;
+      end Note;
+
+      function Apply
+        (H       : Stream_Element_Array;
+         K       : Record_Kind;
+         LSN     : Log_Sequence_Number;
+         Payload : Stream_Element_Array) return Database.Status.Result is
+         Tx : constant Natural := Get_U32 (H, 17);
+      begin
+         case K is
+            when Page_Frame =>
+               if Committed.Contains (Tx) then
+                  Committed_End := Natural'Max (Committed_End, Get_U32 (H, 21) + 1);
+                  return Apply_Page_Image (F, Payload, LSN, False);
+               end if;
+            when Page_Undo_Record =>
+               if not Finished.Contains (Tx) then
+                  return Restore_Page_Image (F, Payload, LSN);
+               end if;
+            when Full_Text_Redo_Record =>
+               if Committed.Contains (Tx) then
+                  return Apply_Page_Image (F, Payload, LSN, True);
+               end if;
+            when Full_Text_Undo_Record =>
+               if not Committed.Contains (Tx) then
+                  return Apply_Page_Image (F, Payload, LSN, True);
+               end if;
+            when others =>
+               null;
+         end case;
+         return Database.Status.Success;
+      end Apply;
+
+      function Scan_Notes is new Scan_Records (Note);
+      function Scan_Applies is new Scan_Records (Apply);
    begin
       if not Exists (Database_Path) then
          return Database.Status.Success;
@@ -1017,244 +1188,142 @@ package body Database.WAL is
       --  may leave one incomplete trailing frame.  Complete frames must still
       --  validate strictly, while a short final header or payload terminates
       --  replay at the last complete durable record.
-      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
-      while not End_Of_File (File) loop
-         exit when not Read_Header (File, H);
-         declare
-            Len : constant Natural := Get_U32 (H, 26);
-            Len_R : constant Database.Status.Result := Validate_Payload_Length (H, Len);
-         begin
-            if not Database.Status.Is_Ok (Len_R) then
-               Ada.Streams.Stream_IO.Close (File);
-               return Len_R;
-            end if;
-            if Len = 0 then
-               declare
-                  Empty : Stream_Element_Array (1 .. 0);
-               begin
-                  R := Validate_Header (H, Empty, Last, K, L);
-               end;
-               if not Database.Status.Is_Ok (R) then
-                  Ada.Streams.Stream_IO.Close (File);
-                  return R;
-               end if;
-            else
-               declare
-                  Payload : Stream_Element_Array (0 .. Stream_Element_Offset (Len - 1));
-                  Payload_Last : Stream_Element_Offset;
-               begin
-                  Read (File, Payload, Payload_Last);
-                  exit when Payload_Last /= Payload'Last;
-                  R := Validate_Header (H, Payload, Last, K, L);
-                  if not Database.Status.Is_Ok (R) then
-                     Ada.Streams.Stream_IO.Close (File);
-                     return R;
-                  end if;
-               end;
-            end if;
-            if K = Commit_Record then
-               Committed.Append (Get_U32 (H, 17));
-            end if;
-         end;
-      end loop;
-      Ada.Streams.Stream_IO.Close (File);
+      R := Scan_Notes (Database_Path);
+      if Database.Status.Is_Ok (R) then
+         R := Scan_Applies (Database_Path);
+      end if;
+      if not Database.Status.Is_Ok (R) then
+         return R;
+      end if;
 
-      Last := Database.Log_Sequence.Invalid_LSN;
-      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
-      while not End_Of_File (File) loop
-         exit when not Read_Header (File, H);
-         declare
-            Len : constant Natural := Get_U32 (H, 26);
-            Len_R : constant Database.Status.Result := Validate_Payload_Length (H, Len);
-         begin
-            if not Database.Status.Is_Ok (Len_R) then
-               Ada.Streams.Stream_IO.Close (File);
-               return Len_R;
-            end if;
-            if Len = 0 then
-               declare
-                  Empty : Stream_Element_Array (1 .. 0);
-               begin
-                  R := Validate_Header (H, Empty, Last, K, L);
-               end;
-               if not Database.Status.Is_Ok (R) then
-                  Ada.Streams.Stream_IO.Close (File);
-                  return R;
-               end if;
-            else
-               declare
-                  Payload : Stream_Element_Array (0 .. Stream_Element_Offset (Len - 1));
-                  Payload_Last : Stream_Element_Offset;
-               begin
-                  Read (File, Payload, Payload_Last);
-                  exit when Payload_Last /= Payload'Last;
-                  R := Validate_Header (H, Payload, Last, K, L);
-                  if not Database.Status.Is_Ok (R) then
-                     Ada.Streams.Stream_IO.Close (File);
-                     return R;
-                  end if;
-                  if K = Page_Frame
-                    and then Is_Committed (Committed, Get_U32 (H, 17))
-                  then
-                     R := Apply_Page_Image (F, Payload, L, False);
-                     if not Database.Status.Is_Ok (R) then
-                        Ada.Streams.Stream_IO.Close (File);
-                        return R;
-                     end if;
-                  elsif K = Full_Text_Redo_Record
-                    and then Is_Committed (Committed, Get_U32 (H, 17))
-                  then
-                     R := Apply_Page_Image (F, Payload, L, True);
-                     if not Database.Status.Is_Ok (R) then
-                        Ada.Streams.Stream_IO.Close (File);
-                        return R;
-                     end if;
-                  elsif K = Full_Text_Undo_Record
-                    and then not Is_Committed (Committed, Get_U32 (H, 17))
-                  then
-                     R := Apply_Page_Image (F, Payload, L, True);
-                     if not Database.Status.Is_Ok (R) then
-                        Ada.Streams.Stream_IO.Close (File);
-                        return R;
-                     end if;
-                  end if;
-               end;
-            end if;
-         end;
+      for C in Begun.Iterate loop
+         if not Finished.Contains (Count_Maps.Key (C)) then
+            Keep := Natural'Min (Keep, Count_Maps.Element (C));
+         end if;
       end loop;
-      Ada.Streams.Stream_IO.Close (File);
-      return Database.Storage.File_IO.Flush (F);
-   exception
-      when others =>
-         begin
-            if Ada.Streams.Stream_IO.Is_Open (File) then
-               Ada.Streams.Stream_IO.Close (File);
+      if Keep /= Natural'Last then
+         Keep := Natural'Max (Keep, Committed_End);
+         if Database.Storage.File_IO.Page_Count (F) > Keep then
+            R := Database.Storage.File_IO.Truncate_To_Page_Count (F, Keep);
+            if not Database.Status.Is_Ok (R) then
+               return R;
             end if;
-         exception
-            when others =>
-               null;
+         end if;
+         R := Database.Storage.File_IO.Flush (F);
+         if not Database.Status.Is_Ok (R) then
+            return R;
+         end if;
+         declare
+            W : WAL_Handle;
+            L : Log_Sequence_Number;
+         begin
+            R := Open (W, Database_Path);
+            for C in Begun.Iterate loop
+               exit when not Database.Status.Is_Ok (R);
+               if not Finished.Contains (Count_Maps.Key (C)) then
+                  R := Append_Abort (W, Count_Maps.Key (C), L);
+               end if;
+            end loop;
+            if Database.Status.Is_Ok (R) then
+               R := Flush (W);
+            end if;
+            declare
+               CR : constant Database.Status.Result := Close (W);
+            begin
+               if Database.Status.Is_Ok (R) then
+                  R := CR;
+               end if;
+            end;
+            if not Database.Status.Is_Ok (R) then
+               return R;
+            end if;
          end;
-         return Database.Status.Failure
-           (Database.Status.Replay_Failure, "WAL replay failed");
+      end if;
+      return Database.Storage.File_IO.Flush (F);
    end Replay_Committed;
 
    function Max_Commit_Version (Database_Path : Wide_Wide_String) return Natural is
-      File : Ada.Streams.Stream_IO.File_Type;
-      H    : Stream_Element_Array (0 .. Header_Size - 1);
-      Last : Database.Log_Sequence.Log_Sequence_Number := Database.Log_Sequence.Invalid_LSN;
-      K    : Record_Kind;
-      L    : Log_Sequence_Number;
-      R    : Database.Status.Result;
-      Max  : Natural := 0;
-   begin
-      if not Exists (Database_Path) then
-         return 0;
-      end if;
+      Max : Natural := 0;
 
-      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
-      while not End_Of_File (File) loop
-         exit when not Read_Header (File, H);
+      function Note
+        (H       : Stream_Element_Array;
+         K       : Record_Kind;
+         LSN     : Log_Sequence_Number;
+         Payload : Stream_Element_Array) return Database.Status.Result is
+         pragma Unreferenced (H, LSN);
+      begin
+         if K = Commit_Record then
+            Max := Natural'Max (Max, Get_U32 (Payload, 0));
+         end if;
+         return Database.Status.Success;
+      end Note;
+
+      function Scan is new Scan_Records (Note);
+   begin
+      if Exists (Database_Path) then
          declare
-            Len   : constant Natural := Get_U32 (H, 26);
-            Len_R : constant Database.Status.Result := Validate_Payload_Length (H, Len);
+            R : constant Database.Status.Result := Scan (Database_Path);
+            pragma Unreferenced (R);
          begin
-            exit when not Database.Status.Is_Ok (Len_R);
-            if Len = 0 then
-               declare
-                  Empty : Stream_Element_Array (1 .. 0);
-               begin
-                  R := Validate_Header (H, Empty, Last, K, L);
-               end;
-               exit when not Database.Status.Is_Ok (R);
-            else
-               declare
-                  Payload      : Stream_Element_Array (0 .. Stream_Element_Offset (Len - 1));
-                  Payload_Last : Stream_Element_Offset;
-               begin
-                  Read (File, Payload, Payload_Last);
-                  exit when Payload_Last /= Payload'Last;
-                  R := Validate_Header (H, Payload, Last, K, L);
-                  exit when not Database.Status.Is_Ok (R);
-                  if K = Commit_Record and then Len >= 4 then
-                     Max := Natural'Max (Max, Get_U32 (Payload, 0));
-                  end if;
-               end;
-            end if;
+            null;
          end;
-      end loop;
-      Ada.Streams.Stream_IO.Close (File);
+      end if;
       return Max;
-   exception
-      when others =>
-         begin
-            if Ada.Streams.Stream_IO.Is_Open (File) then
-               Ada.Streams.Stream_IO.Close (File);
-            end if;
-         exception
-            when others => null;
-         end;
-         return Max;
    end Max_Commit_Version;
 
-   procedure Restore_Committed_Lifecycles (Database_Path : Wide_Wide_String) is
-      File : Ada.Streams.Stream_IO.File_Type;
-      H    : Stream_Element_Array (0 .. Header_Size - 1);
-      Last : Database.Log_Sequence.Log_Sequence_Number :=
-        Database.Log_Sequence.Invalid_LSN;
-      K    : Record_Kind;
-      L    : Log_Sequence_Number;
-      R    : Database.Status.Result;
-   begin
-      if not Exists (Database_Path) then
-         return;
-      end if;
+   function Max_Transaction_Id (Database_Path : Wide_Wide_String) return Natural is
+      Max : Natural := 0;
 
-      Ada.Streams.Stream_IO.Open (File, In_File, Native (WAL_Path (Database_Path)), Form => "shared=no");
-      while not End_Of_File (File) loop
-         exit when not Read_Header (File, H);
+      function Note
+        (H       : Stream_Element_Array;
+         K       : Record_Kind;
+         LSN     : Log_Sequence_Number;
+         Payload : Stream_Element_Array) return Database.Status.Result is
+         pragma Unreferenced (K, LSN, Payload);
+      begin
+         Max := Natural'Max (Max, Get_U32 (H, 17));
+         return Database.Status.Success;
+      end Note;
+
+      function Scan is new Scan_Records (Note);
+   begin
+      if Exists (Database_Path) then
          declare
-            Len   : constant Natural := Get_U32 (H, 26);
-            Len_R : constant Database.Status.Result :=
-              Validate_Payload_Length (H, Len);
+            R : constant Database.Status.Result := Scan (Database_Path);
+            pragma Unreferenced (R);
          begin
-            exit when not Database.Status.Is_Ok (Len_R);
-            if Len = 0 then
-               declare
-                  Empty : Stream_Element_Array (1 .. 0);
-               begin
-                  R := Validate_Header (H, Empty, Last, K, L);
-               end;
-               exit when not Database.Status.Is_Ok (R);
-            else
-               declare
-                  Payload      : Stream_Element_Array
-                    (0 .. Stream_Element_Offset (Len - 1));
-                  Payload_Last : Stream_Element_Offset;
-               begin
-                  Read (File, Payload, Payload_Last);
-                  exit when Payload_Last /= Payload'Last;
-                  R := Validate_Header (H, Payload, Last, K, L);
-                  exit when not Database.Status.Is_Ok (R);
-                  if K = Commit_Record and then Len >= 4 then
-                     --  Header offset 17 holds the transaction id; payload
-                     --  offset 0 holds the commit version (see Append_Commit).
-                     Database.MVCC.Mark_Committed
-                       (Get_U32 (H, 17), Get_U32 (Payload, 0));
-                  end if;
-               end;
-            end if;
+            null;
          end;
-      end loop;
-      Ada.Streams.Stream_IO.Close (File);
-   exception
-      when others =>
+      end if;
+      return Max;
+   end Max_Transaction_Id;
+
+   procedure Restore_Committed_Lifecycles (Database_Path : Wide_Wide_String) is
+      function Note
+        (H       : Stream_Element_Array;
+         K       : Record_Kind;
+         LSN     : Log_Sequence_Number;
+         Payload : Stream_Element_Array) return Database.Status.Result is
+         pragma Unreferenced (LSN);
+      begin
+         if K = Commit_Record then
+            --  Header offset 17 holds the transaction id; payload
+            --  offset 0 holds the commit version (see Append_Commit).
+            Database.MVCC.Mark_Committed (Get_U32 (H, 17), Get_U32 (Payload, 0));
+         end if;
+         return Database.Status.Success;
+      end Note;
+
+      function Scan is new Scan_Records (Note);
+   begin
+      if Exists (Database_Path) then
+         declare
+            R : constant Database.Status.Result := Scan (Database_Path);
+            pragma Unreferenced (R);
          begin
-            if Ada.Streams.Stream_IO.Is_Open (File) then
-               Ada.Streams.Stream_IO.Close (File);
-            end if;
-         exception
-            when others => null;
+            null;
          end;
+      end if;
    end Restore_Committed_Lifecycles;
 
 end Database.WAL;

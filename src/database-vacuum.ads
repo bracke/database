@@ -4,9 +4,11 @@ with Database.Transactions;
 
    --  Public nested package `Database.Vacuum`.
 package Database.Vacuum is
-   --  Public operation `Vacuum`. See the package documentation for transaction, ownership, and error-result semantics.
-   --  @param Tx transaction object that scopes the operation.
-   --  @return Result produced by the function.
+   --  Reclaim space in the database of a write transaction: remove the rows deleted for every snapshot from table heaps
+   --  and indexes, compact full-text indexes, and return to the free list the table heap and index pages that no
+   --  catalog root reaches, unless some root cannot be followed.
+   --  @param Tx active write transaction.
+   --  @return Status result; Read_Only_Transaction for a read-only transaction.
    function Vacuum
      (Tx : in out Database.Transactions.Transaction) return Database.Status.Result;
 end Database.Vacuum;

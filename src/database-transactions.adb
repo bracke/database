@@ -16,12 +16,14 @@ with Database.Metrics;
 with Database.Tracing;
 with Database.Transactions.State_Rules;
 with Ada.Containers;
+with System;
 with Ada.Strings.Wide_Wide_Unbounded;
 use Ada.Strings.Wide_Wide_Unbounded;
 
 package body Database.Transactions is
    use type Ada.Containers.Count_Type;
    use type Database.Log_Sequence.Log_Sequence_Number;
+   use type System.Address;
 
    --  Transaction ids are handed out here. Concurrent readers on one handle run
    --  Start in parallel (the read lock admits many), so the allocation must be
@@ -267,6 +269,8 @@ package body Database.Transactions is
       R : Database.Status.Result;
       Id : constant Page_Id := Get_Id (Page);
       Last_WAL_LSN : Database.Log_Sequence.Log_Sequence_Number := Database.Log_Sequence.Invalid_LSN;
+      First_Write : constant Boolean := not Tx.Has_Writes;
+      Keep_Original : Boolean;
    begin
       if Tx.Current_State /= Active or else Tx.DB = null then
          Tx.Last := Database.Status.Failure (Database.Status.Transaction_Error, "transaction not active");
@@ -285,11 +289,33 @@ package body Database.Transactions is
          return R;
       end if;
 
+      --  A page the file had before the transaction keeps its first image, in memory for a rollback and in the log for
+      --  recovery after a crash, which writes it back when the transaction did not finish.
+      Keep_Original := Natural (Id) < Tx.Original_Page_Count and then not Already_Saved (Tx, Id);
+      if Keep_Original then
+         R := Database.Storage.File_IO.Read_Page (Tx.DB.File, Id, Get_Kind (Page), Original);
+         if not Database.Status.Is_Ok (R) then
+            --  The page changes kind, for example when it is allocated from or released to the free list.
+            R := Database.Storage.File_IO.Read_Raw_Page (Tx.DB.File, Id, Original);
+         end if;
+         if not Database.Status.Is_Ok (R) then
+            Tx.Current_State := Failed;
+            Tx.Last := R;
+            return R;
+         end if;
+      end if;
+
       declare
          W : Database.WAL.WAL_Handle;
          L : Database.Log_Sequence.Log_Sequence_Number;
       begin
          R := Database.WAL.Open (W, Database.Storage.File_IO.Path (Tx.DB.File));
+         if Database.Status.Is_Ok (R) and then First_Write then
+            R := Database.WAL.Append_Begin (W, Natural (Tx.Transaction_Id), Tx.Original_Page_Count, L);
+         end if;
+         if Database.Status.Is_Ok (R) and then Keep_Original then
+            R := Database.WAL.Append_Page_Undo (W, Natural (Tx.Transaction_Id), Original, L);
+         end if;
          if Database.Status.Is_Ok (R) then
             R := Database.WAL.Append_Page_Frame (W, Natural (Tx.Transaction_Id), Page, L);
             if Database.Status.Is_Ok (R) then
@@ -313,17 +339,7 @@ package body Database.Transactions is
          end if;
       end;
 
-      if Natural (Id) < Tx.Original_Page_Count and then not Already_Saved (Tx, Id) then
-         R := Database.Storage.File_IO.Read_Page (Tx.DB.File, Id, Get_Kind (Page), Original);
-         if not Database.Status.Is_Ok (R) then
-            --  The page changes kind, for example when it is allocated from or released to the free list.
-            R := Database.Storage.File_IO.Read_Raw_Page (Tx.DB.File, Id, Original);
-         end if;
-         if not Database.Status.Is_Ok (R) then
-            Tx.Current_State := Failed;
-            Tx.Last := R;
-            return R;
-         end if;
+      if Keep_Original then
          Tx.Before_Image_Ids.Append (Id);
          Tx.Before_Image_Pages.Append (Original);
       end if;
@@ -434,21 +450,24 @@ package body Database.Transactions is
       return Database.Status.Success;
    end Validate_Deferred_Constraints;
 
-   --  Write the catalog staged in memory to its page through the transaction, unless the page already holds it.
-   function Save_Catalog (Tx : in out Transaction) return Database.Status.Result is
-      Wanted, Stored : Database.Storage.Pages.Page;
-      R              : constant Database.Status.Result := Database.Catalog.Encode (Tx.DB.all, Wanted);
+   --  Log that the transaction's writes are undone, so recovery does not undo them again over later work.
+   function Log_Abort (Tx : Transaction) return Database.Status.Result is
+      W : Database.WAL.WAL_Handle;
+      L : Database.Log_Sequence.Log_Sequence_Number;
+      R : Database.Status.Result := Database.WAL.Open (W, Database.Storage.File_IO.Path (Tx.DB.File));
    begin
-      if not Database.Status.Is_Ok (R)
-        or else (Database.Status.Is_Ok
-                   (Database.Storage.File_IO.Read_Page
-                      (Tx.DB.File, Database.Catalog.Catalog_Page_Id, Database.Storage.Pages.Catalog_Page, Stored))
-                 and then Database.Storage.Pages.Payload (Wanted) = Database.Storage.Pages.Payload (Stored))
-      then
-         return R;
+      if Database.Status.Is_Ok (R) then
+         R := Database.WAL.Append_Abort (W, Natural (Tx.Transaction_Id), L);
       end if;
-      return Write_Page (Tx, Wanted);
-   end Save_Catalog;
+      if Database.Status.Is_Ok (R) then
+         R := Database.WAL.Flush (W);
+      end if;
+      declare
+         CR : constant Database.Status.Result := Database.WAL.Close (W);
+      begin
+         return (if Database.Status.Is_Ok (R) then CR else R);
+      end;
+   end Log_Abort;
 
    function Commit (Tx : in out Transaction) return Database.Status.Result is
       R : Database.Status.Result;
@@ -466,7 +485,7 @@ package body Database.Transactions is
       end if;
       if Tx.Current_Mode = Read_Write and then Database.Backend (Tx.DB.all) = Database.Persistent_Backend then
          --  Catalog changes are staged in memory until here, so the page is logged like every other page.
-         R := Save_Catalog (Tx);
+         R := Database.Catalog.Save (Tx);
          if not Database.Status.Is_Ok (R) then
             Tx.Current_State := Failed;
             Tx.Last := R;
@@ -591,6 +610,9 @@ package body Database.Transactions is
          --  Pages past the restored end of the file and pages freed by the transaction are gone or in use again.
          Database.Storage.Free_List.Initialize_From_File (Tx.DB.Page_Allocator, Tx.DB.File);
          R := Database.Storage.File_IO.Flush (Tx.DB.File);
+         if Database.Status.Is_Ok (R) and then Tx.Has_Writes then
+            R := Log_Abort (Tx);
+         end if;
          if not Database.Status.Is_Ok (R) then
             Tx.Current_State := Failed;
             Tx.Last := R;
@@ -680,6 +702,9 @@ package body Database.Transactions is
    begin
       return Tx.DB;
    end Owning_Database;
+
+   function Belongs_To (Tx : Transaction; DB : Database.Handle) return Boolean is
+     (Tx.DB /= null and then Tx.DB.all'Address = DB'Address);
 
    overriding procedure Finalize (Tx : in out Transaction) is
       R : Database.Status.Result;

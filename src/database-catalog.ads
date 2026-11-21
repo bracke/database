@@ -63,6 +63,8 @@ package Database.Catalog is
    --  Save the catalog to its page. While a write transaction is active the change is only checked to fit and stays
    --  staged in memory: the transaction writes the page through its log when it commits, and a rollback reloads the
    --  catalog from the page. Catalog changes are therefore made only inside the write transaction, never beside it.
+   --  Outside a transaction the page is written under the write lock, waiting for a running checkpoint or backup, so
+   --  it must not be called from code that runs inside one, such as an event handler.
    --  @param DB database handle used by the operation.
    --  @return Status result; Row_Too_Large when the catalog no longer fits its page.
    function Save (DB : in out Database.Handle) return Database.Status.Result;

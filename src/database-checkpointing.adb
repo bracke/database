@@ -18,7 +18,7 @@ package body Database.Checkpointing is
       end if;
       --  The checkpoint writes pages, may cut the file back and rescans the free pages, so no transaction may write
       --  meanwhile: it holds the write lock throughout instead of only checking that no writer is active.
-      DB.Lock.Try_Begin_Write (Granted);
+      DB.Lock.Try_Begin_Exclusive (Granted);
       if not Granted then
          return Database.Status.Failure (Database.Status.Checkpoint_Failure,
            "checkpoint cannot run while writer is active");

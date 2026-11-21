@@ -240,6 +240,12 @@ package body WAL_Tests is
       Database.Close (DB);
       Remove_File ("wal_checkpoint_lock.database");
       Remove_File ("wal_checkpoint_lock.database.wal");
+   exception
+      when others =>
+         --  The counting handler must not outlive the test, whatever failed.
+         Database.Events.Clear_Handlers;
+         Database.Fault_Hooks.Disable_Fault (Database.Fault_Hooks.Fail_Checkpoint);
+         raise;
    end Checkpoint_Holds_Write_Lock;
 
    function One_Posting (Row_Id : Natural) return Database.Full_Text.Postings.Posting_Vectors.Vector is

@@ -191,6 +191,9 @@ package body Database.Catalog is
       State.all.Row_Counts.Clear;
    end Clear;
 
+   --  Write the catalog to its page; the caller holds the write lock exclusively.
+   function Write_Catalog (DB : in out Database.Handle) return Database.Status.Result;
+
    function Register
      (DB     : in out Database.Handle;
       Schema : in out Database.Schema.Table_Schema) return Database.Status.Result is
@@ -205,20 +208,29 @@ package body Database.Catalog is
       Schema.Table_Id :=
         Database.Catalog.Rules.Next_Table_Id (Natural (State.all.Tables.Length));
       if Database.Backend (DB) = Database.Persistent_Backend and then Schema.Heap_First_Page = 0 then
-         if DB.Lock.Writer_Active then
+         if DB.Lock.Transaction_Writing then
             return Database.Status.Failure
               (Database.Status.Transaction_Error,
                "a table registered in a write transaction needs a heap allocated through it");
          end if;
+         --  The heap and the catalog are written directly, so no transaction, checkpoint or backup may run meanwhile.
+         DB.Lock.Begin_Exclusive;
          declare
             First : Database.Storage.Pages.Page_Id;
             R : Database.Status.Result;
          begin
             R := Database.Storage.Table_Heap.Create_Heap (DB.File, DB.Page_Allocator, First);
-            if not Database.Status.Is_Ok (R) then
-               return R;
+            if Database.Status.Is_Ok (R) then
+               Schema.Heap_First_Page := Natural (First);
+               State.all.Tables.Append (Schema);
+               R := Write_Catalog (DB);
             end if;
-            Schema.Heap_First_Page := Natural (First);
+            DB.Lock.End_Write;
+            return R;
+         exception
+            when others =>
+               DB.Lock.End_Write;
+               raise;
          end;
       end if;
       State.all.Tables.Append (Schema);
@@ -566,23 +578,47 @@ package body Database.Catalog is
         or else (Database.Status.Is_Ok (Compare (DB, Wanted, Changed)) and then not Changed);
    end Is_Saved;
 
-   function Save (DB : in out Database.Handle) return Database.Status.Result is
+   --  Encode the catalog and, unless Staged, write it to its page. Encoding even a change that is only staged reports
+   --  a catalog that has outgrown its page at the change.
+   function Encode_Catalog (DB : in out Database.Handle; Staged : Boolean) return Database.Status.Result is
       P : Database.Storage.Pages.Page;
+      R : Database.Status.Result;
+   begin
+      R := Injected_Write_Failure;
+      if not Database.Status.Is_Ok (R) then
+         return R;
+      end if;
+      R := Encode (DB, P);
+      if not Database.Status.Is_Ok (R) or else Staged then
+         return R;
+      end if;
+      return Database.Storage.File_IO.Write_Page (DB.File, P);
+   end Encode_Catalog;
+
+   function Write_Catalog (DB : in out Database.Handle) return Database.Status.Result is
+     (Encode_Catalog (DB, Staged => False));
+
+   function Save (DB : in out Database.Handle) return Database.Status.Result is
       R : Database.Status.Result;
    begin
       if Database.Backend (DB) /= Database.Persistent_Backend then
          return Database.Status.Success;
       end if;
-      R := Injected_Write_Failure;
-      if not Database.Status.Is_Ok (R) then
-         return R;
+      if DB.Lock.Transaction_Writing then
+         return Encode_Catalog (DB, Staged => True);
       end if;
-      --  Encoding even a change that is only staged reports a catalog that has outgrown its page at the change.
-      R := Encode (DB, P);
-      if not Database.Status.Is_Ok (R) or else DB.Lock.Writer_Active then
-         return R;
-      end if;
-      return Database.Storage.File_IO.Write_Page (DB.File, P);
+      --  The page is written directly, so no transaction, checkpoint or backup may run meanwhile; one that runs is
+      --  waited for.
+      DB.Lock.Begin_Exclusive;
+      begin
+         R := Write_Catalog (DB);
+      exception
+         when others =>
+            DB.Lock.End_Write;
+            raise;
+      end;
+      DB.Lock.End_Write;
+      return R;
    end Save;
 
    function Pending_Page

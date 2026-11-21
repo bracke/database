@@ -74,22 +74,32 @@ package Database is
    --  Internal free-page allocator shared with storage child packages.
    type Allocator is private;
 
-   --  In-process read/write lock used by transaction coordination.
+   --  In-process read/write lock used by transaction coordination. A write transaction holds the write side; so does,
+   --  exclusively, an operation outside any transaction that writes the file directly: a checkpoint, a backup or a
+   --  catalog change. End_Write releases either.
    protected type Read_Write_Lock is
       entry Begin_Read;
       procedure Try_Begin_Read (Granted : out Boolean);
       procedure End_Read;
       entry Begin_Write;
       procedure Try_Begin_Write (Granted : out Boolean);
+      --  Take the write side for an operation outside any transaction, waiting for the current writer.
+      entry Begin_Exclusive;
+      --  Take the write side for an operation outside any transaction when no one writes.
+      procedure Try_Begin_Exclusive (Granted : out Boolean);
       procedure End_Write;
       function Active_Readers return Natural;
       function Writer_Active return Boolean;
+      --  Whether a write transaction, rather than an operation outside one, holds the write side.
+      function Transaction_Writing return Boolean;
       function Waiting_Writers return Natural;
    private
       Readers       : Natural := 0;
       Writer        : Boolean := False;
+      Exclusive     : Boolean := False;
       Waiting_Write : Natural := 0;
       entry Acquire_Write;
+      entry Acquire_Exclusive;
    end Read_Write_Lock;
 
    --  Public database handle.

@@ -60,13 +60,39 @@ package body Database is
          end if;
       end Try_Begin_Write;
 
+      entry Begin_Exclusive when True is
+      begin
+         Waiting_Write := Waiting_Write + 1;
+         requeue Acquire_Exclusive;
+      end Begin_Exclusive;
+
+      entry Acquire_Exclusive when not Writer is
+      begin
+         if Waiting_Write > 0 then
+            Waiting_Write := Waiting_Write - 1;
+         end if;
+         Writer := True;
+         Exclusive := True;
+      end Acquire_Exclusive;
+
+      procedure Try_Begin_Exclusive (Granted : out Boolean) is
+      begin
+         Granted := not Writer;
+         if Granted then
+            Writer := True;
+            Exclusive := True;
+         end if;
+      end Try_Begin_Exclusive;
+
       procedure End_Write is
       begin
          Writer := False;
+         Exclusive := False;
       end End_Write;
 
       function Active_Readers return Natural is (Readers);
       function Writer_Active return Boolean is (Writer);
+      function Transaction_Writing return Boolean is (Writer and then not Exclusive);
       function Waiting_Writers return Natural is (Waiting_Write);
    end Read_Write_Lock;
 

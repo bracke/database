@@ -38,9 +38,9 @@
     "server mode"
   ],
   "counts": {
-    "source_specs": 102,
-    "source_bodies": 102,
-    "packages": 102,
+    "source_specs": 107,
+    "source_bodies": 107,
+    "packages": 107,
     "test_specs": 33,
     "test_bodies": 35,
     "test_assertions_detected": 1176,
@@ -88,6 +88,11 @@
       "name": "Database.Check_Constraints",
       "spec": "src/database-check_constraints.ads",
       "body": "src/database-check_constraints.adb"
+    },
+    {
+      "name": "Database.Checkpoint_Merge",
+      "spec": "src/database-checkpoint_merge.ads",
+      "body": "src/database-checkpoint_merge.adb"
     },
     {
       "name": "Database.Checkpointing",
@@ -280,6 +285,11 @@
       "body": "src/database-indexes-btree.adb"
     },
     {
+      "name": "Database.Indexes.BTree.Nodes",
+      "spec": "src/database-indexes-btree-nodes.ads",
+      "body": "src/database-indexes-btree-nodes.adb"
+    },
+    {
       "name": "Database.Indexes.BTree_Invariants",
       "spec": "src/database-indexes-btree_invariants.ads",
       "body": "src/database-indexes-btree_invariants.adb"
@@ -323,6 +333,11 @@
       "name": "Database.Materialized_Views",
       "spec": "src/database-materialized_views.ads",
       "body": "src/database-materialized_views.adb"
+    },
+    {
+      "name": "Database.Memory_Store",
+      "spec": "src/database-memory_store.ads",
+      "body": "src/database-memory_store.adb"
     },
     {
       "name": "Database.Metrics",
@@ -400,6 +415,11 @@
       "body": "src/database-schema.adb"
     },
     {
+      "name": "Database.State_Registry",
+      "spec": "src/database-state_registry.ads",
+      "body": "src/database-state_registry.adb"
+    },
+    {
       "name": "Database.Statistics",
       "spec": "src/database-statistics.ads",
       "body": "src/database-statistics.adb"
@@ -468,6 +488,11 @@
       "name": "Database.Tables",
       "spec": "src/database-tables.ads",
       "body": "src/database-tables.adb"
+    },
+    {
+      "name": "Database.Tables.Indexing",
+      "spec": "src/database-tables-indexing.ads",
+      "body": "src/database-tables-indexing.adb"
     },
     {
       "name": "Database.Testing",
@@ -579,6 +604,7 @@
     "core": [
       "Database",
       "Database.Catalog",
+      "Database.Catalog.Rules",
       "Database.Check",
       "Database.Checksums",
       "Database.Constraints",
@@ -586,9 +612,11 @@
       "Database.Migrations",
       "Database.Optional",
       "Database.Predicates",
+      "Database.State_Registry",
       "Database.Status",
       "Database.Storage",
       "Database.Tables",
+      "Database.Tables.Indexing",
       "Database.Vacuum",
       "Database.Validation_Hooks"
     ],
@@ -632,6 +660,7 @@
     "indexes": [
       "Database.Indexes",
       "Database.Indexes.BTree",
+      "Database.Indexes.BTree.Nodes",
       "Database.Indexes.BTree_Invariants"
     ],
     "observability": [
@@ -653,6 +682,7 @@
       "Database.Statistics"
     ],
     "storage": [
+      "Database.Memory_Store",
       "Database.Storage.File_IO",
       "Database.Storage.Free_List",
       "Database.Storage.Free_List_Manager",
@@ -660,14 +690,17 @@
       "Database.Storage.Pages",
       "Database.Storage.Record_Format",
       "Database.Storage.Record_Serializer",
-      "Database.Storage.Table_Heap"
+      "Database.Storage.Table_Heap",
+      "Database.Storage.Table_Heap_Layout"
     ],
     "transactions_mvcc": [
       "Database.Locking",
       "Database.MVCC",
       "Database.Transactions",
+      "Database.Transactions.State_Rules",
       "Database.Versioning",
-      "Database.Visibility"
+      "Database.Visibility",
+      "Database.Visibility.Rules"
     ],
     "typed_data_model": [
       "Database.Date_Time",
@@ -679,11 +712,14 @@
       "Database.Values"
     ],
     "wal_recovery": [
+      "Database.Checkpoint_Merge",
       "Database.Checkpointing",
       "Database.Log_Sequence",
+      "Database.Log_Sequence.Rules",
       "Database.Replay",
       "Database.WAL",
-      "Database.WAL.Frame_Parser"
+      "Database.WAL.Frame_Parser",
+      "Database.WAL.Payload_Rules"
     ]
   },
   "examples": [

@@ -7,6 +7,9 @@ with AUnit.Assertions;
 with Database;
 with Database.Backup;
 with Database.Backup_Format;
+with Database.Catalog;
+with Database.Events;
+with Database.Fault_Hooks;
 with Database.Export;
 with Database.Import;
 with Database.Keys;
@@ -313,6 +316,15 @@ package body Backup_Restore_Tests is
          Assert (Granted, "a backup gives the write lock back");
          R := Database.Transactions.Commit (Tx);
          Assert (Database.Status.Is_Ok (R), "commit after the backup failed");
+
+         Database.Fault_Hooks.Enable_Fault (Database.Fault_Hooks.Fail_Backup_Copy);
+         R := Database.Backup.Create_Physical_Backup (DB, "backup_writer.backup");
+         Database.Fault_Hooks.Disable_Fault (Database.Fault_Hooks.Fail_Backup_Copy);
+         Assert (not Database.Status.Is_Ok (R), "the injected backup failure is reported");
+         Database.Transactions.Try_Begin_Write (DB, Tx, Granted);
+         Assert (Granted, "a failed backup gives the write lock back");
+         R := Database.Transactions.Commit (Tx);
+         Assert (Database.Status.Is_Ok (R), "commit after the failed backup failed");
       end;
       Database.Close (DB);
       Remove_File ("backup_writer.database");
@@ -370,6 +382,102 @@ package body Backup_Restore_Tests is
       Remove_File ("backup_forced_restored.database");
       Remove_Tree ("backup_forced.backup");
    end Forced_Checkpoint_Backup_Needs_No_WAL;
+
+   --  A table registered outside any transaction by another task while a backup holds the write lock.
+   Shared_DB : Database.Handle;
+
+   protected Registration is
+      procedure Finish (Outcome : Database.Status.Result);
+      function Finished return Boolean;
+      function Result return Database.Status.Result;
+   private
+      Done  : Boolean := False;
+      Value : Database.Status.Result;
+   end Registration;
+
+   protected body Registration is
+      procedure Finish (Outcome : Database.Status.Result) is
+      begin
+         Value := Outcome;
+         Done := True;
+      end Finish;
+      function Finished return Boolean is (Done);
+      function Result return Database.Status.Result is (Value);
+   end Registration;
+
+   task type Registrar is
+      entry Start;
+   end Registrar;
+
+   task body Registrar is
+      S : Database.Schema.Table_Schema := User_Schema;
+   begin
+      accept Start;
+      S.Name := Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("late_users");
+      Registration.Finish (Database.Catalog.Register (Shared_DB, S));
+   end Registrar;
+
+   type Registrar_Access is access Registrar;
+   Late                   : Registrar_Access;
+   Finished_During_Backup : Boolean := True;
+
+   --  Runs inside the backup's forced checkpoint, while the backup holds the write lock.
+   procedure Register_During_Backup (Event : Database.Events.Operational_Event) is
+      use type Database.Events.Event_Kind;
+   begin
+      if Event.Kind = Database.Events.Checkpoint_Start and then Late = null then
+         Late := new Registrar;
+         Late.Start;
+         delay 0.5;
+         Finished_During_Backup := Registration.Finished;
+      end if;
+   end Register_During_Backup;
+
+   procedure Catalog_Change_Waits_For_Backup
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      R      : Database.Status.Result;
+      Found  : Database.Schema.Table_Schema;
+   begin
+      Remove_File ("backup_catalog.database");
+      Remove_File ("backup_catalog.database.wal");
+      Remove_Tree ("backup_catalog.backup");
+      Database.Create (Shared_DB, "backup_catalog.database");
+      Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "create failed");
+
+      Database.Events.Clear_Handlers;
+      Database.Events.Subscribe (Register_During_Backup'Access);
+      begin
+         R := Database.Backup.Create_Physical_Backup
+           (Shared_DB, "backup_catalog.backup",
+            (Include_WAL => True, Verify_After_Copy => True, Force_Checkpoint => True));
+         Database.Events.Clear_Handlers;
+      exception
+         when others =>
+            Database.Events.Clear_Handlers;
+            raise;
+      end;
+      Assert (Database.Status.Is_Ok (R), "backup failed");
+      Assert (Late /= null, "the backup did not checkpoint");
+      for Attempt in 1 .. 500 loop
+         exit when Late'Terminated;
+         delay 0.01;
+      end loop;
+      Assert (Late'Terminated, "the registration never finished");
+      Assert (not Finished_During_Backup, "a catalog change ran while the backup held the write lock");
+      Assert (Database.Status.Is_Ok (Registration.Result), "the registration after the backup failed");
+
+      Database.Close (Shared_DB);
+      Database.Open (Shared_DB, "backup_catalog.database");
+      Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "reopen failed");
+      R := Database.Catalog.Find_By_Name (Database.Catalog_State_Key (Shared_DB), "late_users", Found);
+      Assert (Database.Status.Is_Ok (R), "the table registered beside the backup is not on disk");
+      Database.Close (Shared_DB);
+      Remove_File ("backup_catalog.database");
+      Remove_File ("backup_catalog.database.wal");
+      Remove_Tree ("backup_catalog.backup");
+   end Catalog_Change_Waits_For_Backup;
 
    procedure Logical_Export_And_Import
      (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -810,6 +918,10 @@ package body Backup_Restore_Tests is
         (T,
          Forced_Checkpoint_Backup_Needs_No_WAL'Access,
          "a backup that forces a checkpoint is complete without the WAL");
+      Register_Routine
+        (T,
+         Catalog_Change_Waits_For_Backup'Access,
+         "a catalog change beside a backup waits for it and is saved");
       Register_Routine
         (T,
          Encrypted_Physical_Backup_And_Restore'Access,

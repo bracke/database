@@ -1,5 +1,6 @@
 with Ada.Characters.Conversions;
 with Ada.Directories;
+with Ada.Exceptions;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Backup_Format;
 with Database.Checkpoint_Merge;
@@ -49,7 +50,7 @@ package body Database.Backup is
       end if;
    end Copy_If_Exists;
 
-   --  Make the backup; the caller holds the write lock of DB.
+   --  Make the backup; the caller holds the write lock of DB and turns an exception into a failure.
    function Copy_Backup
      (DB          : in out Database.Handle;
       Destination : Wide_Wide_String;
@@ -145,9 +146,6 @@ package body Database.Backup is
          end;
       end if;
       return Database.Status.Success;
-   exception
-      when others =>
-         return Database.Status.Failure (Database.Status.Backup_Error, "physical backup failed safely");
    end Copy_Backup;
 
    function Base_Physical_Backup
@@ -164,11 +162,19 @@ package body Database.Backup is
       end if;
       --  The database image and the WAL must be copied at one point in time, so no transaction or checkpoint may
       --  write until both are copied: the backup holds the write lock throughout. Readers may continue.
-      DB.Lock.Try_Begin_Write (Granted);
+      DB.Lock.Try_Begin_Exclusive (Granted);
       if not Granted then
          return Database.Status.Failure (Database.Status.Transaction_Conflict, "backup rejected active writer");
       end if;
-      R := Copy_Backup (DB, Destination, Options, Encrypted, Key);
+      begin
+         R := Copy_Backup (DB, Destination, Options, Encrypted, Key);
+      exception
+         when E : others =>
+            R := Database.Status.Failure
+              (Database.Status.Backup_Error,
+               "physical backup failed safely: "
+               & Ada.Characters.Conversions.To_Wide_Wide_String (Ada.Exceptions.Exception_Message (E)));
+      end;
       DB.Lock.End_Write;
       return R;
    end Base_Physical_Backup;

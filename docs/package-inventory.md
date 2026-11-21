@@ -1,6 +1,7 @@
 # Package Inventory
 
-Current source packages grouped by subsystem.
+Current source packages grouped by subsystem. Private packages are marked; only units of the
+same hierarchy can use them.
 
 
 ## Advanced Relational Features
@@ -24,6 +25,7 @@ Current source packages grouped by subsystem.
 
 - `Database` — `src/database.ads`
 - `Database.Catalog` — `src/database-catalog.ads`
+- `Database.Catalog.Rules` — `src/database-catalog-rules.ads`
 - `Database.Check` — `src/database-check.ads`
 - `Database.Checksums` — `src/database-checksums.ads`
 - `Database.Constraints` — `src/database-constraints.ads`
@@ -31,9 +33,11 @@ Current source packages grouped by subsystem.
 - `Database.Migrations` — `src/database-migrations.ads`
 - `Database.Optional` — `src/database-optional.ads`
 - `Database.Predicates` — `src/database-predicates.ads`
+- `Database.State_Registry` — `src/database-state_registry.ads`
 - `Database.Status` — `src/database-status.ads`
 - `Database.Storage` — `src/database-storage.ads`
 - `Database.Tables` — `src/database-tables.ads`
+- `Database.Tables.Indexing` — `src/database-tables-indexing.ads` (private)
 - `Database.Vacuum` — `src/database-vacuum.ads`
 - `Database.Validation_Hooks` — `src/database-validation_hooks.ads`
 
@@ -91,6 +95,7 @@ database packages below own the storage-facing contracts and artifact metadata.
 
 - `Database.Indexes` — `src/database-indexes.ads`
 - `Database.Indexes.BTree` — `src/database-indexes-btree.ads`
+- `Database.Indexes.BTree.Nodes` — `src/database-indexes-btree-nodes.ads` (private)
 - `Database.Indexes.BTree_Invariants` — `src/database-indexes-btree_invariants.ads`
 
 ## Observability
@@ -115,6 +120,7 @@ database packages below own the storage-facing contracts and artifact metadata.
 
 ## Storage
 
+- `Database.Memory_Store` — `src/database-memory_store.ads`
 - `Database.Storage.File_IO` — `src/database-storage-file_io.ads`
 - `Database.Storage.Free_List` — `src/database-storage-free_list.ads`
 - `Database.Storage.Free_List_Manager` — `src/database-storage-free_list_manager.ads`
@@ -123,14 +129,17 @@ database packages below own the storage-facing contracts and artifact metadata.
 - `Database.Storage.Record_Format` — `src/database-storage-record_format.ads`
 - `Database.Storage.Record_Serializer` — `src/database-storage-record_serializer.ads`
 - `Database.Storage.Table_Heap` — `src/database-storage-table_heap.ads`
+- `Database.Storage.Table_Heap_Layout` — `src/database-storage-table_heap_layout.ads`
 
 ## Transactions and MVCC
 
 - `Database.Locking` — `src/database-locking.ads`
 - `Database.MVCC` — `src/database-mvcc.ads`
 - `Database.Transactions` — `src/database-transactions.ads`
+- `Database.Transactions.State_Rules` — `src/database-transactions-state_rules.ads`
 - `Database.Versioning` — `src/database-versioning.ads`
 - `Database.Visibility` — `src/database-visibility.ads`
+- `Database.Visibility.Rules` — `src/database-visibility-rules.ads`
 
 ## Typed Data Model
 
@@ -144,8 +153,11 @@ database packages below own the storage-facing contracts and artifact metadata.
 
 ## WAL and Recovery
 
+- `Database.Checkpoint_Merge` — `src/database-checkpoint_merge.ads` (private)
 - `Database.Checkpointing` — `src/database-checkpointing.ads`
 - `Database.Log_Sequence` — `src/database-log_sequence.ads`
+- `Database.Log_Sequence.Rules` — `src/database-log_sequence-rules.ads`
 - `Database.Replay` — `src/database-replay.ads`
 - `Database.WAL` — `src/database-wal.ads`
 - `Database.WAL.Frame_Parser` — `src/database-wal-frame_parser.ads`
+- `Database.WAL.Payload_Rules` — `src/database-wal-payload_rules.ads`

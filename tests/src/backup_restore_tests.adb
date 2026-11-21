@@ -8,6 +8,7 @@ with Database;
 with Database.Backup;
 with Database.Backup_Format;
 with Database.Catalog;
+with Database.Checkpointing;
 with Database.Events;
 with Database.Fault_Hooks;
 with Database.Export;
@@ -26,6 +27,7 @@ with Database.Values;
 
 package body Backup_Restore_Tests is
    use AUnit.Assertions;
+   use type Database.Status.Status_Code;
 
    type User_Row is record
       Id   : Integer;
@@ -460,6 +462,10 @@ package body Backup_Restore_Tests is
          exit when Late'Terminated;
          delay 0.01;
       end loop;
+      if not Late'Terminated then
+         --  A task still waiting for the lock would keep the test program from ending.
+         abort Late.all;
+      end if;
       Assert (Late'Terminated, "the registration never finished");
       Assert (Database.Status.Is_Ok (Registration.Result), "the registration failed once the lock was free");
    end Await_Registration;
@@ -549,6 +555,108 @@ package body Backup_Restore_Tests is
       Remove_File ("catalog_beside_tx.database");
       Remove_File ("catalog_beside_tx.database.wal");
    end Catalog_Change_Waits_For_Other_Transaction;
+
+   Handler_Result : Database.Status.Result;
+   Close_Result   : Database.Status.Result;
+
+   --  Runs inside a checkpoint, in the task that holds the write lock, and changes the catalog outside a transaction.
+   procedure Register_Inside_Checkpoint (Event : Database.Events.Operational_Event) is
+      use type Database.Events.Event_Kind;
+      S : Database.Schema.Table_Schema := User_Schema;
+   begin
+      if Event.Kind = Database.Events.Checkpoint_Start then
+         S.Name := Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("inside_checkpoint");
+         Handler_Result := Database.Catalog.Register (Shared_DB, S);
+         Database.Close (Shared_DB);
+         Close_Result := Database.Last_Result (Shared_DB);
+      end if;
+   end Register_Inside_Checkpoint;
+
+   procedure Catalog_Change_Inside_Checkpoint_Is_Refused
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      R : Database.Status.Result;
+   begin
+      Remove_File ("catalog_in_checkpoint.database");
+      Remove_File ("catalog_in_checkpoint.database.wal");
+      Database.Create (Shared_DB, "catalog_in_checkpoint.database");
+      Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "create failed");
+      Handler_Result := Database.Status.Success;
+
+      Database.Events.Clear_Handlers;
+      Database.Events.Subscribe (Register_Inside_Checkpoint'Access);
+      begin
+         R := Database.Checkpointing.Checkpoint (Shared_DB);
+         Database.Events.Clear_Handlers;
+      exception
+         when others =>
+            Database.Events.Clear_Handlers;
+            raise;
+      end;
+      Assert (Database.Status.Is_Ok (R), "checkpoint failed");
+      Assert
+        (Handler_Result.Code = Database.Status.Transaction_Conflict,
+         "a catalog change inside the checkpoint that holds the lock is refused instead of waiting for itself");
+      Assert (Close_Result.Code = Database.Status.Transaction_Conflict, "closing inside a checkpoint is refused");
+      Assert (Database.Is_Open (Shared_DB), "a refused close left the database open");
+      Database.Close (Shared_DB);
+      Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "close failed");
+      Remove_File ("catalog_in_checkpoint.database");
+      Remove_File ("catalog_in_checkpoint.database.wal");
+   end Catalog_Change_Inside_Checkpoint_Is_Refused;
+
+   type Transaction_Access is access all Database.Transactions.Transaction;
+
+   task type Borrower is
+      entry Write (Tx : Transaction_Access; Schema : Database.Schema.Table_Schema);
+      entry Outcome (R : out Database.Status.Result);
+   end Borrower;
+
+   task body Borrower is
+      Borrowed : Transaction_Access;
+      S        : Database.Schema.Table_Schema;
+      Result   : Database.Status.Result;
+   begin
+      accept Write (Tx : Transaction_Access; Schema : Database.Schema.Table_Schema) do
+         Borrowed := Tx;
+         S := Schema;
+      end Write;
+      Result := Users.Insert (Borrowed.all, Shared_DB, S, (Id => 5, Name => "Borrowed        ", Age => 1));
+      accept Outcome (R : out Database.Status.Result) do
+         R := Result;
+      end Outcome;
+   end Borrower;
+
+   procedure Transaction_Of_Another_Task_Is_Refused
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Tx : aliased Database.Transactions.Transaction;
+      S  : Database.Schema.Table_Schema := User_Schema;
+      R  : Database.Status.Result;
+   begin
+      Remove_File ("borrowed_tx.database");
+      Remove_File ("borrowed_tx.database.wal");
+      Database.Create (Shared_DB, "borrowed_tx.database");
+      Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "create failed");
+      R := Users.Register (Shared_DB, S);
+      Assert (Database.Status.Is_Ok (R), "register failed");
+
+      Database.Transactions.Begin_Write (Shared_DB, Tx);
+      declare
+         Other : Borrower;
+      begin
+         Other.Write (Tx'Unchecked_Access, S);
+         Other.Outcome (R);
+      end;
+      Assert (R.Code = Database.Status.Invalid_Argument, "a write through another task's transaction is refused");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "commit failed");
+      Database.Close (Shared_DB);
+      Remove_File ("borrowed_tx.database");
+      Remove_File ("borrowed_tx.database.wal");
+   end Transaction_Of_Another_Task_Is_Refused;
 
    procedure Logical_Export_And_Import
      (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -997,6 +1105,14 @@ package body Backup_Restore_Tests is
         (T,
          Catalog_Change_Waits_For_Other_Transaction'Access,
          "a catalog change beside another task's transaction waits for it and is saved");
+      Register_Routine
+        (T,
+         Catalog_Change_Inside_Checkpoint_Is_Refused'Access,
+         "a catalog change inside a checkpoint is refused instead of waiting for itself");
+      Register_Routine
+        (T,
+         Transaction_Of_Another_Task_Is_Refused'Access,
+         "a write through another task's transaction is refused");
       Register_Routine
         (T,
          Encrypted_Physical_Backup_And_Restore'Access,

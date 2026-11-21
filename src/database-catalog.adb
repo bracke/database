@@ -230,9 +230,9 @@ package body Database.Catalog is
                return Write_Catalog (Target);
             end Create_And_Write;
 
-            function Register_Exclusively is new Database.Exclusive.Run (Create_And_Write);
+            function Register_Exclusively is new Database.Exclusive.Run_Waiting (Create_And_Write);
          begin
-            return Register_Exclusively (DB, Wait => True, Refused => Database.Status.Success);
+            return Register_Exclusively (DB);
          end;
       end if;
       State.all.Tables.Append (Schema);
@@ -600,7 +600,10 @@ package body Database.Catalog is
    function Write_Catalog (DB : in out Database.Handle) return Database.Status.Result is
      (Encode_Catalog (DB, Staged => False));
 
-   function Write_Exclusively is new Database.Exclusive.Run (Write_Catalog);
+   function Write_Exclusively is new Database.Exclusive.Run_Waiting (Write_Catalog);
+
+   function Save_Holding_Lock (DB : in out Database.Handle) return Database.Status.Result is
+     (if Database.Backend (DB) /= Database.Persistent_Backend then Database.Status.Success else Write_Catalog (DB));
 
    function Save (DB : in out Database.Handle) return Database.Status.Result is
    begin
@@ -613,7 +616,7 @@ package body Database.Catalog is
       end if;
       --  Otherwise the page is written directly, so no transaction, checkpoint or backup may run meanwhile; one that
       --  runs, another task's transaction included, is waited for.
-      return Write_Exclusively (DB, Wait => True, Refused => Database.Status.Success);
+      return Write_Exclusively (DB);
    end Save;
 
    function Pending_Page

@@ -167,7 +167,7 @@ package body Database.Backup is
                & Ada.Characters.Conversions.To_Wide_Wide_String (Ada.Exceptions.Exception_Message (E)));
       end Copy;
 
-      function Copy_Exclusively is new Database.Exclusive.Run (Copy);
+      function Copy_Exclusively is new Database.Exclusive.Try_Run (Copy);
    begin
       if not Database.Is_Open (DB) or else DB.Kind /= Persistent_Backend then
          return Database.Status.Failure (Database.Status.Not_Open, "backup requires an open persistent database");
@@ -175,7 +175,7 @@ package body Database.Backup is
       --  The database image and the WAL must be copied at one point in time, so no transaction or checkpoint may
       --  write until both are copied: the backup holds the write lock throughout. Readers may continue.
       return Copy_Exclusively
-        (DB, Wait => False,
+        (DB,
          Refused => Database.Status.Failure (Database.Status.Transaction_Conflict, "backup rejected active writer"));
    end Base_Physical_Backup;
 

@@ -69,6 +69,11 @@ package Database.Catalog is
    --  @return Status result; Row_Too_Large when the catalog no longer fits its page.
    function Save (DB : in out Database.Handle) return Database.Status.Result;
 
+   --  Save the catalog to its page for a caller that holds the write lock exclusively, such as Database.Close.
+   --  @param DB database handle used by the operation.
+   --  @return Status result; Row_Too_Large when the catalog no longer fits its page.
+   function Save_Holding_Lock (DB : in out Database.Handle) return Database.Status.Result;
+
    --  The catalog page a committing write transaction writes through its log: the catalog staged in memory, when its
    --  page holds something else. Fault injection makes it fail as a catalog write would.
    --  @param DB persistent database.

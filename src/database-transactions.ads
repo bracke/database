@@ -133,6 +133,12 @@ package Database.Transactions is
    --  @return True when Tx was begun on DB.
    function Belongs_To (Tx : Transaction; DB : Database.Handle) return Boolean;
 
+   --  Test whether the calling task may write through Tx. A write transaction holds its database's write lock for the
+   --  task that began it; another task writing through it would wait for that lock in a catalog change.
+   --  @param Tx transaction.
+   --  @return True for a read-only transaction, and for an active write transaction the calling task began.
+   function Owned_By_Current_Task (Tx : Transaction) return Boolean;
+
    --  Public operation `Write_Page`. See the package documentation for transaction, ownership, and error-result
    --  semantics.
    --  @param Tx transaction object that scopes the operation.

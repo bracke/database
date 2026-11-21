@@ -1,20 +1,12 @@
 package body Database.Exclusive is
-   function Run
-     (DB      : in out Database.Handle;
-      Wait    : Boolean;
-      Refused : Database.Status.Result) return Database.Status.Result
-   is
-      Granted : Boolean := True;
-      R       : Database.Status.Result;
+   --  Run Work while DB's write lock is held, and release the lock however Work ends.
+   generic
+      with function Work (DB : in out Database.Handle) return Database.Status.Result;
+   function Holding (DB : in out Database.Handle) return Database.Status.Result;
+
+   function Holding (DB : in out Database.Handle) return Database.Status.Result is
+      R : Database.Status.Result;
    begin
-      if Wait then
-         DB.Lock.Begin_Exclusive;
-      else
-         DB.Lock.Try_Begin_Exclusive (Granted);
-         if not Granted then
-            return Refused;
-         end if;
-      end if;
       begin
          R := Work (DB);
       exception
@@ -24,5 +16,27 @@ package body Database.Exclusive is
       end;
       DB.Lock.End_Write;
       return R;
-   end Run;
+   end Holding;
+
+   function Run_Waiting (DB : in out Database.Handle) return Database.Status.Result is
+      function Run is new Holding (Work);
+   begin
+      if DB.Lock.Held_By_Current_Task then
+         return Database.Status.Failure
+           (Database.Status.Transaction_Conflict, "the calling task already holds the write lock");
+      end if;
+      DB.Lock.Begin_Exclusive;
+      return Run (DB);
+   end Run_Waiting;
+
+   function Try_Run (DB : in out Database.Handle; Refused : Database.Status.Result) return Database.Status.Result is
+      function Run is new Holding (Work);
+      Granted : Boolean;
+   begin
+      DB.Lock.Try_Begin_Exclusive (Granted);
+      if not Granted then
+         return Refused;
+      end if;
+      return Run (DB);
+   end Try_Run;
 end Database.Exclusive;

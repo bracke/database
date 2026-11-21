@@ -15,7 +15,7 @@ package body Database.Checkpointing is
             & Ada.Characters.Conversions.To_Wide_Wide_String (Ada.Exceptions.Exception_Message (E)));
    end Merge;
 
-   function Merge_Exclusively is new Database.Exclusive.Run (Merge);
+   function Merge_Exclusively is new Database.Exclusive.Try_Run (Merge);
 
    function Checkpoint
      (DB   : in out Database.Handle;
@@ -31,7 +31,7 @@ package body Database.Checkpointing is
       --  The checkpoint writes pages, may cut the file back and rescans the free pages, so no transaction may write
       --  meanwhile: it holds the write lock throughout instead of only checking that no writer is active.
       return Merge_Exclusively
-        (DB, Wait => False,
+        (DB,
          Refused => Database.Status.Failure
            (Database.Status.Checkpoint_Failure, "checkpoint cannot run while writer is active"));
    end Checkpoint;

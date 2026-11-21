@@ -93,6 +93,8 @@ package Database is
       function Writer_Active return Boolean;
       --  Whether an operation outside any transaction holds the write side.
       function Exclusive_Active return Boolean;
+      --  Whether the calling task holds the write side, for a transaction or exclusively.
+      function Held_By_Current_Task return Boolean;
       --  Whether a write transaction begun by the calling task holds the write side.
       function Own_Transaction_Writing return Boolean;
       function Waiting_Writers return Natural;

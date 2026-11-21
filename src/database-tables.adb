@@ -47,8 +47,10 @@ package body Database.Tables is
       function Read_Tx_Ok (Tx : Database.Transactions.Transaction; DB : Database.Handle) return Boolean is
         (Database.Transactions.Can_Read (Tx) and then Database.Transactions.Belongs_To (Tx, DB));
 
+      --  A write transaction of another task would hold the write lock a catalog change of this task waits for.
       function Write_Tx_Ok (Tx : Database.Transactions.Transaction; DB : Database.Handle) return Boolean is
-        (Database.Transactions.Can_Write (Tx) and then Database.Transactions.Belongs_To (Tx, DB));
+        (Database.Transactions.Can_Write (Tx) and then Database.Transactions.Belongs_To (Tx, DB)
+         and then Database.Transactions.Owned_By_Current_Task (Tx));
 
       function Foreign_Tx_Error return Database.Status.Result is
         (Database.Status.Failure (Database.Status.Invalid_Argument, "transaction belongs to another database"));
@@ -58,9 +60,12 @@ package body Database.Tables is
          else Database.Status.Failure (Database.Status.Transaction_Error, "transaction required"));
 
       function Write_Tx_Error (Tx : Database.Transactions.Transaction) return Database.Status.Result is
-        (if Database.Transactions.Can_Write (Tx) then Foreign_Tx_Error
-         else Database.Status.Failure
-           (Database.Status.Read_Only_Transaction, "write attempted in read-only transaction"));
+        (if not Database.Transactions.Can_Write (Tx) then
+            Database.Status.Failure
+              (Database.Status.Read_Only_Transaction, "write attempted in read-only transaction")
+         elsif not Database.Transactions.Owned_By_Current_Task (Tx) then
+            Database.Status.Failure (Database.Status.Invalid_Argument, "transaction belongs to another task")
+         else Foreign_Tx_Error);
 
       function Current_Schema
         (DB     : in out Database.Handle;

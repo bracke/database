@@ -714,6 +714,10 @@ package body Database.Transactions is
    function Belongs_To (Tx : Transaction; DB : Database.Handle) return Boolean is
      (Tx.DB /= null and then Tx.DB.all'Address = DB'Address);
 
+   function Owned_By_Current_Task (Tx : Transaction) return Boolean is
+     (Tx.Current_Mode = Read_Only
+      or else (Tx.DB /= null and then Tx.DB.Lock.Own_Transaction_Writing));
+
    overriding procedure Finalize (Tx : in out Transaction) is
       R : Database.Status.Result;
    begin

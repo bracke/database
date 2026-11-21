@@ -43,8 +43,8 @@
     "packages": 108,
     "test_specs": 34,
     "test_bodies": 40,
-    "test_assertions_detected": 1482,
-    "registered_aunit_routines_detected": 254,
+    "test_assertions_detected": 1492,
+    "registered_aunit_routines_detected": 256,
     "examples": 16,
     "spark_projects": 13
   },

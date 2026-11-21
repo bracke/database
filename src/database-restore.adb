@@ -5,6 +5,7 @@ with Database.Crypto_Checks;
 with Database.Encrypted_Persistence;
 with Database.Fault_Hooks;
 with Database.WAL;
+with Database.Events;
 
 package body Database.Restore is
    function Native (Path : Wide_Wide_String) return String is
@@ -161,6 +162,7 @@ package body Database.Restore is
                Native (Database.WAL.WAL_Path (Destination)));
          end if;
       end;
+      Database.Events.Emit (Database.Events.Restore_End, "restore end");
       return Database.Status.Success;
    exception
       when others =>
@@ -288,6 +290,7 @@ package body Database.Restore is
                Native (Destination & ".wal.enc"));
          end if;
       end;
+      Database.Events.Emit (Database.Events.Restore_End, "restore end");
       return Database.Status.Success;
    exception
       when others =>

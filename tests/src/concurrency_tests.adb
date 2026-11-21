@@ -125,25 +125,31 @@ package body Concurrency_Tests is
    is
       pragma Unreferenced (T);
       L       : Database.Locking.Read_Write_Lock;
+      Reader_1, Reader_2, Reader_3 : Database.Lock_Claim;
+      Writer_1, Writer_2           : Database.Lock_Claim;
       Granted : Boolean;
    begin
-      L.Try_Begin_Read (Granted);
+      L.Try_Begin_Read (Reader_1, Granted);
       Assert (Granted, "first reader rejected");
-      L.Try_Begin_Read (Granted);
+      L.Try_Begin_Read (Reader_2, Granted);
       Assert (Granted, "second reader rejected");
       Assert (L.Active_Readers = 2, "reader count wrong");
-      L.Try_Begin_Write (Granted);
+      L.Try_Begin_Write (Writer_1, Granted);
       Assert (Granted, "writer rejected while readers active under MVCC");
-      L.End_Write;
-      L.End_Read;
-      L.End_Read;
-      L.Try_Begin_Write (Granted);
+      L.End_Write (Writer_1);
+      L.End_Read (Reader_2);
+      L.End_Read (Reader_2);
+      Assert (L.Active_Readers = 1, "releasing a claim twice released another reader");
+      L.End_Read (Reader_1);
+      L.Try_Begin_Write (Writer_2, Granted);
       Assert (Granted, "writer rejected after readers ended");
       Assert (L.Writer_Active, "writer not marked active");
-      L.Try_Begin_Read (Granted);
+      L.End_Write (Writer_1);
+      Assert (L.Writer_Active, "a released claim released the current writer");
+      L.Try_Begin_Read (Reader_3, Granted);
       Assert (Granted, "reader rejected while writer active under MVCC");
-      L.End_Read;
-      L.End_Write;
+      L.End_Read (Reader_3);
+      L.End_Write (Writer_2);
    end Lock_Allows_Multiple_Readers;
 
    procedure Transaction_Modes_And_Conflicts

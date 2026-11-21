@@ -12,6 +12,7 @@ package Database.Events is
       Checkpoint_Start,
       Checkpoint_End,
       Close_Start,
+      Close_End,
       Backup_Start,
       Backup_End,
       Restore_End,
@@ -48,4 +49,8 @@ package Database.Events is
    --  @param Message Parameter supplied to emit.
    function Emit (Kind : Event_Kind; Message : Wide_Wide_String := "")
      return Database.Status.Result;
+   --  Emit an event of Kind for an operation that goes on whatever its handlers do.
+   --  @param Kind kind of the event.
+   --  @param Message text of the event.
+   procedure Emit (Kind : Event_Kind; Message : Wide_Wide_String := "");
 end Database.Events;

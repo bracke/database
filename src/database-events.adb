@@ -84,4 +84,11 @@ package body Database.Events is
       E.Message := To_Unbounded_Wide_Wide_String (Message);
       return Emit_Event (E);
    end Emit;
+
+   procedure Emit (Kind : Event_Kind; Message : Wide_Wide_String := "") is
+      R : constant Database.Status.Result := Emit (Kind, Message);
+      pragma Unreferenced (R);
+   begin
+      null;
+   end Emit;
 end Database.Events;

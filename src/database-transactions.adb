@@ -73,7 +73,7 @@ package body Database.Transactions is
       Tx.Heap_Tails.Clear;
       Tx.Original_Page_Count := 0;
       Tx.Transaction_Id := 0;
-      Tx.Lock_Held := False;
+      Tx.Claim := (others => False);
       Tx.Started_At_Version := 0;
       Tx.Ended_At_Version := 0;
    end Reset;
@@ -107,18 +107,23 @@ package body Database.Transactions is
            (Database.Status.Transaction_Conflict, "the calling task already holds the write lock");
          return;
       end if;
+      --  The handle and the mode are known before the lock is taken, so finalizing Tx releases a hold that an abort
+      --  left between taking the lock and the transaction becoming active.
+      Tx.DB := DB'Unrestricted_Access;
+      Tx.Current_Mode := Mode_In;
       if Blocking then
          case Mode_In is
-            when Read_Only => DB.Lock.Begin_Read;
-            when Read_Write => DB.Lock.Begin_Write;
+            when Read_Only => DB.Lock.Begin_Read (Tx.Claim);
+            when Read_Write => DB.Lock.Begin_Write (Tx.Claim);
          end case;
          Granted := True;
       else
          case Mode_In is
-            when Read_Only => DB.Lock.Try_Begin_Read (Granted);
-            when Read_Write => DB.Lock.Try_Begin_Write (Granted);
+            when Read_Only => DB.Lock.Try_Begin_Read (Tx.Claim, Granted);
+            when Read_Write => DB.Lock.Try_Begin_Write (Tx.Claim, Granted);
          end case;
          if not Granted then
+            Tx.DB := null;
             Tx.Last := Database.Status.Failure
               (Database.Status.Transaction_Conflict, "transaction lock is not available");
             return;
@@ -127,19 +132,17 @@ package body Database.Transactions is
       --  The database may have been closed while the lock was awaited; Close holds the lock while it closes.
       if not Database.Is_Open (DB) then
          case Mode_In is
-            when Read_Only => DB.Lock.End_Read;
-            when Read_Write => DB.Lock.End_Write;
+            when Read_Only => DB.Lock.End_Read (Tx.Claim);
+            when Read_Write => DB.Lock.End_Write (Tx.Claim);
          end case;
+         Tx.DB := null;
          Tx.Last := Database.Status.Failure (Database.Status.Not_Open, "database not open");
          return;
       end if;
       --  A transaction reads its own snapshot; pages cached before it started may predate it.
       Database.Storage.File_IO.Invalidate_Cache (DB.File);
 
-      Tx.DB := DB'Unrestricted_Access;
       Tx.Current_State := Active;
-      Tx.Current_Mode := Mode_In;
-      Tx.Lock_Held := True;
       Id_Counter.Next (Tx.Transaction_Id);
       Tx.Started_At_Version := Database.Commit_Version (DB);
       Database.MVCC.Register_Snapshot (Tx.Started_At_Version);
@@ -168,19 +171,16 @@ package body Database.Transactions is
       if Tx.DB /= null then
          Database.Storage.File_IO.Invalidate_Cache (Tx.DB.File);
       end if;
-      if Tx.Lock_Held and then Tx.DB /= null then
-         case Tx.Current_Mode is
-            when Read_Only => Tx.DB.Lock.End_Read;
-            when Read_Write => Tx.DB.Lock.End_Write;
-         end case;
-         Tx.Lock_Held := False;
+      if (Tx.Claim.Read or else Tx.Claim.Write) and then Tx.DB /= null then
+         Tx.DB.Lock.End_Read (Tx.Claim);
+         Tx.DB.Lock.End_Write (Tx.Claim);
          if Tx.Started_At_Version /= 0 or else Tx.Transaction_Id /= 0 then
             Database.MVCC.Release_Snapshot (Tx.Started_At_Version);
          end if;
       end if;
    exception
       when others =>
-         Tx.Lock_Held := False;
+         Tx.Claim := (others => False);
    end Release_Lock;
 
    function Ensure_Write_State (Tx : in out Transaction) return Database.Status.Result is

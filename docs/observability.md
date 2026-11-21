@@ -51,10 +51,25 @@ Profiling reports runtime behavior but does not change query semantics.
 
 ## Events
 
-`Database.Events` supports synchronous operational hooks for lifecycle events:
-transaction begin/commit/rollback, checkpoint start/end, backup start/end,
-restore completion, integrity-check failure, WAL replay start/end, extension
-registration, and encryption key rotation.
+`Database.Events` supports synchronous operational hooks for lifecycle events.
+Each kind is emitted once per operation:
+
+| Kind | Emitted |
+| --- | --- |
+| `Transaction_Begin`, `Transaction_Commit`, `Transaction_Rollback` | when a transaction starts, commits or rolls back |
+| `Checkpoint_Start`, `Checkpoint_End` | around a checkpoint; the end only when it succeeds |
+| `Close_Start`, `Close_End` | around closing a database; the end only when it succeeds |
+| `Backup_Start`, `Backup_End` | around a physical backup; the end only when it succeeds |
+| `Restore_End` | when a physical restore succeeds |
+| `Integrity_Check_Failure` | when `Database.Check.Check_Database` finds an error |
+| `WAL_Replay_Start`, `WAL_Replay_End` | around recovery from a WAL when a database with one opens |
+| `Extension_Registration` | when an extension is registered |
+| `Encryption_Key_Rotation` | when an encryption key is rotated |
+
+Checkpoint, close and backup events are emitted while the operation holds the
+database's write lock. A handler of those events must not begin a transaction or
+change the catalog outside one: it would wait for the lock its own task holds,
+so it gets `Transaction_Conflict` instead.
 
 Handlers are isolated. A failing handler returns `Event_Handler_Error` from the
 status-returning dispatch API and must not corrupt database state.

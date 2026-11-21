@@ -12,6 +12,7 @@ with Database.Values;
 with Database.Types;
 
 with Database.Full_Text;
+with Database.Events;
 package body Database.Check is
    use type Ada.Containers.Count_Type;
    use type Database.Values.Value;
@@ -326,7 +327,8 @@ package body Database.Check is
          return R;
    end Check_Index;
 
-   function Check_Database
+   --  The checks of Check_Database, which announces a failure.
+   function Run_Checks
      (Tx : in out Database.Transactions.Transaction) return Check_Result is
       R  : Check_Result;
       DB : constant access Database.Handle := Database.Transactions.Owning_Database (Tx);
@@ -425,6 +427,16 @@ package body Database.Check is
       when others =>
          Add_Error (R, Internal_Error, "database check raised unexpectedly");
          return R;
+   end Run_Checks;
+
+   function Check_Database
+     (Tx : in out Database.Transactions.Transaction) return Check_Result is
+   begin
+      return R : constant Check_Result := Run_Checks (Tx) do
+         if not R.Success then
+            Database.Events.Emit (Database.Events.Integrity_Check_Failure, "integrity check failed");
+         end if;
+      end return;
    end Check_Database;
 
    function Orphan_Pages

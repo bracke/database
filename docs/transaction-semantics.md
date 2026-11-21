@@ -27,6 +27,13 @@ transaction, and `Close`. Each holds the write lock while it writes.
   another task's transaction, and is then written. Code that runs inside a
   checkpoint or backup, such as an event handler, gets `Transaction_Conflict`
   instead, since it would wait for itself.
+- A task that holds the write lock gets `Transaction_Conflict` when it begins a
+  write transaction, and the task closing a database gets it when it begins a
+  read: this covers an event handler of a checkpoint, backup or close, and a
+  task whose write transaction is still open.
+- A task waiting for the write lock, for example in `Begin_Write`, can be
+  aborted. Taking or releasing the lock and recording it cannot be separated by
+  an abort, so an aborted transaction or operation always gives the lock back.
 
 ## MVCC
 

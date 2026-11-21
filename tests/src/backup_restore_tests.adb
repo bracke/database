@@ -10,9 +10,11 @@ with Database.Backup_Format;
 with Database.Catalog;
 with Database.Diagnostics.Runtime;
 with Database.Checkpointing;
+with Database.Check;
 with Database.Events;
 with Database.Fault_Hooks;
 with Database.Export;
+with Database.Extensions;
 with Database.Import;
 with Database.Keys;
 with Database.Encrypted_Persistence;
@@ -893,6 +895,173 @@ package body Backup_Restore_Tests is
       Remove_File ("read_during_close.database.wal");
    end Readers_Wait_For_Close;
 
+   --  A task that is aborted while it runs a checkpoint, inside the checkpoint's start event.
+   protected Abort_Gate is
+      procedure Reached;
+      function Was_Reached return Boolean;
+      --  Never opens: the checkpointing task waits here until it is aborted.
+      entry Hold;
+   private
+      Inside : Boolean := False;
+   end Abort_Gate;
+
+   protected body Abort_Gate is
+      procedure Reached is
+      begin
+         Inside := True;
+      end Reached;
+      function Was_Reached return Boolean is (Inside);
+      entry Hold when False is
+      begin
+         null;
+      end Hold;
+   end Abort_Gate;
+
+   procedure Hold_Inside_Checkpoint (Event : Database.Events.Operational_Event) is
+      use type Database.Events.Event_Kind;
+   begin
+      if Event.Kind = Database.Events.Checkpoint_Start then
+         Abort_Gate.Reached;
+         Abort_Gate.Hold;
+      end if;
+   end Hold_Inside_Checkpoint;
+
+   task type Checkpointer is
+      entry Start;
+   end Checkpointer;
+
+   task body Checkpointer is
+      R : Database.Status.Result;
+      pragma Unreferenced (R);
+   begin
+      accept Start;
+      R := Database.Checkpointing.Checkpoint (Shared_DB);
+   end Checkpointer;
+
+   procedure Aborted_Checkpoint_Releases_Lock
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Tx      : Database.Transactions.Transaction;
+      Granted : Boolean := False;
+      Ended   : Boolean := False;
+   begin
+      Remove_File ("aborted_checkpoint.database");
+      Remove_File ("aborted_checkpoint.database.wal");
+      Database.Create (Shared_DB, "aborted_checkpoint.database");
+      Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "create failed");
+      Database.Events.Clear_Handlers;
+      Database.Events.Subscribe (Hold_Inside_Checkpoint'Access);
+      declare
+         Other : Checkpointer;
+      begin
+         Other.Start;
+         for Attempt in 1 .. 500 loop
+            exit when Abort_Gate.Was_Reached;
+            delay 0.01;
+         end loop;
+         abort Other;
+         for Attempt in 1 .. 500 loop
+            exit when Other'Terminated;
+            delay 0.01;
+         end loop;
+         Ended := Other'Terminated;
+      end;
+      Database.Events.Clear_Handlers;
+      Database.Transactions.Try_Begin_Write (Shared_DB, Tx, Granted);
+      if Granted then
+         Database.Transactions.Rollback (Tx);
+      end if;
+      Database.Close (Shared_DB);
+      Remove_File ("aborted_checkpoint.database");
+      Remove_File ("aborted_checkpoint.database.wal");
+      Assert (Abort_Gate.Was_Reached, "the checkpoint never started");
+      Assert (Ended, "the checkpointing task was not aborted");
+      Assert (Granted, "a checkpoint aborted while it held the write lock gave the lock back");
+   end Aborted_Checkpoint_Releases_Lock;
+
+   --  Counts of the events seen, by kind.
+   Seen : array (Database.Events.Event_Kind) of Natural := [others => 0];
+
+   procedure Count_Event (Event : Database.Events.Operational_Event) is
+   begin
+      Seen (Event.Kind) := Seen (Event.Kind) + 1;
+   end Count_Event;
+
+   procedure Operations_Emit_Their_Events
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      use Database.Events;
+      DB     : Database.Handle;
+      Copy   : Database.Handle;
+      Tx     : Database.Transactions.Transaction;
+      S      : Database.Schema.Table_Schema := User_Schema;
+      R      : Database.Status.Result;
+      Ext    : Database.Extensions.Extension_Definition;
+      Report : Database.Check.Check_Result;
+   begin
+      Remove_File ("events.database");
+      Remove_File ("events.database.wal");
+      Remove_File ("events_crash.database");
+      Remove_File ("events_crash.database.wal");
+      Remove_File ("events_restored.database");
+      Remove_Tree ("events.backup");
+      Database.Create (DB, "events.database");
+      Assert (Database.Status.Is_Ok (Database.Last_Result (DB)), "create failed");
+      R := Users.Register (DB, S);
+      Assert (Database.Status.Is_Ok (R), "register failed");
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Users.Insert (Tx, DB, S, (Id => 1, Name => "Events          ", Age => 1));
+      Assert (Database.Status.Is_Ok (R), "insert failed");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "commit failed");
+      --  A copy of the file and its WAL, as a crash would leave them, makes the next open replay the WAL.
+      Ada.Directories.Copy_File ("events.database", "events_crash.database");
+      Ada.Directories.Copy_File ("events.database.wal", "events_crash.database.wal");
+
+      Seen := [others => 0];
+      Clear_Handlers;
+      Subscribe (Count_Event'Access);
+      begin
+         R := Database.Backup.Create_Physical_Backup (DB, "events.backup");
+         Assert (Database.Status.Is_Ok (R), "backup failed");
+         R := Database.Restore.Restore_Physical_Backup ("events.backup", "events_restored.database");
+         Assert (Database.Status.Is_Ok (R), "restore failed");
+         Ext.Name := Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("events_extension");
+         R := Database.Extensions.Register_Extension (DB, Ext);
+         Assert (Database.Status.Is_Ok (R), "extension registration failed");
+         --  A check without an active transaction reports an error.
+         Report := Database.Check.Check_Database (Tx);
+         Assert (not Report.Success, "a check without a transaction succeeded");
+         Database.Close (DB);
+         Assert (Database.Status.Is_Ok (Database.Last_Result (DB)), "close failed");
+         Database.Open (Copy, "events_crash.database");
+         Assert (Database.Status.Is_Ok (Database.Last_Result (Copy)), "open of the crashed copy failed");
+         Clear_Handlers;
+      exception
+         when others =>
+            Clear_Handlers;
+            raise;
+      end;
+      Database.Close (Copy);
+
+      Assert (Seen (Backup_Start) = 1 and then Seen (Backup_End) = 1, "a backup announces its start and end");
+      Assert (Seen (Restore_End) = 1, "a restore announces its end");
+      Assert (Seen (Extension_Registration) = 1, "an extension registration is announced");
+      Assert (Seen (Integrity_Check_Failure) = 1, "a failed integrity check is announced");
+      Assert (Seen (Close_Start) = 1 and then Seen (Close_End) = 1, "a close announces its start and end");
+      Assert
+        (Seen (WAL_Replay_Start) = 1 and then Seen (WAL_Replay_End) = 1,
+         "opening a database with a WAL announces the replay");
+      Remove_File ("events.database");
+      Remove_File ("events.database.wal");
+      Remove_File ("events_crash.database");
+      Remove_File ("events_crash.database.wal");
+      Remove_File ("events_restored.database");
+      Remove_Tree ("events.backup");
+   end Operations_Emit_Their_Events;
+
    procedure Logical_Export_And_Import
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
@@ -1352,6 +1521,10 @@ package body Backup_Restore_Tests is
         (T, Waiting_Writer_Can_Be_Aborted'Access, "a task waiting for the write lock can be aborted");
       Register_Routine
         (T, Readers_Wait_For_Close'Access, "readers that arrive during a close wait for it or are refused");
+      Register_Routine
+        (T, Aborted_Checkpoint_Releases_Lock'Access, "a checkpoint aborted while it holds the lock gives it back");
+      Register_Routine
+        (T, Operations_Emit_Their_Events'Access, "backup, restore, close, replay, check and extensions emit events");
       Register_Routine
         (T,
          Encrypted_Physical_Backup_And_Restore'Access,

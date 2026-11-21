@@ -20,77 +20,87 @@ with Database.WAL;
 
 package body Database is
    protected body Read_Write_Lock is
-      entry Begin_Read when not Closing is
+      entry Begin_Read (Claim : in out Lock_Claim) when not Closing is
       begin
-         Readers := Readers + 1;
+         if not Claim.Read then
+            Readers := Readers + 1;
+            Claim.Read := True;
+         end if;
       end Begin_Read;
 
-      procedure Try_Begin_Read (Granted : out Boolean) is
+      procedure Try_Begin_Read (Claim : in out Lock_Claim; Granted : out Boolean) is
       begin
          Granted := not Closing;
-         if Granted then
+         if Granted and then not Claim.Read then
             Readers := Readers + 1;
+            Claim.Read := True;
          end if;
       end Try_Begin_Read;
 
-      procedure End_Read is
+      procedure End_Read (Claim : in out Lock_Claim) is
       begin
-         if Readers > 0 then
+         if Claim.Read and then Readers > 0 then
             Readers := Readers - 1;
          end if;
+         Claim.Read := False;
       end End_Read;
+
+      procedure Grant_Write
+        (Claim : in out Lock_Claim; Holder_Task : Ada.Task_Identification.Task_Id; Exclusive_Hold : Boolean;
+         Closing_Hold : Boolean) is
+      begin
+         Writer := True;
+         Exclusive := Exclusive_Hold;
+         Closing := Closing_Hold;
+         Holder := Holder_Task;
+         Claim.Write := True;
+      end Grant_Write;
 
       --  A waiting writer stays queued on its own entry, so it can be aborted or time out, and the queues count the
       --  waiting writers.
-      entry Begin_Write when not Writer is
+      entry Begin_Write (Claim : in out Lock_Claim) when not Writer is
       begin
-         Writer := True;
-         Holder := Begin_Write'Caller;
+         Grant_Write (Claim, Begin_Write'Caller, Exclusive_Hold => False, Closing_Hold => False);
       end Begin_Write;
 
-      procedure Try_Begin_Write (Granted : out Boolean) is
+      procedure Try_Begin_Write (Claim : in out Lock_Claim; Granted : out Boolean) is
       begin
          Granted := not Writer;
          if Granted then
-            Writer := True;
-            Holder := Ada.Task_Identification.Current_Task;
+            Grant_Write (Claim, Ada.Task_Identification.Current_Task, Exclusive_Hold => False, Closing_Hold => False);
          end if;
       end Try_Begin_Write;
 
-      entry Begin_Exclusive when not Writer is
+      entry Begin_Exclusive (Claim : in out Lock_Claim) when not Writer is
       begin
-         Writer := True;
-         Exclusive := True;
-         Holder := Begin_Exclusive'Caller;
+         Grant_Write (Claim, Begin_Exclusive'Caller, Exclusive_Hold => True, Closing_Hold => False);
       end Begin_Exclusive;
 
-      procedure Try_Begin_Exclusive (Granted : out Boolean) is
+      procedure Try_Begin_Exclusive (Claim : in out Lock_Claim; Granted : out Boolean) is
       begin
          Granted := not Writer;
          if Granted then
-            Writer := True;
-            Exclusive := True;
-            Holder := Ada.Task_Identification.Current_Task;
+            Grant_Write (Claim, Ada.Task_Identification.Current_Task, Exclusive_Hold => True, Closing_Hold => False);
          end if;
       end Try_Begin_Exclusive;
 
-      procedure Try_Begin_Close (Granted : out Boolean) is
+      procedure Try_Begin_Close (Claim : in out Lock_Claim; Granted : out Boolean) is
       begin
          Granted := not Writer and then Readers = 0;
          if Granted then
-            Writer := True;
-            Exclusive := True;
-            Closing := True;
-            Holder := Ada.Task_Identification.Current_Task;
+            Grant_Write (Claim, Ada.Task_Identification.Current_Task, Exclusive_Hold => True, Closing_Hold => True);
          end if;
       end Try_Begin_Close;
 
-      procedure End_Write is
+      procedure End_Write (Claim : in out Lock_Claim) is
       begin
-         Writer := False;
-         Exclusive := False;
-         Closing := False;
-         Holder := Ada.Task_Identification.Null_Task_Id;
+         if Claim.Write then
+            Writer := False;
+            Exclusive := False;
+            Closing := False;
+            Holder := Ada.Task_Identification.Null_Task_Id;
+         end if;
+         Claim.Write := False;
       end End_Write;
 
       function Active_Readers return Natural is (Readers);
@@ -209,8 +219,16 @@ package body Database is
    --  Recover the file of DB from its WAL and take over what the WAL knows besides pages.
    function Recover (DB : in out Handle; Path : Wide_Wide_String) return Result is
       Summary : Database.WAL.Recovery_Summary;
-      R       : constant Result := Database.WAL.Recover (Path, DB.File, Summary);
+      Has_WAL : constant Boolean := Database.WAL.Exists (Path);
+      R       : Result;
    begin
+      if Has_WAL then
+         Database.Events.Emit (Database.Events.WAL_Replay_Start, "WAL replay start");
+      end if;
+      R := Database.WAL.Recover (Path, DB.File, Summary);
+      if Database.Status.Is_Ok (R) and then Has_WAL then
+         Database.Events.Emit (Database.Events.WAL_Replay_End, "WAL replay end");
+      end if;
       if Database.Status.Is_Ok (R) then
          DB.Version := Natural'Max (DB.Version, Summary.Max_Commit_Version);
          --  Rebuild the MVCC committed-transaction map from the replayed WAL
@@ -361,9 +379,7 @@ package body Database is
       function Save_And_Close (Target : in out Handle) return Database.Status.Result is
          Result : Database.Status.Result := Database.Status.Success;
       begin
-         Database.Events.Emit_Event
-           ((Database.Events.Close_Start,
-             Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("close start")));
+         Database.Events.Emit (Database.Events.Close_Start, "close start");
          if Target.Kind = Persistent_Backend then
             --  The process lock is released below; another process may append to the WAL afterwards.
             Database.WAL.Forget_Trusted (Database.Storage.File_IO.Path (Target.File));
@@ -410,6 +426,9 @@ package body Database is
 
          Target.Kind := Closed_Backend;
          Target.Read_Only_Mode := False;
+         if Database.Status.Is_Ok (Result) then
+            Database.Events.Emit (Database.Events.Close_End, "close end");
+         end if;
          return Result;
       end Save_And_Close;
 

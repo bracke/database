@@ -7,6 +7,7 @@ with Database.Full_Text.Ranking;
 with Database.Full_Text.Tokenizers;
 with Database.State_Registry;
 with Database.Validation_Hooks;
+with Database.Events;
 
 package body Database.Extensions is
    use type Ada.Containers.Count_Type;
@@ -66,6 +67,8 @@ package body Database.Extensions is
         State_For (Database.Catalog_State_Key (DB));
    begin
       State.all.Extensions.Append (Extension);
+      Database.Events.Emit
+        (Database.Events.Extension_Registration, "extension registered: " & To_Wide_Wide_String (Extension.Name));
       return Database.Status.Success;
    end Register_Extension;
 

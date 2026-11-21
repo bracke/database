@@ -227,7 +227,8 @@ private
       Heap_Tails          : Heap_Tail_Maps.Map;
       Original_Page_Count : Natural := 0;
       Transaction_Id      : Database.Versioning.Transaction_Id := 0;
-      Lock_Held           : Boolean := False;
+      --  The transaction's hold on the lock, recorded by the lock itself.
+      Claim               : Database.Lock_Claim;
       Started_At_Version  : Database.Versioning.Commit_Version := 0;
       Ended_At_Version    : Database.Versioning.Commit_Version := 0;
    end record;

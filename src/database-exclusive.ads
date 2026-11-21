@@ -2,8 +2,9 @@
 with Database.Status;
 
 --  Run work that writes the database file directly, such as a checkpoint, a backup or a catalog change, while no
---  transaction or other such operation writes. The lock is released however the work ends; an exception the work
---  raises propagates after the release, so work that reports failures as results handles its exceptions itself.
+--  transaction or other such operation writes. The lock is released however the work ends, an abort of the task
+--  included; an exception the work raises propagates after the release, so work that reports failures as results
+--  handles its exceptions itself.
 private package Database.Exclusive is
    --  Wait for the current writer, then take the write lock of DB exclusively and run Work. A task that already holds
    --  the lock, for example in an event handler of a checkpoint it runs, would wait for itself; it gets

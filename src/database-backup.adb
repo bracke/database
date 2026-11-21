@@ -12,6 +12,7 @@ with Database.Fault_Hooks;
 with Database.Storage.File_IO;
 with Database.Storage.Pages;
 with Database.WAL;
+with Database.Events;
 
 package body Database.Backup is
    use type Ada.Directories.File_Kind;
@@ -158,7 +159,12 @@ package body Database.Backup is
    is
       function Copy (Target : in out Database.Handle) return Database.Status.Result is
       begin
-         return Copy_Backup (Target, Destination, Options, Encrypted, Key);
+         Database.Events.Emit (Database.Events.Backup_Start, "backup start");
+         return R : constant Database.Status.Result := Copy_Backup (Target, Destination, Options, Encrypted, Key) do
+            if Database.Status.Is_Ok (R) then
+               Database.Events.Emit (Database.Events.Backup_End, "backup end");
+            end if;
+         end return;
       exception
          when E : others =>
             return Database.Status.Failure

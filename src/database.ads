@@ -3,6 +3,7 @@
 with Ada.Containers.Vectors;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Ada.Streams.Stream_IO;
+with Ada.Task_Identification;
 with Interfaces.C;
 
 package Database is
@@ -90,13 +91,16 @@ package Database is
       procedure End_Write;
       function Active_Readers return Natural;
       function Writer_Active return Boolean;
-      --  Whether a write transaction, rather than an operation outside one, holds the write side.
-      function Transaction_Writing return Boolean;
+      --  Whether an operation outside any transaction holds the write side.
+      function Exclusive_Active return Boolean;
+      --  Whether a write transaction begun by the calling task holds the write side.
+      function Own_Transaction_Writing return Boolean;
       function Waiting_Writers return Natural;
    private
       Readers       : Natural := 0;
       Writer        : Boolean := False;
       Exclusive     : Boolean := False;
+      Holder        : Ada.Task_Identification.Task_Id := Ada.Task_Identification.Null_Task_Id;
       Waiting_Write : Natural := 0;
       entry Acquire_Write;
       entry Acquire_Exclusive;

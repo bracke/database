@@ -51,10 +51,10 @@ Do not add:
 
 ## Current Source-Level Status
 
-- Source packages: 102
-- Test bodies: 35
-- Test assertions detected: 1176
-- Registered AUnit routines detected: 229
+- Source packages: 108
+- Test bodies: 40
+- Test assertions detected: 1482
+- Registered AUnit routines detected: 254
 - SPARK project files: 13
 - Examples: 16
 

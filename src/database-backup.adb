@@ -7,6 +7,7 @@ with Database.Checkpoint_Merge;
 with Database.Crypto;
 with Database.Crypto_Checks;
 with Database.Encrypted_Persistence;
+with Database.Exclusive;
 with Database.Fault_Hooks;
 with Database.Storage.File_IO;
 with Database.Storage.Pages;
@@ -50,7 +51,7 @@ package body Database.Backup is
       end if;
    end Copy_If_Exists;
 
-   --  Make the backup; the caller holds the write lock of DB and turns an exception into a failure.
+   --  Make the backup; the caller holds the write lock of DB exclusively.
    function Copy_Backup
      (DB          : in out Database.Handle;
       Destination : Wide_Wide_String;
@@ -153,30 +154,29 @@ package body Database.Backup is
       Destination : Wide_Wide_String;
       Options     : Backup_Options;
       Encrypted   : Boolean;
-      Key         : Database.Keys.Encryption_Key) return Database.Status.Result is
-      R       : Database.Status.Result;
-      Granted : Boolean;
+      Key         : Database.Keys.Encryption_Key) return Database.Status.Result
+   is
+      function Copy (Target : in out Database.Handle) return Database.Status.Result is
+      begin
+         return Copy_Backup (Target, Destination, Options, Encrypted, Key);
+      exception
+         when E : others =>
+            return Database.Status.Failure
+              (Database.Status.Backup_Error,
+               "physical backup failed safely: "
+               & Ada.Characters.Conversions.To_Wide_Wide_String (Ada.Exceptions.Exception_Message (E)));
+      end Copy;
+
+      function Copy_Exclusively is new Database.Exclusive.Run (Copy);
    begin
       if not Database.Is_Open (DB) or else DB.Kind /= Persistent_Backend then
          return Database.Status.Failure (Database.Status.Not_Open, "backup requires an open persistent database");
       end if;
       --  The database image and the WAL must be copied at one point in time, so no transaction or checkpoint may
       --  write until both are copied: the backup holds the write lock throughout. Readers may continue.
-      DB.Lock.Try_Begin_Exclusive (Granted);
-      if not Granted then
-         return Database.Status.Failure (Database.Status.Transaction_Conflict, "backup rejected active writer");
-      end if;
-      begin
-         R := Copy_Backup (DB, Destination, Options, Encrypted, Key);
-      exception
-         when E : others =>
-            R := Database.Status.Failure
-              (Database.Status.Backup_Error,
-               "physical backup failed safely: "
-               & Ada.Characters.Conversions.To_Wide_Wide_String (Ada.Exceptions.Exception_Message (E)));
-      end;
-      DB.Lock.End_Write;
-      return R;
+      return Copy_Exclusively
+        (DB, Wait => False,
+         Refused => Database.Status.Failure (Database.Status.Transaction_Conflict, "backup rejected active writer"));
    end Base_Physical_Backup;
 
    function Create_Physical_Backup

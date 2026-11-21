@@ -228,6 +228,100 @@ procedure Check_All is
       Project_Tools.Files.Delete_Tree ("/tmp/database_gnatdoc");
    end Clean_Generated_Artifacts;
 
+   --  The number of files in Directory whose names match Pattern.
+   function Count_Files (Directory : String; Pattern : String) return Natural is
+      Search : Ada.Directories.Search_Type;
+      Item   : Ada.Directories.Directory_Entry_Type;
+      Count  : Natural := 0;
+   begin
+      Ada.Directories.Start_Search
+        (Search, Root & "/" & Directory, Pattern, [Ada.Directories.Ordinary_File => True, others => False]);
+      while Ada.Directories.More_Entries (Search) loop
+         Ada.Directories.Get_Next_Entry (Search, Item);
+         Count := Count + 1;
+      end loop;
+      Ada.Directories.End_Search (Search);
+      return Count;
+   end Count_Files;
+
+   --  The number of calls of Name in Text: Name, not part of a longer identifier, followed by an opening parenthesis
+   --  after optional white space.
+   function Count_Calls (Text : String; Name : String) return Natural is
+      function Is_Identifier (C : Character) return Boolean is
+        (C in 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_');
+      Count : Natural := 0;
+      From  : Natural := Text'First;
+      At_Name : Natural;
+      Next    : Natural;
+   begin
+      loop
+         At_Name := Ada.Strings.Fixed.Index (Text (From .. Text'Last), Name);
+         exit when At_Name = 0;
+         Next := At_Name + Name'Length;
+         if At_Name = Text'First or else not Is_Identifier (Text (At_Name - 1)) then
+            while Next <= Text'Last and then Text (Next) in ' ' | ASCII.LF | ASCII.CR | ASCII.HT loop
+               Next := Next + 1;
+            end loop;
+            if Next <= Text'Last and then Text (Next) = '(' then
+               Count := Count + 1;
+            end if;
+         end if;
+         From := At_Name + Name'Length;
+         exit when From > Text'Last;
+      end loop;
+      return Count;
+   end Count_Calls;
+
+   --  The counts the documentation states are computed from the tree, and every source unit is in both inventories,
+   --  so adding a unit or a test fails the check until the documentation follows.
+   procedure Check_Counts_And_Inventories is
+      function Image (N : Natural) return String is (Ada.Strings.Fixed.Trim (Natural'Image (N), Ada.Strings.Both));
+      Specs        : constant Natural := Count_Files ("src", "*.ads");
+      Bodies       : constant Natural := Count_Files ("src", "*.adb");
+      Test_Specs   : constant Natural := Count_Files ("tests/src", "*.ads");
+      Test_Bodies  : constant Natural := Count_Files ("tests/src", "*.adb");
+      Routines     : Natural := 0;
+      Assertions   : Natural := 0;
+      Search       : Ada.Directories.Search_Type;
+      Item         : Ada.Directories.Directory_Entry_Type;
+   begin
+      Ada.Directories.Start_Search
+        (Search, Root & "/tests/src", "*.adb", [Ada.Directories.Ordinary_File => True, others => False]);
+      while Ada.Directories.More_Entries (Search) loop
+         Ada.Directories.Get_Next_Entry (Search, Item);
+         declare
+            Text : constant String := Project_Tools.Files.Read_Raw_File (Ada.Directories.Full_Name (Item));
+         begin
+            Routines := Routines + Count_Calls (Text, "Register_Routine");
+            Assertions := Assertions + Count_Calls (Text, "Assert");
+         end;
+      end loop;
+      Ada.Directories.End_Search (Search);
+
+      Require_Text ("ai-manifest.json", """source_specs"": " & Image (Specs) & ",");
+      Require_Text ("ai-manifest.json", """source_bodies"": " & Image (Bodies) & ",");
+      Require_Text ("ai-manifest.json", """packages"": " & Image (Specs) & ",");
+      Require_Text ("ai-manifest.json", """test_specs"": " & Image (Test_Specs) & ",");
+      Require_Text ("ai-manifest.json", """test_bodies"": " & Image (Test_Bodies) & ",");
+      Require_Text ("ai-manifest.json", """test_assertions_detected"": " & Image (Assertions) & ",");
+      Require_Text ("ai-manifest.json", """registered_aunit_routines_detected"": " & Image (Routines) & ",");
+      Require_Text ("AI_CONTEXT.md", "- Source packages: " & Image (Specs) & ASCII.LF);
+      Require_Text ("AI_CONTEXT.md", "- Test bodies: " & Image (Test_Bodies) & ASCII.LF);
+      Require_Text ("AI_CONTEXT.md", "- Test assertions detected: " & Image (Assertions) & ASCII.LF);
+      Require_Text ("AI_CONTEXT.md", "- Registered AUnit routines detected: " & Image (Routines) & ASCII.LF);
+      Require_Text ("docs/testing.md", "- tests run: " & Image (Routines) & ASCII.LF);
+      Require_Text ("README.md", "- tests run by `tools/bin/check_all`: " & Image (Routines) & ASCII.LF);
+
+      Ada.Directories.Start_Search
+        (Search, Root & "/src", "*.ads", [Ada.Directories.Ordinary_File => True, others => False]);
+      while Ada.Directories.More_Entries (Search) loop
+         Ada.Directories.Get_Next_Entry (Search, Item);
+         Require_Text ("docs/package-inventory.md", "`src/" & Ada.Directories.Simple_Name (Item) & "`");
+         Require_Text ("ai-manifest.json", """spec"": ""src/" & Ada.Directories.Simple_Name (Item) & """");
+      end loop;
+      Ada.Directories.End_Search (Search);
+   end Check_Counts_And_Inventories;
+
    procedure Check_Static_Release_Surface is
       Errors : Natural := 0;
       Example_Names : constant Project_Tools.Tree_Checks.Text_List :=
@@ -307,7 +401,6 @@ procedure Check_All is
          Require_Text ("docs/build-and-verification.md", "../cryptolib/obj");
          Require_Text ("docs/build-and-verification.md", "GNAT 15");
          Require_Text ("docs/build-and-verification.md", "database_inspect");
-         Require_Text ("docs/testing.md", "229");
          Require_Text ("docs/database-inspect.md", "database_inspect");
          Require_Text ("docs/database-inspect.md", "--help");
          Require_Text ("docs/database-inspect.md", "--version");
@@ -320,10 +413,7 @@ procedure Check_All is
          Require_Text ("docs/ai-usage-guide.md", "../cryptolib");
          Require_Text ("docs/package-inventory.md", "../cryptolib");
          Require_Text ("AI_CONTEXT.md", "../cryptolib");
-         Require_Text ("AI_CONTEXT.md", "229");
          Require_Text ("ai-manifest.json", "registered_aunit_routines_detected");
-         Require_Text ("ai-manifest.json", "1176");
-         Require_Text ("ai-manifest.json", "229");
          Require_Text ("ai-manifest.json", "../cryptolib");
          Require_Text
            ("docs/getting-started.md", "../cryptolib");
@@ -364,8 +454,8 @@ procedure Check_All is
       Require_Text ("README.md", "gnat_native = ""=15.2.1""");
       Require_Text ("AGENTS.md", "gnat_native = ""=15.2.1""");
       Require_Text ("docs/build-and-verification.md", "gnat_native = ""=15.2.1""");
-      Require_Text ("README.md", "229");
       Require_Documentation;
+      Check_Counts_And_Inventories;
 
       Require_Example ("minimal");
       Require_Example ("persistent");

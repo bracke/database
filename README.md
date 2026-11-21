@@ -53,7 +53,7 @@ runs GNATprove legality checks for the SPARK-oriented subsets.
 
 Current AUnit coverage:
 
-- tests run by `tools/bin/check_all`: 229
+- tests run by `tools/bin/check_all`: 254
 - failed assertions in the latest release-check run: 0
 - unexpected errors in the latest release-check run: 0
 - packages with missing direct source-level test coverage: 0

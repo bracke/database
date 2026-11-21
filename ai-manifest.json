@@ -38,13 +38,13 @@
     "server mode"
   ],
   "counts": {
-    "source_specs": 107,
-    "source_bodies": 107,
-    "packages": 107,
-    "test_specs": 33,
-    "test_bodies": 35,
-    "test_assertions_detected": 1176,
-    "registered_aunit_routines_detected": 229,
+    "source_specs": 108,
+    "source_bodies": 108,
+    "packages": 108,
+    "test_specs": 34,
+    "test_bodies": 40,
+    "test_assertions_detected": 1482,
+    "registered_aunit_routines_detected": 254,
     "examples": 16,
     "spark_projects": 13
   },
@@ -163,6 +163,11 @@
       "name": "Database.Events",
       "spec": "src/database-events.ads",
       "body": "src/database-events.adb"
+    },
+    {
+      "name": "Database.Exclusive",
+      "spec": "src/database-exclusive.ads",
+      "body": "src/database-exclusive.adb"
     },
     {
       "name": "Database.Execution_Plans",
@@ -609,6 +614,7 @@
       "Database.Checksums",
       "Database.Constraints",
       "Database.Cursors",
+      "Database.Exclusive",
       "Database.Migrations",
       "Database.Optional",
       "Database.Predicates",

@@ -50,6 +50,7 @@ package body Database is
             Waiting_Write := Waiting_Write - 1;
          end if;
          Writer := True;
+         Holder := Acquire_Write'Caller;
       end Acquire_Write;
 
       procedure Try_Begin_Write (Granted : out Boolean) is
@@ -57,6 +58,7 @@ package body Database is
          Granted := not Writer;
          if Granted then
             Writer := True;
+            Holder := Ada.Task_Identification.Current_Task;
          end if;
       end Try_Begin_Write;
 
@@ -73,6 +75,7 @@ package body Database is
          end if;
          Writer := True;
          Exclusive := True;
+         Holder := Acquire_Exclusive'Caller;
       end Acquire_Exclusive;
 
       procedure Try_Begin_Exclusive (Granted : out Boolean) is
@@ -81,6 +84,7 @@ package body Database is
          if Granted then
             Writer := True;
             Exclusive := True;
+            Holder := Ada.Task_Identification.Current_Task;
          end if;
       end Try_Begin_Exclusive;
 
@@ -88,11 +92,16 @@ package body Database is
       begin
          Writer := False;
          Exclusive := False;
+         Holder := Ada.Task_Identification.Null_Task_Id;
       end End_Write;
 
       function Active_Readers return Natural is (Readers);
       function Writer_Active return Boolean is (Writer);
-      function Transaction_Writing return Boolean is (Writer and then not Exclusive);
+      function Exclusive_Active return Boolean is (Writer and then Exclusive);
+
+      function Own_Transaction_Writing return Boolean is
+        (Writer and then not Exclusive
+         and then Ada.Task_Identification."=" (Holder, Ada.Task_Identification.Current_Task));
       function Waiting_Writers return Natural is (Waiting_Write);
    end Read_Write_Lock;
 
@@ -348,6 +357,12 @@ package body Database is
 
    procedure Close (DB : in out Handle) is
    begin
+      if DB.Lock.Exclusive_Active then
+         DB.Last := Database.Status.Failure
+           (Database.Status.Transaction_Conflict,
+            "cannot close database while a checkpoint, backup or catalog change runs");
+         return;
+      end if;
       if DB.Lock.Active_Readers > 0 or else DB.Lock.Writer_Active then
          DB.Last := Database.Status.Failure
            (Database.Status.Transaction_Conflict, "cannot close database while transactions are active");

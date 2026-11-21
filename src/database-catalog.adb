@@ -1,4 +1,5 @@
 with Database.Catalog.Rules;
+with Database.Exclusive;
 with Database.Fault_Hooks;
 with Ada.Containers;
 with Ada.Containers.Indefinite_Vectors;
@@ -208,29 +209,30 @@ package body Database.Catalog is
       Schema.Table_Id :=
         Database.Catalog.Rules.Next_Table_Id (Natural (State.all.Tables.Length));
       if Database.Backend (DB) = Database.Persistent_Backend and then Schema.Heap_First_Page = 0 then
-         if DB.Lock.Transaction_Writing then
+         if DB.Lock.Own_Transaction_Writing then
             return Database.Status.Failure
               (Database.Status.Transaction_Error,
                "a table registered in a write transaction needs a heap allocated through it");
          end if;
-         --  The heap and the catalog are written directly, so no transaction, checkpoint or backup may run meanwhile.
-         DB.Lock.Begin_Exclusive;
+         --  The heap and the catalog are written directly, so no transaction, checkpoint or backup may run meanwhile;
+         --  one that runs is waited for.
          declare
-            First : Database.Storage.Pages.Page_Id;
-            R : Database.Status.Result;
-         begin
-            R := Database.Storage.Table_Heap.Create_Heap (DB.File, DB.Page_Allocator, First);
-            if Database.Status.Is_Ok (R) then
+            function Create_And_Write (Target : in out Database.Handle) return Database.Status.Result is
+               First : Database.Storage.Pages.Page_Id;
+               R     : Database.Status.Result;
+            begin
+               R := Database.Storage.Table_Heap.Create_Heap (Target.File, Target.Page_Allocator, First);
+               if not Database.Status.Is_Ok (R) then
+                  return R;
+               end if;
                Schema.Heap_First_Page := Natural (First);
                State.all.Tables.Append (Schema);
-               R := Write_Catalog (DB);
-            end if;
-            DB.Lock.End_Write;
-            return R;
-         exception
-            when others =>
-               DB.Lock.End_Write;
-               raise;
+               return Write_Catalog (Target);
+            end Create_And_Write;
+
+            function Register_Exclusively is new Database.Exclusive.Run (Create_And_Write);
+         begin
+            return Register_Exclusively (DB, Wait => True, Refused => Database.Status.Success);
          end;
       end if;
       State.all.Tables.Append (Schema);
@@ -598,27 +600,20 @@ package body Database.Catalog is
    function Write_Catalog (DB : in out Database.Handle) return Database.Status.Result is
      (Encode_Catalog (DB, Staged => False));
 
+   function Write_Exclusively is new Database.Exclusive.Run (Write_Catalog);
+
    function Save (DB : in out Database.Handle) return Database.Status.Result is
-      R : Database.Status.Result;
    begin
       if Database.Backend (DB) /= Database.Persistent_Backend then
          return Database.Status.Success;
       end if;
-      if DB.Lock.Transaction_Writing then
+      --  The calling task's own write transaction writes the page through its log when it commits.
+      if DB.Lock.Own_Transaction_Writing then
          return Encode_Catalog (DB, Staged => True);
       end if;
-      --  The page is written directly, so no transaction, checkpoint or backup may run meanwhile; one that runs is
-      --  waited for.
-      DB.Lock.Begin_Exclusive;
-      begin
-         R := Write_Catalog (DB);
-      exception
-         when others =>
-            DB.Lock.End_Write;
-            raise;
-      end;
-      DB.Lock.End_Write;
-      return R;
+      --  Otherwise the page is written directly, so no transaction, checkpoint or backup may run meanwhile; one that
+      --  runs, another task's transaction included, is waited for.
+      return Write_Exclusively (DB, Wait => True, Refused => Database.Status.Success);
    end Save;
 
    function Pending_Page

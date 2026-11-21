@@ -29,6 +29,7 @@ same hierarchy can use them.
 - `Database.Check` — `src/database-check.ads`
 - `Database.Checksums` — `src/database-checksums.ads`
 - `Database.Constraints` — `src/database-constraints.ads`
+- `Database.Exclusive` — `src/database-exclusive.ads` (private)
 - `Database.Cursors` — `src/database-cursors.ads`
 - `Database.Migrations` — `src/database-migrations.ads`
 - `Database.Optional` — `src/database-optional.ads`

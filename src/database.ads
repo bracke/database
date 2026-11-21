@@ -76,10 +76,11 @@ package Database is
    --  Internal free-page allocator shared with storage child packages.
    type Allocator is private;
 
-   --  One hold on a Read_Write_Lock. The lock sets and clears it inside its own protected operations, so an abort
-   --  cannot come between taking or releasing the lock and recording it, and records itself in it: a claim releases
-   --  only what the lock that granted it gave. Tagged, so it is passed by reference.
-   type Lock_Claim is tagged private;
+   --  The holds of one owner on one Read_Write_Lock. The lock sets and clears it inside its own protected operations,
+   --  so an abort cannot come between taking or releasing the lock and recording it, and records itself in it: a
+   --  claim releases only what the lock that granted it gave, and while it holds something no other lock grants it
+   --  anything. Limited, so a hold cannot be duplicated, and tagged, so it is passed by reference.
+   type Lock_Claim is tagged limited private;
 
    --  Whether Claim holds a read or the write side of a lock.
    --  @param Claim claim to inspect.
@@ -90,15 +91,16 @@ package Database is
    --  exclusively, an operation outside any transaction that writes the file directly: a checkpoint, a backup, a
    --  catalog change or a close. Each hold is recorded in the caller's claim, and End_Read or End_Write releases
    --  what the claim holds and nothing else.
+   --  Every grant sets Granted to False and grants nothing when Claim holds something another lock granted.
    protected type Read_Write_Lock is
-      entry Begin_Read (Claim : in out Lock_Claim);
+      entry Begin_Read (Claim : in out Lock_Claim; Granted : out Boolean);
       procedure Try_Begin_Read (Claim : in out Lock_Claim; Granted : out Boolean);
       procedure End_Read (Claim : in out Lock_Claim);
       --  Take the write side for a write transaction, waiting for the current writer.
-      entry Begin_Write (Claim : in out Lock_Claim);
+      entry Begin_Write (Claim : in out Lock_Claim; Granted : out Boolean);
       procedure Try_Begin_Write (Claim : in out Lock_Claim; Granted : out Boolean);
       --  Take the write side for an operation outside any transaction, waiting for the current writer.
-      entry Begin_Exclusive (Claim : in out Lock_Claim);
+      entry Begin_Exclusive (Claim : in out Lock_Claim; Granted : out Boolean);
       --  Take the write side for an operation outside any transaction when no one writes.
       procedure Try_Begin_Exclusive (Claim : in out Lock_Claim; Granted : out Boolean);
       --  Take the write side exclusively for closing the database when no one reads or writes; until End_Write,
@@ -120,6 +122,8 @@ package Database is
    private
       --  Whether Claim was granted by this lock.
       function Granted_Here (Claim : Lock_Claim) return Boolean;
+      --  Whether this lock may grant Claim something: it holds nothing, or only what this lock gave.
+      function Grantable (Claim : Lock_Claim) return Boolean;
       --  Take the write side for Holder; Exclusive_Hold and Closing_Hold say for what.
       procedure Grant_Write
         (Claim : in out Lock_Claim; Holder_Task : Ada.Task_Identification.Task_Id; Exclusive_Hold : Boolean;
@@ -216,7 +220,7 @@ package Database is
    function Catalog_State_Key (DB : Handle) return Natural;
 
 private
-   type Lock_Claim is tagged record
+   type Lock_Claim is tagged limited record
       Read  : Boolean := False;
       Write : Boolean := False;
       --  The lock that granted the hold.

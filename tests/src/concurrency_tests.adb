@@ -165,6 +165,12 @@ package body Concurrency_Tests is
          L.End_Write (Never_Granted);
          Assert (L.Writer_Active, "a claim that was never granted released this lock's writer");
          Assert (Database.Is_Held (Foreign), "releasing a claim through the wrong lock forgot its hold");
+         --  While a claim holds another lock's hold, this lock grants it nothing.
+         L.Try_Begin_Read (Foreign, Granted);
+         Assert (not Granted, "a claim holding another lock was granted a read");
+         L.Begin_Read (Foreign, Granted);
+         Assert (not Granted, "a claim holding another lock was granted a waiting read");
+         Assert (L.Active_Readers = 0, "a refused read was counted");
          Other_Lock.End_Write (Foreign);
          Assert (not Database.Is_Held (Foreign), "the granting lock did not release its claim");
 

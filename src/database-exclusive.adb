@@ -15,13 +15,17 @@ package body Database.Exclusive is
    end Finalize;
 
    function Run_Waiting (DB : in out Database.Handle) return Database.Status.Result is
-      G : Guard (DB'Unrestricted_Access);
+      G       : Guard (DB'Unrestricted_Access);
+      Granted : Boolean;
    begin
       if DB.Lock.Held_By_Current_Task then
          return Database.Status.Failure
            (Database.Status.Transaction_Conflict, "the calling task already holds the write lock");
       end if;
-      DB.Lock.Begin_Exclusive (G.Claim);
+      DB.Lock.Begin_Exclusive (G.Claim, Granted);
+      if not Granted then
+         return Database.Status.Failure (Database.Status.Transaction_Conflict, "the write lock was not granted");
+      end if;
       return Work (DB);
    end Run_Waiting;
 

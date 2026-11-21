@@ -23,9 +23,12 @@ package body Database is
       function Granted_Here (Claim : Lock_Claim) return Boolean is
         (System."=" (Claim.Lock, Read_Write_Lock'Address));
 
-      entry Begin_Read (Claim : in out Lock_Claim) when not Closing is
+      function Grantable (Claim : Lock_Claim) return Boolean is (not Is_Held (Claim) or else Granted_Here (Claim));
+
+      entry Begin_Read (Claim : in out Lock_Claim; Granted : out Boolean) when not Closing is
       begin
-         if not Claim.Read then
+         Granted := Grantable (Claim);
+         if Granted and then not Claim.Read then
             Readers := Readers + 1;
             Claim.Read := True;
             Claim.Lock := Read_Write_Lock'Address;
@@ -34,7 +37,7 @@ package body Database is
 
       procedure Try_Begin_Read (Claim : in out Lock_Claim; Granted : out Boolean) is
       begin
-         Granted := not Closing;
+         Granted := not Closing and then Grantable (Claim);
          if Granted and then not Claim.Read then
             Readers := Readers + 1;
             Claim.Read := True;
@@ -66,27 +69,33 @@ package body Database is
 
       --  A waiting writer stays queued on its own entry, so it can be aborted or time out, and the queues count the
       --  waiting writers.
-      entry Begin_Write (Claim : in out Lock_Claim) when not Writer is
+      entry Begin_Write (Claim : in out Lock_Claim; Granted : out Boolean) when not Writer is
       begin
-         Grant_Write (Claim, Begin_Write'Caller, Exclusive_Hold => False, Closing_Hold => False);
+         Granted := Grantable (Claim);
+         if Granted then
+            Grant_Write (Claim, Begin_Write'Caller, Exclusive_Hold => False, Closing_Hold => False);
+         end if;
       end Begin_Write;
 
       procedure Try_Begin_Write (Claim : in out Lock_Claim; Granted : out Boolean) is
       begin
-         Granted := not Writer;
+         Granted := not Writer and then Grantable (Claim);
          if Granted then
             Grant_Write (Claim, Ada.Task_Identification.Current_Task, Exclusive_Hold => False, Closing_Hold => False);
          end if;
       end Try_Begin_Write;
 
-      entry Begin_Exclusive (Claim : in out Lock_Claim) when not Writer is
+      entry Begin_Exclusive (Claim : in out Lock_Claim; Granted : out Boolean) when not Writer is
       begin
-         Grant_Write (Claim, Begin_Exclusive'Caller, Exclusive_Hold => True, Closing_Hold => False);
+         Granted := Grantable (Claim);
+         if Granted then
+            Grant_Write (Claim, Begin_Exclusive'Caller, Exclusive_Hold => True, Closing_Hold => False);
+         end if;
       end Begin_Exclusive;
 
       procedure Try_Begin_Exclusive (Claim : in out Lock_Claim; Granted : out Boolean) is
       begin
-         Granted := not Writer;
+         Granted := not Writer and then Grantable (Claim);
          if Granted then
             Grant_Write (Claim, Ada.Task_Identification.Current_Task, Exclusive_Hold => True, Closing_Hold => False);
          end if;
@@ -94,7 +103,7 @@ package body Database is
 
       procedure Try_Begin_Close (Claim : in out Lock_Claim; Granted : out Boolean) is
       begin
-         Granted := not Writer and then Readers = 0;
+         Granted := not Writer and then Readers = 0 and then Grantable (Claim);
          if Granted then
             Grant_Write (Claim, Ada.Task_Identification.Current_Task, Exclusive_Hold => True, Closing_Hold => True);
          end if;

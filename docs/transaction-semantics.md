@@ -31,6 +31,9 @@ transaction, and `Close`. Each holds the write lock while it writes.
   write transaction, and the task closing a database gets it when it begins a
   read: this covers an event handler of a checkpoint, backup or close, and a
   task whose write transaction is still open.
+- Beginning a transaction in a transaction object whose transaction has not
+  ended is refused with `Transaction_Error`; the open transaction stays as it
+  is and still holds its lock until it commits or rolls back.
 - A task waiting for the write lock, for example in `Begin_Write`, can be
   aborted. Taking or releasing the lock and recording it cannot be separated by
   an abort, so an aborted transaction or operation always gives the lock back.

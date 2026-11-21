@@ -17,10 +17,10 @@ package Database.Transactions is
    type Transaction is new Ada.Finalization.Limited_Controlled with private;
 
    --  Start a read-only transaction. The transaction holds a shared read lock
-   --  until Commit, Rollback, or Finalize.
+   --  until Commit, Rollback, or Finalize. A transaction in Tx that has not
+   --  ended is left as it is, with Result (Tx) Transaction_Error.
    --  @param DB database handle used by the operation.
    --  @param Tx transaction object that scopes the operation.
-   --  A transaction that has not ended is left as it is, with Result (Tx) Transaction_Error.
    procedure Begin_Read (DB : in out Database.Handle; Tx : out Transaction);
 
    --  Ensure freshly assigned transaction ids stay strictly above Highest.
@@ -31,13 +31,15 @@ package Database.Transactions is
    procedure Reserve_Ids_Through (Highest : Natural);
 
    --  Start a read-write transaction. The transaction holds the exclusive
-   --  writer lock until Commit, Rollback, or Finalize.
+   --  writer lock until Commit, Rollback, or Finalize. A transaction in Tx that
+   --  has not ended is left as it is, with Result (Tx) Transaction_Error.
    --  @param DB database handle used by the operation.
    --  @param Tx transaction object that scopes the operation.
-   --  A transaction that has not ended is left as it is, with Result (Tx) Transaction_Error.
    procedure Begin_Write (DB : in out Database.Handle; Tx : out Transaction);
    --  Nonblocking read transaction start. Granted is False and Result (Tx)
-   --  is Transaction_Conflict when the read lock is unavailable.
+   --  is Transaction_Conflict when the read lock is unavailable. A transaction
+   --  in Tx that has not ended is left as it is, with Granted False and
+   --  Result (Tx) Transaction_Error.
    --  @param DB database handle used by the operation.
    --  @param Tx transaction object that scopes the operation.
    --  @param Granted granted argument supplied to the operation.
@@ -46,7 +48,9 @@ package Database.Transactions is
       Tx      : out Transaction;
       Granted : out Boolean);
    --  Nonblocking write transaction start. Granted is False and Result (Tx)
-   --  is Transaction_Conflict when the writer lock is unavailable.
+   --  is Transaction_Conflict when the writer lock is unavailable. A
+   --  transaction in Tx that has not ended is left as it is, with Granted
+   --  False and Result (Tx) Transaction_Error.
    --  @param DB database handle used by the operation.
    --  @param Tx transaction object that scopes the operation.
    --  @param Granted granted argument supplied to the operation.

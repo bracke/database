@@ -122,21 +122,20 @@ package body Database.Transactions is
       Tx.Current_Mode := Mode_In;
       if Blocking then
          case Mode_In is
-            when Read_Only => DB.Lock.Begin_Read (Tx.Claim);
-            when Read_Write => DB.Lock.Begin_Write (Tx.Claim);
+            when Read_Only => DB.Lock.Begin_Read (Tx.Claim, Granted);
+            when Read_Write => DB.Lock.Begin_Write (Tx.Claim, Granted);
          end case;
-         Granted := True;
       else
          case Mode_In is
             when Read_Only => DB.Lock.Try_Begin_Read (Tx.Claim, Granted);
             when Read_Write => DB.Lock.Try_Begin_Write (Tx.Claim, Granted);
          end case;
-         if not Granted then
-            Tx.DB := null;
-            Tx.Last := Database.Status.Failure
-              (Database.Status.Transaction_Conflict, "transaction lock is not available");
-            return;
-         end if;
+      end if;
+      if not Granted then
+         Tx.DB := null;
+         Tx.Last := Database.Status.Failure
+           (Database.Status.Transaction_Conflict, "transaction lock is not available");
+         return;
       end if;
       --  The database may have been closed while the lock was awaited; Close holds the lock while it closes.
       if not Database.Is_Open (DB) then

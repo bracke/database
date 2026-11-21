@@ -4,10 +4,15 @@ with Database.Keys;
 
 --  Physical backup creation and validation.
 package Database.Backup is
-   --  Backup_Options stores the public fields for this database abstraction.
+   --  How a physical backup is made. A backup holds the write lock while it runs, so it is refused beside an active
+   --  writer while readers may continue.
    type Backup_Options is record
+      --  Copy the WAL beside the database file, so a restore can recover what the WAL still has to undo.
       Include_WAL       : Boolean := True;
+      --  Validate the copied images against the manifest after writing it.
       Verify_After_Copy : Boolean := True;
+      --  Checkpoint before copying, so the database image alone is complete. Recommended when Include_WAL is
+      --  False: without it, an image taken after a failed rollback still holds the pages the WAL would undo.
       Force_Checkpoint  : Boolean := False;
    end record;
 

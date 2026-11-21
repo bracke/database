@@ -57,16 +57,21 @@ Options.Force_Checkpoint  := False;
 R := Database.Backup.Create_Physical_Backup (DB, "backup-dir", Options);
 ```
 
-The implementation flushes the database file, optionally forces a checkpoint,
-copies the database image, copies the WAL image if present, writes the manifest,
-and validates checksums when verification is enabled.
+The implementation takes the write lock, optionally forces a checkpoint,
+flushes the database file, copies the database image, copies the WAL image if
+present, writes the manifest, validates checksums when verification is enabled,
+and releases the lock. Set `Force_Checkpoint` when `Include_WAL` is `False`:
+without the checkpoint, an image taken after a failed rollback still holds the
+pages the WAL would undo.
 
 ## Snapshot and concurrency semantics
 
 The backup represents a committed persistent state of the database file and WAL
 at the chosen copy point. Readers may remain active. A concurrent writer is
 rejected for the initial implementation because correctness is preferred over
-copying a database file while pages are being mutated. This is the documented
+copying a database file while pages are being mutated. The backup holds the
+write lock until both images are copied, so neither a transaction nor a
+checkpoint can start between the two copies. This is the documented
 reduced-concurrency implementation of the snapshot backup contract.
 
 Future incremental backup support can use the manifest LSN fields and page LSN

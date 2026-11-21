@@ -303,10 +303,73 @@ package body Backup_Restore_Tests is
       Assert (not Database.Status.Is_Ok (R), "backup accepted active writer");
       R := Database.Transactions.Rollback (Tx);
       Assert (Database.Status.Is_Ok (R), "rollback failed");
+      R :=
+        Database.Backup.Create_Physical_Backup (DB, "backup_writer.backup");
+      Assert (Database.Status.Is_Ok (R), "backup after the rollback failed");
+      declare
+         Granted : Boolean;
+      begin
+         Database.Transactions.Try_Begin_Write (DB, Tx, Granted);
+         Assert (Granted, "a backup gives the write lock back");
+         R := Database.Transactions.Commit (Tx);
+         Assert (Database.Status.Is_Ok (R), "commit after the backup failed");
+      end;
       Database.Close (DB);
       Remove_File ("backup_writer.database");
       Remove_Tree ("backup_writer.backup");
    end Physical_Backup_Rejects_Active_Writer;
+
+   procedure Forced_Checkpoint_Backup_Needs_No_WAL
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      DB       : Database.Handle;
+      Restored : Database.Handle;
+      Tx       : Database.Transactions.Transaction;
+      Read_Tx  : Database.Transactions.Transaction;
+      S        : Database.Schema.Table_Schema := User_Schema;
+      R        : Database.Status.Result;
+      Out_User : User_Row;
+   begin
+      Remove_File ("backup_forced.database");
+      Remove_File ("backup_forced.database.wal");
+      Remove_File ("backup_forced_restored.database");
+      Remove_Tree ("backup_forced.backup");
+
+      Database.Create (DB, "backup_forced.database");
+      Assert (Database.Status.Is_Ok (Database.Last_Result (DB)), "create failed");
+      R := Users.Register (DB, S);
+      Assert (Database.Status.Is_Ok (R), "register failed");
+      Database.Transactions.Begin_Write (DB, Tx);
+      R := Users.Insert (Tx, DB, S, (Id => 9, Name => "Forced Backup   ", Age => 36));
+      Assert (Database.Status.Is_Ok (R), "insert failed");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "commit failed");
+      Assert (Ada.Directories.Exists ("backup_forced.database.wal"), "the commit left no WAL to checkpoint");
+
+      R := Database.Backup.Create_Physical_Backup
+        (DB, "backup_forced.backup", (Include_WAL => False, Verify_After_Copy => True, Force_Checkpoint => True));
+      Assert (Database.Status.Is_Ok (R), "forced checkpoint backup failed");
+      Assert (not Ada.Directories.Exists ("backup_forced.database.wal"), "the forced checkpoint kept the WAL");
+      Assert (not Ada.Directories.Exists ("backup_forced.backup/database.wal"), "the backup copied a WAL");
+
+      R := Database.Restore.Restore_Physical_Backup ("backup_forced.backup", "backup_forced_restored.database");
+      Assert (Database.Status.Is_Ok (R), "restore failed");
+      Database.Open (Restored, "backup_forced_restored.database");
+      Assert (Database.Status.Is_Ok (Database.Last_Result (Restored)), "open restored failed");
+      Database.Transactions.Begin_Read (Restored, Read_Tx);
+      R := Users.Find (Read_Tx, Restored, S, 9, Out_User);
+      Assert (Database.Status.Is_Ok (R) and then Out_User.Age = 36, "the restored image lacks the committed row");
+      R := Database.Transactions.Commit (Read_Tx);
+      Assert (Database.Status.Is_Ok (R), "read commit failed");
+
+      Database.Close (Restored);
+      Database.Close (DB);
+      Remove_File ("backup_forced.database");
+      Remove_File ("backup_forced.database.wal");
+      Remove_File ("backup_forced_restored.database");
+      Remove_Tree ("backup_forced.backup");
+   end Forced_Checkpoint_Backup_Needs_No_WAL;
 
    procedure Logical_Export_And_Import
      (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -743,6 +806,10 @@ package body Backup_Restore_Tests is
         (T,
          Physical_Backup_Rejects_Active_Writer'Access,
          "physical backup rejects active uncommitted writer in conservative mode");
+      Register_Routine
+        (T,
+         Forced_Checkpoint_Backup_Needs_No_WAL'Access,
+         "a backup that forces a checkpoint is complete without the WAL");
       Register_Routine
         (T,
          Encrypted_Physical_Backup_And_Restore'Access,

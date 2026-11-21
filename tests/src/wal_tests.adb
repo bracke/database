@@ -7,6 +7,7 @@ with Ada.Text_IO;
 with Ada.Streams.Stream_IO;
 with Database;
 with Database.Checkpointing;
+with Database.Events;
 with Database.Fault_Hooks;
 with Database.Full_Text.Postings;
 with Database.Full_Text.Storage;
@@ -175,32 +176,71 @@ package body WAL_Tests is
       Assert (Database.Status.Is_Ok (R), "empty checkpoint failed");
       Assert
         (not Database.WAL.Exists (Path), "checkpoint left empty WAL behind");
-
-      --  A checkpoint holds the write lock: it is refused beside a writer, and
-      --  gives the lock back however it ends.
-      declare
-         Tx      : Database.Transactions.Transaction;
-         Granted : Boolean;
-      begin
-         Database.Transactions.Try_Begin_Write (DB, Tx, Granted);
-         Assert (Granted, "a checkpoint gives the write lock back");
-         R := Database.Checkpointing.Checkpoint (DB);
-         Assert (R.Code = Database.Status.Checkpoint_Failure, "a checkpoint beside a writer is refused");
-         R := Database.Transactions.Commit (Tx);
-         Assert (Database.Status.Is_Ok (R), "commit failed");
-
-         Database.Fault_Hooks.Enable_Fault (Database.Fault_Hooks.Fail_Checkpoint);
-         R := Database.Checkpointing.Checkpoint (DB);
-         Database.Fault_Hooks.Disable_Fault (Database.Fault_Hooks.Fail_Checkpoint);
-         Assert (not Database.Status.Is_Ok (R), "the injected checkpoint failure is reported");
-         Database.Transactions.Try_Begin_Write (DB, Tx, Granted);
-         Assert (Granted, "a failed checkpoint gives the write lock back");
-         R := Database.Transactions.Commit (Tx);
-      end;
       Database.Close (DB);
       Remove_File ("wal_checkpoint.database");
       Remove_File ("wal_checkpoint.database.wal");
    end Checkpoint_Removes_Safe_WAL;
+
+   Checkpoint_Starts : Natural := 0;
+   Checkpoint_Ends   : Natural := 0;
+
+   procedure Count_Checkpoint_Event (Event : Database.Events.Operational_Event) is
+   begin
+      case Event.Kind is
+         when Database.Events.Checkpoint_Start => Checkpoint_Starts := Checkpoint_Starts + 1;
+         when Database.Events.Checkpoint_End   => Checkpoint_Ends := Checkpoint_Ends + 1;
+         when others                           => null;
+      end case;
+   end Count_Checkpoint_Event;
+
+   procedure Checkpoint_Holds_Write_Lock
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Path    : constant Wide_Wide_String := "wal_checkpoint_lock.database";
+      DB      : Database.Handle;
+      R       : Database.Status.Result;
+      Tx      : Database.Transactions.Transaction;
+      Granted : Boolean;
+   begin
+      Remove_File ("wal_checkpoint_lock.database");
+      Remove_File ("wal_checkpoint_lock.database.wal");
+      Database.Create (DB, Path);
+      Assert (Database.Status.Is_Ok (Database.Last_Result (DB)), "database create failed");
+      Database.Events.Clear_Handlers;
+      Database.Events.Subscribe (Count_Checkpoint_Event'Access);
+      Checkpoint_Starts := 0;
+      Checkpoint_Ends := 0;
+
+      R := Database.Checkpointing.Checkpoint (DB);
+      Assert (Database.Status.Is_Ok (R), "checkpoint failed");
+      Assert (Checkpoint_Starts = 1 and then Checkpoint_Ends = 1, "a checkpoint announces its start and its end");
+      Database.Transactions.Try_Begin_Write (DB, Tx, Granted);
+      Assert (Granted, "a checkpoint gives the write lock back");
+
+      --  Refused beside a writer, before it starts.
+      R := Database.Checkpointing.Checkpoint (DB);
+      Assert (R.Code = Database.Status.Checkpoint_Failure, "a checkpoint beside a writer is refused");
+      Assert (Checkpoint_Starts = 1, "a refused checkpoint does not announce a start");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "commit failed");
+
+      --  A failed checkpoint gives the lock back and does not announce an end.
+      Database.Fault_Hooks.Enable_Fault (Database.Fault_Hooks.Fail_Checkpoint);
+      R := Database.Checkpointing.Checkpoint (DB);
+      Database.Fault_Hooks.Disable_Fault (Database.Fault_Hooks.Fail_Checkpoint);
+      Assert (not Database.Status.Is_Ok (R), "the injected checkpoint failure is reported");
+      Assert (Checkpoint_Ends = 1, "a failed checkpoint does not announce an end");
+      Database.Transactions.Try_Begin_Write (DB, Tx, Granted);
+      Assert (Granted, "a failed checkpoint gives the write lock back");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "commit after the failed checkpoint failed");
+
+      Database.Events.Clear_Handlers;
+      Database.Close (DB);
+      Remove_File ("wal_checkpoint_lock.database");
+      Remove_File ("wal_checkpoint_lock.database.wal");
+   end Checkpoint_Holds_Write_Lock;
 
    function One_Posting (Row_Id : Natural) return Database.Full_Text.Postings.Posting_Vectors.Vector is
       P : Database.Full_Text.Postings.Posting;
@@ -464,6 +504,8 @@ package body WAL_Tests is
          "replay applies committed WAL frames");
       Register_Routine
         (T, Checkpoint_Removes_Safe_WAL'Access, "checkpoint removes safe WAL");
+      Register_Routine
+        (T, Checkpoint_Holds_Write_Lock'Access, "a checkpoint holds the write lock and announces only what it did");
       Register_Routine
         (T,
          Full_Text_Redo_Replays_Committed_Image'Access,

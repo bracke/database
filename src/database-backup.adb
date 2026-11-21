@@ -2,6 +2,7 @@ with Ada.Characters.Conversions;
 with Ada.Directories;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Database.Backup_Format;
+with Database.Checkpoint_Merge;
 with Database.Crypto;
 with Database.Crypto_Checks;
 with Database.Encrypted_Persistence;
@@ -48,7 +49,8 @@ package body Database.Backup is
       end if;
    end Copy_If_Exists;
 
-   function Base_Physical_Backup
+   --  Make the backup; the caller holds the write lock of DB.
+   function Copy_Backup
      (DB          : in out Database.Handle;
       Destination : Wide_Wide_String;
       Options     : Backup_Options;
@@ -59,12 +61,6 @@ package body Database.Backup is
       Manifest    : Database.Backup_Format.Manifest;
       R           : Database.Status.Result;
    begin
-      if not Database.Is_Open (DB) or else DB.Kind /= Persistent_Backend then
-         return Database.Status.Failure (Database.Status.Not_Open, "backup requires an open persistent database");
-      end if;
-      if DB.Lock.Writer_Active then
-         return Database.Status.Failure (Database.Status.Transaction_Conflict, "backup rejected active writer");
-      end if;
       if Database.Fault_Hooks.Should_Fail (Database.Fault_Hooks.Fail_Backup_Copy) then
          return Database.Fault_Hooks.Injected_Failure (Database.Fault_Hooks.Fail_Backup_Copy);
       end if;
@@ -75,6 +71,12 @@ package body Database.Backup is
          return Database.Status.Failure (Database.Status.Invalid_Key, "encrypted backup requires a valid key");
       end if;
 
+      if Options.Force_Checkpoint then
+         R := Database.Checkpoint_Merge.Merge_WAL (DB);
+         if not Database.Status.Is_Ok (R) then
+            return R;
+         end if;
+      end if;
       R := Database.Storage.File_IO.Flush (DB.File);
       if not Database.Status.Is_Ok (R) then
          return R;
@@ -146,6 +148,29 @@ package body Database.Backup is
    exception
       when others =>
          return Database.Status.Failure (Database.Status.Backup_Error, "physical backup failed safely");
+   end Copy_Backup;
+
+   function Base_Physical_Backup
+     (DB          : in out Database.Handle;
+      Destination : Wide_Wide_String;
+      Options     : Backup_Options;
+      Encrypted   : Boolean;
+      Key         : Database.Keys.Encryption_Key) return Database.Status.Result is
+      R       : Database.Status.Result;
+      Granted : Boolean;
+   begin
+      if not Database.Is_Open (DB) or else DB.Kind /= Persistent_Backend then
+         return Database.Status.Failure (Database.Status.Not_Open, "backup requires an open persistent database");
+      end if;
+      --  The database image and the WAL must be copied at one point in time, so no transaction or checkpoint may
+      --  write until both are copied: the backup holds the write lock throughout. Readers may continue.
+      DB.Lock.Try_Begin_Write (Granted);
+      if not Granted then
+         return Database.Status.Failure (Database.Status.Transaction_Conflict, "backup rejected active writer");
+      end if;
+      R := Copy_Backup (DB, Destination, Options, Encrypted, Key);
+      DB.Lock.End_Write;
+      return R;
    end Base_Physical_Backup;
 
    function Create_Physical_Backup

@@ -156,7 +156,9 @@ of pages the file had, and the first write to each page the file already had by 
 undo record holding the page as it was. A transaction that rolls back restores its
 pages from memory, cuts the file back, and appends an abort record. Record kinds:
 page frame 1, commit 2, checkpoint 3, full-text redo 4, full-text undo 5, page undo
-6, begin 7, abort 8.
+6, begin 7, abort 8. Full-text redo and undo records are reserved: the engine does
+not write them today, but recovery honours them, redoing a full-text page for a
+committed transaction and undoing it like a page undo.
 
 ## Recovery strategy
 
@@ -174,8 +176,9 @@ once to learn how each transaction ended and once to apply its records, and the
 first pass also yields the highest commit version, the committed transactions for
 MVCC visibility, and the highest transaction id; new transaction ids start past
 it, because replay tells transactions apart by id. A checkpoint replays the WAL
-the same way and then finds the free pages and the end of the file again, since a
-transaction whose rollback failed may have been undone.
+the same way while holding the write lock, so no transaction writes meanwhile, and
+then finds the free pages and the end of the file again, since a transaction whose
+rollback failed may have been undone.
 
 ## Versioning strategy
 

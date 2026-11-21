@@ -7,12 +7,14 @@ with Ada.Text_IO;
 with Ada.Streams.Stream_IO;
 with Database;
 with Database.Checkpointing;
+with Database.Fault_Hooks;
 with Database.Full_Text.Postings;
 with Database.Full_Text.Storage;
 with Database.Log_Sequence;
 with Database.Status;
 with Database.Storage.File_IO;
 with Database.Storage.Pages;
+with Database.Transactions;
 with Database.WAL;
 with Ada.Strings.Wide_Wide_Unbounded;
 
@@ -173,6 +175,28 @@ package body WAL_Tests is
       Assert (Database.Status.Is_Ok (R), "empty checkpoint failed");
       Assert
         (not Database.WAL.Exists (Path), "checkpoint left empty WAL behind");
+
+      --  A checkpoint holds the write lock: it is refused beside a writer, and
+      --  gives the lock back however it ends.
+      declare
+         Tx      : Database.Transactions.Transaction;
+         Granted : Boolean;
+      begin
+         Database.Transactions.Try_Begin_Write (DB, Tx, Granted);
+         Assert (Granted, "a checkpoint gives the write lock back");
+         R := Database.Checkpointing.Checkpoint (DB);
+         Assert (R.Code = Database.Status.Checkpoint_Failure, "a checkpoint beside a writer is refused");
+         R := Database.Transactions.Commit (Tx);
+         Assert (Database.Status.Is_Ok (R), "commit failed");
+
+         Database.Fault_Hooks.Enable_Fault (Database.Fault_Hooks.Fail_Checkpoint);
+         R := Database.Checkpointing.Checkpoint (DB);
+         Database.Fault_Hooks.Disable_Fault (Database.Fault_Hooks.Fail_Checkpoint);
+         Assert (not Database.Status.Is_Ok (R), "the injected checkpoint failure is reported");
+         Database.Transactions.Try_Begin_Write (DB, Tx, Granted);
+         Assert (Granted, "a failed checkpoint gives the write lock back");
+         R := Database.Transactions.Commit (Tx);
+      end;
       Database.Close (DB);
       Remove_File ("wal_checkpoint.database");
       Remove_File ("wal_checkpoint.database.wal");

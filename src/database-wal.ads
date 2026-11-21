@@ -77,7 +77,9 @@ package Database.WAL is
       LSN            : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result;
 
    --  Append a full-text page after-image. Recovery replays this image only
-   --  for transactions that have a durable commit marker.
+   --  for transactions that have a durable commit marker. Reserved: the
+   --  engine does not write full-text pages through the WAL today, but the
+   --  record kind is part of the format and recovery honours it.
    --  @param W w argument supplied to the operation.
    --  @param Transaction_Id transaction id argument supplied to the operation.
    --  @param Page full-text dictionary or posting page after image.
@@ -89,8 +91,9 @@ package Database.WAL is
       Page           : Database.Storage.Pages.Page;
       LSN            : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result;
 
-   --  Append a full-text page before-image. Recovery replays this image only
-   --  for transactions without a durable commit marker.
+   --  Append a full-text page before-image. Recovery writes it back for a
+   --  transaction that has neither a commit nor an abort record. Reserved like
+   --  Append_Full_Text_Redo.
    --  @param W w argument supplied to the operation.
    --  @param Transaction_Id transaction id argument supplied to the operation.
    --  @param Page full-text dictionary or posting page before image.
@@ -158,13 +161,13 @@ package Database.WAL is
      (W   : in out WAL_Handle;
       LSN : out Database.Log_Sequence.Log_Sequence_Number) return Database.Status.Result;
 
-   --  Commit versions by the id of the transaction that committed them.
-   package Commit_Maps is new Ada.Containers.Ordered_Maps (Natural, Natural);
+   --  Numbers by transaction id, such as the version a transaction committed.
+   package Transaction_Maps is new Ada.Containers.Ordered_Maps (Natural, Natural);
 
    --  What recovery found in a WAL besides the pages it wrote.
    type Recovery_Summary is record
       --  The committed transactions, so visibility treats their rows as committed in a process that never ran them.
-      Committed          : Commit_Maps.Map;
+      Committed          : Transaction_Maps.Map;
       --  The highest commit version, or zero.
       Max_Commit_Version : Natural := 0;
       --  The highest transaction id in any record, or zero. A new transaction must not reuse one, or replay would take

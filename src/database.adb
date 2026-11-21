@@ -183,7 +183,7 @@ package body Database is
          --  correctly (a fresh process starts with an empty map).
          for C in Summary.Committed.Iterate loop
             Database.MVCC.Mark_Committed
-              (Database.WAL.Commit_Maps.Key (C), Database.WAL.Commit_Maps.Element (C));
+              (Database.WAL.Transaction_Maps.Key (C), Database.WAL.Transaction_Maps.Element (C));
          end loop;
          --  The WAL keeps the records of every transaction since the last checkpoint, rolled back or not, and
          --  replay tells transactions apart by id.

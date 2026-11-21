@@ -34,7 +34,6 @@ package body Database.Vacuum is
 
    function Remove_Reclaimed_Index_Refs
      (Tx        : in out Database.Transactions.Transaction;
-      DB        : access Database.Handle;
       Schema    : Database.Schema.Table_Schema;
       Reclaimed : Database.Storage.Table_Heap.Reclaimed_Row_Vectors.Vector)
       return Database.Status.Result
@@ -135,7 +134,7 @@ package body Database.Vacuum is
                   if not Database.Status.Is_Ok (R) then
                      return R;
                   end if;
-                  R := Remove_Reclaimed_Index_Refs (Tx, DB, S, Reclaimed_Rows);
+                  R := Remove_Reclaimed_Index_Refs (Tx, S, Reclaimed_Rows);
                   if not Database.Status.Is_Ok (R) then
                      return R;
                   end if;

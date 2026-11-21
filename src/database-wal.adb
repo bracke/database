@@ -673,7 +673,6 @@ package body Database.WAL is
    end Append_Checkpoint;
 
    package Id_Sets is new Ada.Containers.Ordered_Sets (Natural);
-   package Count_Maps is new Ada.Containers.Ordered_Maps (Natural, Natural);
 
    function Apply_Page_Image
      (F                  : in out Database.Storage.File_IO.File_Handle;
@@ -824,7 +823,8 @@ package body Database.WAL is
 
    --  Read the records of the WAL of Database_Path in order and pass each complete one to Visit. A short trailing
    --  record, left by a power loss during an append, ends the scan; a complete record that fails validation ends it
-   --  with that failure, as does Visit returning one.
+   --  with that failure, as does Visit returning one. Recover scans twice and relies on both scans seeing the same
+   --  records, so nothing may append to the WAL between them; recovery itself appends only after the second.
    generic
       with function Visit
         (H       : Stream_Element_Array;
@@ -1122,7 +1122,7 @@ package body Database.WAL is
       --  Transactions with an undo record or a begin record, which are undone unless they finished.
       Undoable      : Id_Sets.Set;
       --  The length of the database file before each transaction's first write.
-      Begun         : Count_Maps.Map;
+      Begun         : Transaction_Maps.Map;
       --  One past the highest page a committed transaction writes.
       Committed_End : Natural := 0;
       Keep          : Natural := Natural'Last;

@@ -4,6 +4,7 @@ with Database.Storage.Free_List;
 with Database.Keys;
 with Database.Catalog;
 with Database.Exclusive;
+with Database.Events;
 with Database.Extensions;
 with Database.Functions;
 with Database.Aggregate_Functions;
@@ -39,20 +40,13 @@ package body Database is
          end if;
       end End_Read;
 
-      entry Begin_Write when True is
+      --  A waiting writer stays queued on its own entry, so it can be aborted or time out, and the queues count the
+      --  waiting writers.
+      entry Begin_Write when not Writer is
       begin
-         Waiting_Write := Waiting_Write + 1;
-         requeue Acquire_Write;
-      end Begin_Write;
-
-      entry Acquire_Write when not Writer is
-      begin
-         if Waiting_Write > 0 then
-            Waiting_Write := Waiting_Write - 1;
-         end if;
          Writer := True;
-         Holder := Acquire_Write'Caller;
-      end Acquire_Write;
+         Holder := Begin_Write'Caller;
+      end Begin_Write;
 
       procedure Try_Begin_Write (Granted : out Boolean) is
       begin
@@ -63,21 +57,12 @@ package body Database is
          end if;
       end Try_Begin_Write;
 
-      entry Begin_Exclusive when True is
+      entry Begin_Exclusive when not Writer is
       begin
-         Waiting_Write := Waiting_Write + 1;
-         requeue Acquire_Exclusive;
-      end Begin_Exclusive;
-
-      entry Acquire_Exclusive when not Writer is
-      begin
-         if Waiting_Write > 0 then
-            Waiting_Write := Waiting_Write - 1;
-         end if;
          Writer := True;
          Exclusive := True;
-         Holder := Acquire_Exclusive'Caller;
-      end Acquire_Exclusive;
+         Holder := Begin_Exclusive'Caller;
+      end Begin_Exclusive;
 
       procedure Try_Begin_Exclusive (Granted : out Boolean) is
       begin
@@ -116,7 +101,8 @@ package body Database is
         (Writer and then Ada.Task_Identification."=" (Holder, Ada.Task_Identification.Current_Task));
 
       function Own_Transaction_Writing return Boolean is (not Exclusive and then Held_By_Current_Task);
-      function Waiting_Writers return Natural is (Waiting_Write);
+      function Closing_By_Current_Task return Boolean is (Closing and then Held_By_Current_Task);
+      function Waiting_Writers return Natural is (Begin_Write'Count + Begin_Exclusive'Count);
    end Read_Write_Lock;
 
    --  State keys are process-global; opening databases from several tasks must
@@ -375,6 +361,9 @@ package body Database is
       function Save_And_Close (Target : in out Handle) return Database.Status.Result is
          Result : Database.Status.Result := Database.Status.Success;
       begin
+         Database.Events.Emit_Event
+           ((Database.Events.Close_Start,
+             Ada.Strings.Wide_Wide_Unbounded.To_Unbounded_Wide_Wide_String ("close start")));
          if Target.Kind = Persistent_Backend then
             --  The process lock is released below; another process may append to the WAL afterwards.
             Database.WAL.Forget_Trusted (Database.Storage.File_IO.Path (Target.File));

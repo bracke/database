@@ -11,6 +11,7 @@ package Database.Events is
       Transaction_Rollback,
       Checkpoint_Start,
       Checkpoint_End,
+      Close_Start,
       Backup_Start,
       Backup_End,
       Restore_End,

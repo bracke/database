@@ -8,6 +8,7 @@ with Database;
 with Database.Backup;
 with Database.Backup_Format;
 with Database.Catalog;
+with Database.Diagnostics.Runtime;
 with Database.Checkpointing;
 with Database.Events;
 with Database.Fault_Hooks;
@@ -556,6 +557,7 @@ package body Backup_Restore_Tests is
 
    Handler_Result : Database.Status.Result;
    Close_Result   : Database.Status.Result;
+   Begin_Result   : Database.Status.Result;
 
    --  Runs inside a checkpoint, in the task that holds the write lock, and changes the catalog outside a transaction.
    procedure Register_Inside_Checkpoint (Event : Database.Events.Operational_Event) is
@@ -567,6 +569,12 @@ package body Backup_Restore_Tests is
          Handler_Result := Database.Catalog.Register (Shared_DB, S);
          Database.Close (Shared_DB);
          Close_Result := Database.Last_Result (Shared_DB);
+         declare
+            Tx : Database.Transactions.Transaction;
+         begin
+            Database.Transactions.Begin_Write (Shared_DB, Tx);
+            Begin_Result := Database.Transactions.Result (Tx);
+         end;
       end if;
    end Register_Inside_Checkpoint;
 
@@ -581,6 +589,8 @@ package body Backup_Restore_Tests is
       Database.Create (Shared_DB, "catalog_in_checkpoint.database");
       Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "create failed");
       Handler_Result := Database.Status.Success;
+      Close_Result := Database.Status.Success;
+      Begin_Result := Database.Status.Success;
 
       Database.Events.Clear_Handlers;
       Database.Events.Subscribe (Register_Inside_Checkpoint'Access);
@@ -597,6 +607,9 @@ package body Backup_Restore_Tests is
         (Handler_Result.Code = Database.Status.Transaction_Conflict,
          "a catalog change inside the checkpoint that holds the lock is refused instead of waiting for itself");
       Assert (Close_Result.Code = Database.Status.Transaction_Conflict, "closing inside a checkpoint is refused");
+      Assert
+        (Begin_Result.Code = Database.Status.Transaction_Conflict,
+         "a write transaction begun inside a checkpoint is refused instead of waiting for itself");
       Assert (Database.Is_Open (Shared_DB), "a refused close left the database open");
       Database.Close (Shared_DB);
       Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "close failed");
@@ -668,14 +681,14 @@ package body Backup_Restore_Tests is
                Other.Outcome (R);
             or
                delay 10.0;
-               --  A task waiting for the write lock cannot be aborted, so the lock is released for it to finish.
+               --  The other task waits for the lock Tx holds; it is aborted before Tx is touched again.
                Timed_Out := True;
-               Ended := Database.Transactions.Rollback (Tx);
-               Other.Outcome (R);
+               abort Other;
             end select;
-            if not Timed_Out then
-               Ended := Database.Transactions.Rollback (Tx);
-            end if;
+            while not Other'Terminated loop
+               delay 0.01;
+            end loop;
+            Ended := Database.Transactions.Rollback (Tx);
             Assert (Database.Status.Is_Ok (Ended), "rollback failed");
             Assert
               (not Timed_Out, Borrowed_Action'Image (Action) & " through another task's transaction waited for its lock");
@@ -688,6 +701,197 @@ package body Backup_Restore_Tests is
       Remove_File ("borrowed_tx.database");
       Remove_File ("borrowed_tx.database.wal");
    end Transaction_Of_Another_Task_Is_Refused;
+
+   task type Waiting_Writer is
+      entry Start;
+   end Waiting_Writer;
+
+   task body Waiting_Writer is
+      Tx : Database.Transactions.Transaction;
+   begin
+      accept Start;
+      Database.Transactions.Begin_Write (Shared_DB, Tx);
+      if Database.Transactions.Is_Active (Tx) then
+         Database.Transactions.Rollback (Tx);
+      end if;
+   end Waiting_Writer;
+
+   procedure Waiting_Writer_Can_Be_Aborted
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Tx      : Database.Transactions.Transaction;
+      R       : Database.Status.Result;
+      Aborted : Boolean;
+   begin
+      Remove_File ("waiting_writer.database");
+      Remove_File ("waiting_writer.database.wal");
+      Database.Create (Shared_DB, "waiting_writer.database");
+      Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "create failed");
+      Database.Transactions.Begin_Write (Shared_DB, Tx);
+      declare
+         Other : Waiting_Writer;
+      begin
+         Other.Start;
+         for Attempt in 1 .. 500 loop
+            exit when Database.Diagnostics.Runtime.Lock_Statistics (Shared_DB).Waiting_Writers = 1;
+            delay 0.01;
+         end loop;
+         Assert
+           (Database.Diagnostics.Runtime.Lock_Statistics (Shared_DB).Waiting_Writers = 1,
+            "the other task waits for the write lock");
+         abort Other;
+         for Attempt in 1 .. 500 loop
+            exit when Other'Terminated;
+            delay 0.01;
+         end loop;
+         Aborted := Other'Terminated;
+         if not Aborted then
+            --  Release the lock so the other task can finish and the test fails instead of hanging.
+            R := Database.Transactions.Commit (Tx);
+         end if;
+      end;
+      declare
+         Waiting : constant Natural := Database.Diagnostics.Runtime.Lock_Statistics (Shared_DB).Waiting_Writers;
+      begin
+         if Aborted then
+            R := Database.Transactions.Commit (Tx);
+         end if;
+         --  Closed before the checks, so a failure does not leave the shared handle open for the next test.
+         Database.Close (Shared_DB);
+         Remove_File ("waiting_writer.database");
+         Remove_File ("waiting_writer.database.wal");
+         Assert (Aborted, "a task waiting for the write lock can be aborted");
+         Assert (Waiting = 0, "an aborted writer no longer counts as waiting");
+         Assert (Database.Status.Is_Ok (R), "commit failed");
+      end;
+   end Waiting_Writer_Can_Be_Aborted;
+
+   --  Readers that arrive while the database closes: a nonblocking one is refused, a blocking one waits and then
+   --  finds the database closed, and the closing task itself is refused instead of waiting for itself.
+   protected Late_Readers is
+      procedure Set_Try (Granted : Boolean);
+      procedure Set_Blocking (Outcome : Database.Status.Result);
+      function Try_Granted return Boolean;
+      function Blocking_Result return Database.Status.Result;
+      function Blocking_Done return Boolean;
+      procedure Reset;
+   private
+      Tried   : Boolean := True;
+      Done    : Boolean := False;
+      Outcome : Database.Status.Result;
+   end Late_Readers;
+
+   protected body Late_Readers is
+      procedure Set_Try (Granted : Boolean) is
+      begin
+         Tried := Granted;
+      end Set_Try;
+      procedure Set_Blocking (Outcome : Database.Status.Result) is
+      begin
+         Late_Readers.Outcome := Outcome;
+         Done := True;
+      end Set_Blocking;
+      function Try_Granted return Boolean is (Tried);
+      function Blocking_Result return Database.Status.Result is (Outcome);
+      function Blocking_Done return Boolean is (Done);
+      procedure Reset is
+      begin
+         Tried := True;
+         Done := False;
+         Outcome := Database.Status.Success;
+      end Reset;
+   end Late_Readers;
+
+   task type Late_Reader is
+      entry Start (Blocking : Boolean);
+      entry Tried;
+   end Late_Reader;
+
+   task body Late_Reader is
+      Tx      : Database.Transactions.Transaction;
+      Wait    : Boolean;
+      Granted : Boolean;
+   begin
+      accept Start (Blocking : Boolean) do
+         Wait := Blocking;
+      end Start;
+      if Wait then
+         Database.Transactions.Begin_Read (Shared_DB, Tx);
+         Late_Readers.Set_Blocking (Database.Transactions.Result (Tx));
+      else
+         Database.Transactions.Try_Begin_Read (Shared_DB, Tx, Granted);
+         Late_Readers.Set_Try (Granted);
+         accept Tried;
+      end if;
+      if Database.Transactions.Is_Active (Tx) then
+         Database.Transactions.Rollback (Tx);
+      end if;
+   end Late_Reader;
+
+   type Late_Reader_Access is access Late_Reader;
+   Blocking_Reader : Late_Reader_Access;
+   Own_Read_Result : Database.Status.Result;
+
+   --  Runs inside Close, in the task that holds the write lock while the database closes.
+   procedure Read_During_Close (Event : Database.Events.Operational_Event) is
+      use type Database.Events.Event_Kind;
+   begin
+      if Event.Kind = Database.Events.Close_Start then
+         declare
+            Trying : Late_Reader;
+            Tx     : Database.Transactions.Transaction;
+         begin
+            Trying.Start (Blocking => False);
+            Trying.Tried;
+            Database.Transactions.Begin_Read (Shared_DB, Tx);
+            Own_Read_Result := Database.Transactions.Result (Tx);
+         end;
+         Blocking_Reader := new Late_Reader;
+         Blocking_Reader.Start (Blocking => True);
+         --  Long enough for a reader that does not wait for the close to begin reading.
+         delay 0.1;
+      end if;
+   end Read_During_Close;
+
+   procedure Readers_Wait_For_Close
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      Remove_File ("read_during_close.database");
+      Remove_File ("read_during_close.database.wal");
+      Database.Create (Shared_DB, "read_during_close.database");
+      Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "create failed");
+      Late_Readers.Reset;
+      Own_Read_Result := Database.Status.Success;
+
+      Database.Events.Clear_Handlers;
+      Database.Events.Subscribe (Read_During_Close'Access);
+      begin
+         Database.Close (Shared_DB);
+         Database.Events.Clear_Handlers;
+      exception
+         when others =>
+            Database.Events.Clear_Handlers;
+            raise;
+      end;
+      Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "close failed");
+      for Attempt in 1 .. 500 loop
+         exit when Blocking_Reader'Terminated;
+         delay 0.01;
+      end loop;
+      Assert (Blocking_Reader'Terminated, "the waiting reader never finished");
+      Assert (not Late_Readers.Try_Granted, "a nonblocking read is refused while the database closes");
+      Assert
+        (Own_Read_Result.Code = Database.Status.Transaction_Conflict,
+         "the closing task's own read is refused instead of waiting for itself");
+      Assert
+        (Late_Readers.Blocking_Result.Code = Database.Status.Not_Open,
+         "a read that waited for the close finds the database closed");
+      Remove_File ("read_during_close.database");
+      Remove_File ("read_during_close.database.wal");
+   end Readers_Wait_For_Close;
 
    procedure Logical_Export_And_Import
      (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -1139,11 +1343,15 @@ package body Backup_Restore_Tests is
       Register_Routine
         (T,
          Catalog_Change_Inside_Checkpoint_Is_Refused'Access,
-         "a catalog change inside a checkpoint is refused instead of waiting for itself");
+         "a catalog change, close or write transaction inside a checkpoint is refused instead of waiting for itself");
       Register_Routine
         (T,
          Transaction_Of_Another_Task_Is_Refused'Access,
          "writes through another task's transaction are refused, and the catalog is saved only under the lock");
+      Register_Routine
+        (T, Waiting_Writer_Can_Be_Aborted'Access, "a task waiting for the write lock can be aborted");
+      Register_Routine
+        (T, Readers_Wait_For_Close'Access, "readers that arrive during a close wait for it or are refused");
       Register_Routine
         (T,
          Encrypted_Physical_Backup_And_Restore'Access,

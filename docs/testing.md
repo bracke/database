@@ -7,7 +7,7 @@ stress, crash, and SPARK-oriented validation suites.
 
 The project_tools-backed release check currently runs the full AUnit suite:
 
-- tests run: 256
+- tests run: 258
 - failed assertions: 0
 - unexpected errors: 0
 - packages with missing direct source-level test coverage: 0

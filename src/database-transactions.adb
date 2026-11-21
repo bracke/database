@@ -98,6 +98,15 @@ package body Database.Transactions is
          return;
       end if;
 
+      --  A task that holds the write lock, inside a checkpoint, backup or close it runs or with a write transaction
+      --  still open, would wait for itself: a write waits for the lock, and a read waits while the database closes.
+      if (Mode_In = Read_Write and then DB.Lock.Held_By_Current_Task)
+        or else (Mode_In = Read_Only and then DB.Lock.Closing_By_Current_Task)
+      then
+         Tx.Last := Database.Status.Failure
+           (Database.Status.Transaction_Conflict, "the calling task already holds the write lock");
+         return;
+      end if;
       if Blocking then
          case Mode_In is
             when Read_Only => DB.Lock.Begin_Read;
@@ -703,16 +712,18 @@ package body Database.Transactions is
      (Database.Transactions.State_Rules.Is_Active_State (Tx.Current_State));
    function Can_Read (Tx : Transaction) return Boolean is
      (Database.Transactions.State_Rules.Can_Read_State (Tx.Current_State));
+   --  Whether Tx is an active read-write transaction, whichever task began it.
+   function Active_Read_Write (Tx : Transaction) return Boolean is
+     (Database.Transactions.State_Rules.Can_Write_State (Tx.Current_State, Tx.Current_Mode));
+
    function Can_Write (Tx : Transaction) return Boolean is
-     (Database.Transactions.State_Rules.Can_Write_State (Tx.Current_State, Tx.Current_Mode)
-      and then Owned_By_Current_Task (Tx));
+     (Active_Read_Write (Tx) and then Owned_By_Current_Task (Tx));
 
    function Write_Refusal
      (Tx      : Transaction;
       Code    : Database.Status.Status_Code;
       Message : Wide_Wide_String) return Database.Status.Result is
-     (if Database.Transactions.State_Rules.Can_Write_State (Tx.Current_State, Tx.Current_Mode)
-        and then not Owned_By_Current_Task (Tx)
+     (if Active_Read_Write (Tx) and then not Owned_By_Current_Task (Tx)
       then Database.Status.Failure (Database.Status.Invalid_Argument, "transaction belongs to another task")
       else Database.Status.Failure (Code, Message));
    function Result (Tx : Transaction) return Database.Status.Result is (Tx.Last);

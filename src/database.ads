@@ -100,6 +100,9 @@ package Database is
       function Held_By_Current_Task return Boolean;
       --  Whether a write transaction begun by the calling task holds the write side.
       function Own_Transaction_Writing return Boolean;
+      --  Whether the calling task is closing the database, so that Begin_Read would wait for itself.
+      function Closing_By_Current_Task return Boolean;
+      --  The tasks waiting in Begin_Write or Begin_Exclusive.
       function Waiting_Writers return Natural;
    private
       Readers       : Natural := 0;
@@ -107,9 +110,6 @@ package Database is
       Exclusive     : Boolean := False;
       Closing       : Boolean := False;
       Holder        : Ada.Task_Identification.Task_Id := Ada.Task_Identification.Null_Task_Id;
-      Waiting_Write : Natural := 0;
-      entry Acquire_Write;
-      entry Acquire_Exclusive;
    end Read_Write_Lock;
 
    --  Public database handle.

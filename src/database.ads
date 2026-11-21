@@ -5,6 +5,7 @@ with Ada.Strings.Wide_Wide_Unbounded;
 with Ada.Streams.Stream_IO;
 with Ada.Task_Identification;
 with Interfaces.C;
+with System;
 
 package Database is
    use Ada.Strings.Wide_Wide_Unbounded;
@@ -76,12 +77,14 @@ package Database is
    type Allocator is private;
 
    --  One hold on a Read_Write_Lock. The lock sets and clears it inside its own protected operations, so an abort
-   --  cannot come between taking or releasing the lock and recording it: whoever owns the claim releases exactly
-   --  what it holds. Tagged, so it is passed by reference.
-   type Lock_Claim is tagged record
-      Read  : Boolean := False;
-      Write : Boolean := False;
-   end record;
+   --  cannot come between taking or releasing the lock and recording it, and records itself in it: a claim releases
+   --  only what the lock that granted it gave. Tagged, so it is passed by reference.
+   type Lock_Claim is tagged private;
+
+   --  Whether Claim holds a read or the write side of a lock.
+   --  @param Claim claim to inspect.
+   --  @return True from the grant until the release.
+   function Is_Held (Claim : Lock_Claim) return Boolean;
 
    --  In-process read/write lock used by transaction coordination. A write transaction holds the write side; so does,
    --  exclusively, an operation outside any transaction that writes the file directly: a checkpoint, a backup, a
@@ -115,6 +118,8 @@ package Database is
       --  The tasks waiting in Begin_Write or Begin_Exclusive.
       function Waiting_Writers return Natural;
    private
+      --  Whether Claim was granted by this lock.
+      function Granted_Here (Claim : Lock_Claim) return Boolean;
       --  Take the write side for Holder; Exclusive_Hold and Closing_Hold say for what.
       procedure Grant_Write
         (Claim : in out Lock_Claim; Holder_Task : Ada.Task_Identification.Task_Id; Exclusive_Hold : Boolean;
@@ -211,6 +216,14 @@ package Database is
    function Catalog_State_Key (DB : Handle) return Natural;
 
 private
+   type Lock_Claim is tagged record
+      Read  : Boolean := False;
+      Write : Boolean := False;
+      --  The lock that granted the hold.
+      Lock  : System.Address := System.Null_Address;
+   end record;
+
+   function Is_Held (Claim : Lock_Claim) return Boolean is (Claim.Read or else Claim.Write);
    type Encryption_Key is record
       Valid : Boolean := False;
       Id    : Key_Id := 0;

@@ -149,6 +149,32 @@ package body Concurrency_Tests is
       L.Try_Begin_Read (Reader_3, Granted);
       Assert (Granted, "reader rejected while writer active under MVCC");
       L.End_Read (Reader_3);
+
+      --  A claim releases only what the lock that granted it gave.
+      declare
+         Other_Lock    : Database.Locking.Read_Write_Lock;
+         Foreign       : Database.Lock_Claim;
+         Foreign_Read  : Database.Lock_Claim;
+         Never_Granted : Database.Lock_Claim;
+         Held_Read     : Database.Lock_Claim;
+      begin
+         Other_Lock.Try_Begin_Write (Foreign, Granted);
+         Assert (Granted, "the other lock refused its writer");
+         L.End_Write (Foreign);
+         Assert (L.Writer_Active, "a claim of another lock released this lock's writer");
+         L.End_Write (Never_Granted);
+         Assert (L.Writer_Active, "a claim that was never granted released this lock's writer");
+         Assert (Database.Is_Held (Foreign), "releasing a claim through the wrong lock forgot its hold");
+         Other_Lock.End_Write (Foreign);
+         Assert (not Database.Is_Held (Foreign), "the granting lock did not release its claim");
+
+         L.Try_Begin_Read (Held_Read, Granted);
+         Other_Lock.Try_Begin_Read (Foreign_Read, Granted);
+         L.End_Read (Foreign_Read);
+         Assert (L.Active_Readers = 1, "a read claim of another lock released this lock's reader");
+         Other_Lock.End_Read (Foreign_Read);
+         L.End_Read (Held_Read);
+      end;
       L.End_Write (Writer_2);
    end Lock_Allows_Multiple_Readers;
 

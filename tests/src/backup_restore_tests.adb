@@ -1062,6 +1062,46 @@ package body Backup_Restore_Tests is
       Remove_Tree ("events.backup");
    end Operations_Emit_Their_Events;
 
+   procedure Restarting_A_Transaction_Keeps_Its_Lock
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      DB      : Database.Handle;
+      Tx      : Database.Transactions.Transaction;
+      Other   : Database.Transactions.Transaction;
+      Granted : Boolean;
+      R       : Database.Status.Result;
+   begin
+      Remove_File ("restart_tx.database");
+      Remove_File ("restart_tx.database.wal");
+      Database.Create (DB, "restart_tx.database");
+      Assert (Database.Status.Is_Ok (Database.Last_Result (DB)), "create failed");
+
+      Database.Transactions.Begin_Write (DB, Tx);
+      Database.Transactions.Begin_Write (DB, Tx);
+      Assert
+        (Database.Transactions.Result (Tx).Code = Database.Status.Transaction_Error,
+         "beginning a write transaction over one that has not ended is refused");
+      Assert (Database.Transactions.Is_Active (Tx), "the refused start ended the open transaction");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "the open transaction no longer commits");
+      Database.Transactions.Try_Begin_Write (DB, Other, Granted);
+      Assert (Granted, "the write lock was not given back after the refused start");
+      Database.Transactions.Rollback (Other);
+
+      Database.Transactions.Begin_Read (DB, Tx);
+      Database.Transactions.Begin_Read (DB, Tx);
+      Assert
+        (Database.Transactions.Result (Tx).Code = Database.Status.Transaction_Error,
+         "beginning a read transaction over one that has not ended is refused");
+      R := Database.Transactions.Commit (Tx);
+      Assert (Database.Status.Is_Ok (R), "the open read transaction no longer ends");
+      Database.Close (DB);
+      Assert (Database.Status.Is_Ok (Database.Last_Result (DB)), "a reader was left counted after the refused start");
+      Remove_File ("restart_tx.database");
+      Remove_File ("restart_tx.database.wal");
+   end Restarting_A_Transaction_Keeps_Its_Lock;
+
    procedure Logical_Export_And_Import
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
@@ -1525,6 +1565,8 @@ package body Backup_Restore_Tests is
         (T, Aborted_Checkpoint_Releases_Lock'Access, "a checkpoint aborted while it holds the lock gives it back");
       Register_Routine
         (T, Operations_Emit_Their_Events'Access, "backup, restore, close, replay, check and extensions emit events");
+      Register_Routine
+        (T, Restarting_A_Transaction_Keeps_Its_Lock'Access, "beginning over an open transaction keeps its lock");
       Register_Routine
         (T,
          Encrypted_Physical_Backup_And_Restore'Access,

@@ -20,6 +20,7 @@ package Database.Transactions is
    --  until Commit, Rollback, or Finalize.
    --  @param DB database handle used by the operation.
    --  @param Tx transaction object that scopes the operation.
+   --  A transaction that has not ended is left as it is, with Result (Tx) Transaction_Error.
    procedure Begin_Read (DB : in out Database.Handle; Tx : out Transaction);
 
    --  Ensure freshly assigned transaction ids stay strictly above Highest.
@@ -33,6 +34,7 @@ package Database.Transactions is
    --  writer lock until Commit, Rollback, or Finalize.
    --  @param DB database handle used by the operation.
    --  @param Tx transaction object that scopes the operation.
+   --  A transaction that has not ended is left as it is, with Result (Tx) Transaction_Error.
    procedure Begin_Write (DB : in out Database.Handle; Tx : out Transaction);
    --  Nonblocking read transaction start. Granted is False and Result (Tx)
    --  is Transaction_Conflict when the read lock is unavailable.

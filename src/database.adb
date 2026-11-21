@@ -20,11 +20,15 @@ with Database.WAL;
 
 package body Database is
    protected body Read_Write_Lock is
+      function Granted_Here (Claim : Lock_Claim) return Boolean is
+        (System."=" (Claim.Lock, Read_Write_Lock'Address));
+
       entry Begin_Read (Claim : in out Lock_Claim) when not Closing is
       begin
          if not Claim.Read then
             Readers := Readers + 1;
             Claim.Read := True;
+            Claim.Lock := Read_Write_Lock'Address;
          end if;
       end Begin_Read;
 
@@ -34,15 +38,18 @@ package body Database is
          if Granted and then not Claim.Read then
             Readers := Readers + 1;
             Claim.Read := True;
+            Claim.Lock := Read_Write_Lock'Address;
          end if;
       end Try_Begin_Read;
 
       procedure End_Read (Claim : in out Lock_Claim) is
       begin
-         if Claim.Read and then Readers > 0 then
-            Readers := Readers - 1;
+         if Claim.Read and then Granted_Here (Claim) then
+            if Readers > 0 then
+               Readers := Readers - 1;
+            end if;
+            Claim.Read := False;
          end if;
-         Claim.Read := False;
       end End_Read;
 
       procedure Grant_Write
@@ -54,6 +61,7 @@ package body Database is
          Closing := Closing_Hold;
          Holder := Holder_Task;
          Claim.Write := True;
+         Claim.Lock := Read_Write_Lock'Address;
       end Grant_Write;
 
       --  A waiting writer stays queued on its own entry, so it can be aborted or time out, and the queues count the
@@ -94,13 +102,13 @@ package body Database is
 
       procedure End_Write (Claim : in out Lock_Claim) is
       begin
-         if Claim.Write then
+         if Claim.Write and then Granted_Here (Claim) then
             Writer := False;
             Exclusive := False;
             Closing := False;
             Holder := Ada.Task_Identification.Null_Task_Id;
+            Claim.Write := False;
          end if;
-         Claim.Write := False;
       end End_Write;
 
       function Active_Readers return Natural is (Readers);

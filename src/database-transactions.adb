@@ -73,10 +73,12 @@ package body Database.Transactions is
       Tx.Heap_Tails.Clear;
       Tx.Original_Page_Count := 0;
       Tx.Transaction_Id := 0;
-      Tx.Claim := (others => False);
       Tx.Started_At_Version := 0;
       Tx.Ended_At_Version := 0;
    end Reset;
+
+   --  Whether Tx holds its database's lock: from its start until it commits or rolls back.
+   function Holds_Lock (Tx : Transaction) return Boolean is (Database.Is_Held (Tx.Claim));
 
    procedure Start
      (DB      : in out Database.Handle;
@@ -85,8 +87,15 @@ package body Database.Transactions is
       Blocking : Boolean;
       Granted : out Boolean) is
    begin
-      Reset (Tx);
       Granted := False;
+      --  Starting over a transaction that has not ended would forget its hold on the lock, which nothing would then
+      --  give back; it stays as it is instead.
+      if Holds_Lock (Tx) then
+         Tx.Last := Database.Status.Failure
+           (Database.Status.Transaction_Error, "transaction has not ended; commit or roll it back first");
+         return;
+      end if;
+      Reset (Tx);
       if not Database.Is_Open (DB) then
          Tx.Last := Database.Status.Failure (Database.Status.Not_Open, "database not open");
          return;
@@ -171,16 +180,13 @@ package body Database.Transactions is
       if Tx.DB /= null then
          Database.Storage.File_IO.Invalidate_Cache (Tx.DB.File);
       end if;
-      if (Tx.Claim.Read or else Tx.Claim.Write) and then Tx.DB /= null then
+      if Holds_Lock (Tx) and then Tx.DB /= null then
          Tx.DB.Lock.End_Read (Tx.Claim);
          Tx.DB.Lock.End_Write (Tx.Claim);
          if Tx.Started_At_Version /= 0 or else Tx.Transaction_Id /= 0 then
             Database.MVCC.Release_Snapshot (Tx.Started_At_Version);
          end if;
       end if;
-   exception
-      when others =>
-         Tx.Claim := (others => False);
    end Release_Lock;
 
    function Ensure_Write_State (Tx : in out Transaction) return Database.Status.Result is

@@ -105,8 +105,8 @@ package body Database.Vacuum is
    begin
       Report := (others => <>);
       if not Database.Transactions.Can_Write (Tx) then
-         return Database.Status.Failure
-           (Database.Status.Read_Only_Transaction,
+         return Database.Transactions.Write_Refusal
+           (Tx, Database.Status.Read_Only_Transaction,
             "vacuum requires a read-write transaction");
       end if;
       if DB = null then

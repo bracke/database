@@ -792,8 +792,8 @@ package body Database.Import is
          return Database.Status.Failure (Database.Status.Fault_Injection_Error, "deterministic crash during import");
       end if;
       if not Database.Transactions.Can_Write (Tx) or else DB = null then
-         return Database.Status.Failure
-           (Database.Status.Import_Error, "import requires an active write transaction");
+         return Database.Transactions.Write_Refusal
+           (Tx, Database.Status.Import_Error, "import requires an active write transaction");
       end if;
       if DB.Kind /= Persistent_Backend then
          return Database.Status.Failure

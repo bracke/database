@@ -19,14 +19,14 @@ with Database.WAL;
 
 package body Database is
    protected body Read_Write_Lock is
-      entry Begin_Read when True is
+      entry Begin_Read when not Closing is
       begin
          Readers := Readers + 1;
       end Begin_Read;
 
       procedure Try_Begin_Read (Granted : out Boolean) is
       begin
-         Granted := True;
+         Granted := not Closing;
          if Granted then
             Readers := Readers + 1;
          end if;
@@ -89,10 +89,22 @@ package body Database is
          end if;
       end Try_Begin_Exclusive;
 
+      procedure Try_Begin_Close (Granted : out Boolean) is
+      begin
+         Granted := not Writer and then Readers = 0;
+         if Granted then
+            Writer := True;
+            Exclusive := True;
+            Closing := True;
+            Holder := Ada.Task_Identification.Current_Task;
+         end if;
+      end Try_Begin_Close;
+
       procedure End_Write is
       begin
          Writer := False;
          Exclusive := False;
+         Closing := False;
          Holder := Ada.Task_Identification.Null_Task_Id;
       end End_Write;
 
@@ -358,82 +370,69 @@ package body Database is
    end Open_Encrypted;
 
    procedure Close (DB : in out Handle) is
-      Closed : Boolean := False;
-
-      --  Save what the handle holds in memory and close the file, while no one else writes.
+      --  Save what the handle holds in memory, close the file and mark the handle closed, while no one else reads or
+      --  writes: a reader or writer waiting for the lock then finds the handle closed.
       function Save_And_Close (Target : in out Handle) return Database.Status.Result is
          Result : Database.Status.Result := Database.Status.Success;
       begin
-         Closed := True;
-         if Target.Kind /= Persistent_Backend then
-            return Result;
+         if Target.Kind = Persistent_Backend then
+            --  The process lock is released below; another process may append to the WAL afterwards.
+            Database.WAL.Forget_Trusted (Database.Storage.File_IO.Path (Target.File));
+            if not Target.Read_Only_Mode then
+               Result := Database.Catalog.Save_Holding_Lock (Target);
+               if Database.Status.Is_Ok (Result) then
+                  Result := Database.Full_Text.Save
+                    (Target.FT_State_Key, Database.Storage.File_IO.Path (Target.File));
+               end if;
+               if Database.Status.Is_Ok (Result) then
+                  Result := Database.Extensions.Save (Database.Storage.File_IO.Path (Target.File));
+               end if;
+               if Database.Status.Is_Ok (Result) then
+                  Result := Database.Storage.File_IO.Flush (Target.File);
+               end if;
+               if Database.Status.Is_Ok (Result) then
+                  Result := Database.WAL.Delete (Database.Storage.File_IO.Path (Target.File));
+               end if;
+            end if;
+            declare
+               R : constant Database.Status.Result := Database.Storage.File_IO.Close (Target.File);
+            begin
+               if not Database.Status.Is_Ok (R) then
+                  Result := R;
+               end if;
+            end;
          end if;
-         --  The process lock is released below; another process may append to the WAL afterwards.
-         Database.WAL.Forget_Trusted (Database.Storage.File_IO.Path (Target.File));
-         if not Target.Read_Only_Mode then
-            Result := Database.Catalog.Save_Holding_Lock (Target);
-            if Database.Status.Is_Ok (Result) then
-               Result := Database.Full_Text.Save
-                 (Target.FT_State_Key, Database.Storage.File_IO.Path (Target.File));
-            end if;
-            if Database.Status.Is_Ok (Result) then
-               Result := Database.Extensions.Save (Database.Storage.File_IO.Path (Target.File));
-            end if;
-            if Database.Status.Is_Ok (Result) then
-               Result := Database.Storage.File_IO.Flush (Target.File);
-            end if;
-            if Database.Status.Is_Ok (Result) then
-               Result := Database.WAL.Delete (Database.Storage.File_IO.Path (Target.File));
-            end if;
+
+         --  Full-text postings are handle-scoped transient state. Definitions are
+         --  durable catalog state and persistent postings are rebuilt on open, so
+         --  the in-process posting vectors must be discarded when the owning
+         --  handle is closed. This prevents stale state from a closed handle from
+         --  being visible if another handle later receives a different state key.
+         if Target.FT_State_Key /= 0 then
+            Database.Full_Text.Clear (Target.FT_State_Key);
          end if;
-         declare
-            R : constant Database.Status.Result := Database.Storage.File_IO.Close (Target.File);
-         begin
-            if not Database.Status.Is_Ok (R) then
-               Result := R;
-            end if;
-         end;
+         if Target.Catalog_State_Key_Value /= 0 then
+            Database.Extensions.Clear (Target.Catalog_State_Key_Value);
+            Database.Catalog.Drop_Database (Target.Catalog_State_Key_Value);
+            Database.Extensions.Drop_Database (Target.Catalog_State_Key_Value);
+            --  Free this handle's in-memory rows (no-op for a persistent handle).
+            Database.Memory_Store.Drop (Target.Catalog_State_Key_Value);
+         end if;
+
+         Target.Kind := Closed_Backend;
+         Target.Read_Only_Mode := False;
          return Result;
       end Save_And_Close;
 
-      function Close_Exclusively is new Database.Exclusive.Try_Run (Save_And_Close);
+      function Close_Exclusively is new Database.Exclusive.Try_Close (Save_And_Close);
    begin
-      if DB.Lock.Active_Readers > 0 then
-         DB.Last := Database.Status.Failure
-           (Database.Status.Transaction_Conflict, "cannot close database while transactions are active");
-         return;
-      end if;
-      --  Closing writes the catalog and closes the file, so it holds the write lock: no transaction, checkpoint,
-      --  backup or catalog change of another task may start meanwhile.
+      --  Closing writes the catalog and closes the file, so it holds the write lock and keeps new readers out: no
+      --  transaction, checkpoint, backup or catalog change of another task may start meanwhile.
       DB.Last := Close_Exclusively
         (DB,
          Refused => Database.Status.Failure
            (Database.Status.Transaction_Conflict,
-            "cannot close database while a transaction, checkpoint, backup or catalog change writes"));
-      if not Closed then
-         return;
-      end if;
-
-      --  Full-text postings are handle-scoped transient state. Definitions are
-      --  durable catalog state and persistent postings are rebuilt on open, so
-      --  the in-process posting vectors must be discarded when the owning
-      --  handle is closed. This prevents stale state from a closed handle from
-      --  being visible if another handle later receives a different state key.
-      if DB.FT_State_Key /= 0 then
-         Database.Full_Text.Clear (DB.FT_State_Key);
-      end if;
-      if DB.Catalog_State_Key_Value /= 0 then
-         Database.Extensions.Clear (DB.Catalog_State_Key_Value);
-      end if;
-      if DB.Catalog_State_Key_Value /= 0 then
-         Database.Catalog.Drop_Database (DB.Catalog_State_Key_Value);
-         Database.Extensions.Drop_Database (DB.Catalog_State_Key_Value);
-         --  Free this handle's in-memory rows (no-op for a persistent handle).
-         Database.Memory_Store.Drop (DB.Catalog_State_Key_Value);
-      end if;
-
-      DB.Kind := Closed_Backend;
-      DB.Read_Only_Mode := False;
+            "cannot close database while transactions, a checkpoint, a backup or a catalog change are active"));
    end Close;
    function Is_Open (DB : Handle) return Boolean is
    begin

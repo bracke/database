@@ -486,7 +486,7 @@ package body Database.Full_Text is
       Used_Heap : Boolean := False;
    begin
       if not Database.Transactions.Can_Write (Tx) then
-         return Database.Status.Failure (Database.Status.Read_Only_Transaction,
+         return Database.Transactions.Write_Refusal (Tx, Database.Status.Read_Only_Transaction,
            "full-text index creation requires write transaction");
       end if;
       if Find_Index (State_Key, Name) /= Natural'Last then
@@ -562,7 +562,7 @@ package body Database.Full_Text is
    begin
       Pos := Find_Index (State_Key, Name);
       if not Database.Transactions.Can_Write (Tx) then
-         return Database.Status.Failure (Database.Status.Read_Only_Transaction,
+         return Database.Transactions.Write_Refusal (Tx, Database.Status.Read_Only_Transaction,
            "full-text index drop requires write transaction");
       end if;
       if Pos = Natural'Last then

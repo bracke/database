@@ -81,11 +81,21 @@ package Database.Transactions is
    --  @param Tx transaction object that scopes the operation.
    --  @return Result produced by the function.
    function Can_Read (Tx : Transaction) return Boolean;
-   --  Public operation `Can_Write`. See the package documentation for transaction, ownership, and error-result
-   --  semantics.
-   --  @param Tx transaction object that scopes the operation.
-   --  @return Result produced by the function.
+   --  Test whether the calling task may write through Tx: an active read-write transaction that this task began.
+   --  @param Tx transaction.
+   --  @return True when writes through Tx are allowed.
    function Can_Write (Tx : Transaction) return Boolean;
+
+   --  The failure for a write that Can_Write refuses: Invalid_Argument for an active write transaction of another
+   --  task, otherwise Code with Message, which describe the operation's own requirement.
+   --  @param Tx transaction Can_Write refused.
+   --  @param Code status code for a transaction that is read-only or no longer active.
+   --  @param Message message for that case.
+   --  @return The failure.
+   function Write_Refusal
+     (Tx      : Transaction;
+      Code    : Database.Status.Status_Code;
+      Message : Wide_Wide_String) return Database.Status.Result;
    --  Public operation `Result`. See the package documentation for transaction, ownership, and error-result semantics.
    --  @param Tx transaction object that scopes the operation.
    --  @return Result produced by the function.

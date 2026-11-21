@@ -34,7 +34,7 @@ package body Database.Materialized_Views is
       pragma Unreferenced (Rows);
    begin
       if not Database.Transactions.Can_Write (Tx) then
-         return Database.Status.Failure (Database.Status.Read_Only_Transaction,
+         return Database.Transactions.Write_Refusal (Tx, Database.Status.Read_Only_Transaction,
            "materialized view refresh requires a write transaction");
       end if;
       View.Last_Refresh_Commit := Natural (Database.Transactions.Snapshot_Version (Tx));
@@ -96,7 +96,7 @@ package body Database.Materialized_Views is
    begin
       Result.Clear;
       if not Database.Transactions.Can_Write (Tx) then
-         return Database.Status.Failure (Database.Status.Read_Only_Transaction,
+         return Database.Transactions.Write_Refusal (Tx, Database.Status.Read_Only_Transaction,
            "incremental materialized view refresh requires a write transaction");
       end if;
       R := Validate (View);

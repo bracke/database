@@ -21,4 +21,13 @@ private package Database.Exclusive is
    generic
       with function Work (DB : in out Database.Handle) return Database.Status.Result;
    function Try_Run (DB : in out Database.Handle; Refused : Database.Status.Result) return Database.Status.Result;
+
+   --  Take the write lock of DB exclusively for closing it and run Work, or return Refused when anyone reads or
+   --  writes. Until Work ends, new readers wait or are refused.
+   --  @param DB open database.
+   --  @param Refused result returned when the lock is taken or a reader is active.
+   --  @return The result of Work, or Refused.
+   generic
+      with function Work (DB : in out Database.Handle) return Database.Status.Result;
+   function Try_Close (DB : in out Database.Handle; Refused : Database.Status.Result) return Database.Status.Result;
 end Database.Exclusive;

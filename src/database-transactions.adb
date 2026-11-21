@@ -98,8 +98,6 @@ package body Database.Transactions is
          return;
       end if;
 
-      --  A transaction reads its own snapshot; pages cached before it started may predate it.
-      Database.Storage.File_IO.Invalidate_Cache (DB.File);
       if Blocking then
          case Mode_In is
             when Read_Only => DB.Lock.Begin_Read;
@@ -117,6 +115,17 @@ package body Database.Transactions is
             return;
          end if;
       end if;
+      --  The database may have been closed while the lock was awaited; Close holds the lock while it closes.
+      if not Database.Is_Open (DB) then
+         case Mode_In is
+            when Read_Only => DB.Lock.End_Read;
+            when Read_Write => DB.Lock.End_Write;
+         end case;
+         Tx.Last := Database.Status.Failure (Database.Status.Not_Open, "database not open");
+         return;
+      end if;
+      --  A transaction reads its own snapshot; pages cached before it started may predate it.
+      Database.Storage.File_IO.Invalidate_Cache (DB.File);
 
       Tx.DB := DB'Unrestricted_Access;
       Tx.Current_State := Active;
@@ -695,7 +704,17 @@ package body Database.Transactions is
    function Can_Read (Tx : Transaction) return Boolean is
      (Database.Transactions.State_Rules.Can_Read_State (Tx.Current_State));
    function Can_Write (Tx : Transaction) return Boolean is
-     (Database.Transactions.State_Rules.Can_Write_State (Tx.Current_State, Tx.Current_Mode));
+     (Database.Transactions.State_Rules.Can_Write_State (Tx.Current_State, Tx.Current_Mode)
+      and then Owned_By_Current_Task (Tx));
+
+   function Write_Refusal
+     (Tx      : Transaction;
+      Code    : Database.Status.Status_Code;
+      Message : Wide_Wide_String) return Database.Status.Result is
+     (if Database.Transactions.State_Rules.Can_Write_State (Tx.Current_State, Tx.Current_Mode)
+        and then not Owned_By_Current_Task (Tx)
+      then Database.Status.Failure (Database.Status.Invalid_Argument, "transaction belongs to another task")
+      else Database.Status.Failure (Code, Message));
    function Result (Tx : Transaction) return Database.Status.Result is (Tx.Last);
    function State (Tx : Transaction) return Transaction_State is (Tx.Current_State);
    function Mode (Tx : Transaction) return Transaction_Mode is (Tx.Current_Mode);

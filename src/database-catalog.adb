@@ -603,7 +603,11 @@ package body Database.Catalog is
    function Write_Exclusively is new Database.Exclusive.Run_Waiting (Write_Catalog);
 
    function Save_Holding_Lock (DB : in out Database.Handle) return Database.Status.Result is
-     (if Database.Backend (DB) /= Database.Persistent_Backend then Database.Status.Success else Write_Catalog (DB));
+     (if Database.Backend (DB) /= Database.Persistent_Backend then Database.Status.Success
+      elsif not (DB.Lock.Exclusive_Active and then DB.Lock.Held_By_Current_Task) then
+         Database.Status.Failure
+           (Database.Status.Transaction_Conflict, "the catalog is saved this way only under the exclusive write lock")
+      else Write_Catalog (DB));
 
    function Save (DB : in out Database.Handle) return Database.Status.Result is
    begin

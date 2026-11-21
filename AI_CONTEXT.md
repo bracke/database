@@ -53,7 +53,7 @@ Do not add:
 
 - Source packages: 108
 - Test bodies: 40
-- Test assertions detected: 1492
+- Test assertions detected: 1494
 - Registered AUnit routines detected: 256
 - SPARK project files: 13
 - Examples: 16

@@ -23,6 +23,7 @@ with Database.Status;
 with Database.Tables;
 with Database.Transactions;
 with Database.Types;
+with Database.Vacuum;
 with Database.Values;
 
 package body Backup_Restore_Tests is
@@ -456,16 +457,13 @@ package body Backup_Restore_Tests is
       return Registration.Finished;
    end Registered_At_Once;
 
+   --  The caller has released whatever held the lock, so the registration can finish.
    procedure Await_Registration is
    begin
       for Attempt in 1 .. 500 loop
          exit when Late'Terminated;
          delay 0.01;
       end loop;
-      if not Late'Terminated then
-         --  A task still waiting for the lock would keep the test program from ending.
-         abort Late.all;
-      end if;
       Assert (Late'Terminated, "the registration never finished");
       Assert (Database.Status.Is_Ok (Registration.Result), "the registration failed once the lock was free");
    end Await_Registration;
@@ -608,21 +606,33 @@ package body Backup_Restore_Tests is
 
    type Transaction_Access is access all Database.Transactions.Transaction;
 
+   --  What a borrowing task does through the transaction it is given: a table write, or a vacuum, which reaches the
+   --  transaction only through its own write check.
+   type Borrowed_Action is (Insert_Row, Run_Vacuum);
+
    task type Borrower is
-      entry Write (Tx : Transaction_Access; Schema : Database.Schema.Table_Schema);
+      entry Write (Tx : Transaction_Access; Schema : Database.Schema.Table_Schema; Action : Borrowed_Action);
       entry Outcome (R : out Database.Status.Result);
    end Borrower;
 
    task body Borrower is
       Borrowed : Transaction_Access;
       S        : Database.Schema.Table_Schema;
+      Act      : Borrowed_Action;
       Result   : Database.Status.Result;
+      Report   : Database.Vacuum.Vacuum_Report;
    begin
-      accept Write (Tx : Transaction_Access; Schema : Database.Schema.Table_Schema) do
+      accept Write (Tx : Transaction_Access; Schema : Database.Schema.Table_Schema; Action : Borrowed_Action) do
          Borrowed := Tx;
          S := Schema;
+         Act := Action;
       end Write;
-      Result := Users.Insert (Borrowed.all, Shared_DB, S, (Id => 5, Name => "Borrowed        ", Age => 1));
+      case Act is
+         when Insert_Row =>
+            Result := Users.Insert (Borrowed.all, Shared_DB, S, (Id => 5, Name => "Borrowed        ", Age => 1));
+         when Run_Vacuum =>
+            Result := Database.Vacuum.Vacuum (Borrowed.all, Report);
+      end case;
       accept Outcome (R : out Database.Status.Result) do
          R := Result;
       end Outcome;
@@ -632,7 +642,6 @@ package body Backup_Restore_Tests is
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      Tx : aliased Database.Transactions.Transaction;
       S  : Database.Schema.Table_Schema := User_Schema;
       R  : Database.Status.Result;
    begin
@@ -642,17 +651,39 @@ package body Backup_Restore_Tests is
       Assert (Database.Status.Is_Ok (Database.Last_Result (Shared_DB)), "create failed");
       R := Users.Register (Shared_DB, S);
       Assert (Database.Status.Is_Ok (R), "register failed");
+      Assert
+        (Database.Catalog.Save_Holding_Lock (Shared_DB).Code = Database.Status.Transaction_Conflict,
+         "saving the catalog as the lock holder is refused without the lock");
 
-      Database.Transactions.Begin_Write (Shared_DB, Tx);
-      declare
-         Other : Borrower;
-      begin
-         Other.Write (Tx'Unchecked_Access, S);
-         Other.Outcome (R);
-      end;
-      Assert (R.Code = Database.Status.Invalid_Argument, "a write through another task's transaction is refused");
-      R := Database.Transactions.Commit (Tx);
-      Assert (Database.Status.Is_Ok (R), "commit failed");
+      for Action in Borrowed_Action loop
+         declare
+            Tx        : aliased Database.Transactions.Transaction;
+            Other     : Borrower;
+            Timed_Out : Boolean := False;
+            Ended     : Database.Status.Result;
+         begin
+            Database.Transactions.Begin_Write (Shared_DB, Tx);
+            Other.Write (Tx'Unchecked_Access, S, Action);
+            select
+               Other.Outcome (R);
+            or
+               delay 10.0;
+               --  A task waiting for the write lock cannot be aborted, so the lock is released for it to finish.
+               Timed_Out := True;
+               Ended := Database.Transactions.Rollback (Tx);
+               Other.Outcome (R);
+            end select;
+            if not Timed_Out then
+               Ended := Database.Transactions.Rollback (Tx);
+            end if;
+            Assert (Database.Status.Is_Ok (Ended), "rollback failed");
+            Assert
+              (not Timed_Out, Borrowed_Action'Image (Action) & " through another task's transaction waited for its lock");
+         end;
+         Assert
+           (R.Code = Database.Status.Invalid_Argument,
+            Borrowed_Action'Image (Action) & " through another task's transaction is refused");
+      end loop;
       Database.Close (Shared_DB);
       Remove_File ("borrowed_tx.database");
       Remove_File ("borrowed_tx.database.wal");
@@ -1112,7 +1143,7 @@ package body Backup_Restore_Tests is
       Register_Routine
         (T,
          Transaction_Of_Another_Task_Is_Refused'Access,
-         "a write through another task's transaction is refused");
+         "writes through another task's transaction are refused, and the catalog is saved only under the lock");
       Register_Routine
         (T,
          Encrypted_Physical_Backup_And_Restore'Access,

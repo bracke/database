@@ -39,4 +39,15 @@ package body Database.Exclusive is
       end if;
       return Run (DB);
    end Try_Run;
+
+   function Try_Close (DB : in out Database.Handle; Refused : Database.Status.Result) return Database.Status.Result is
+      function Run is new Holding (Work);
+      Granted : Boolean;
+   begin
+      DB.Lock.Try_Begin_Close (Granted);
+      if not Granted then
+         return Refused;
+      end if;
+      return Run (DB);
+   end Try_Close;
 end Database.Exclusive;

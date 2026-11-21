@@ -232,8 +232,8 @@ package body Database.Migrations is
       New_Column : Database.Schema.Column;
    begin
       if not Write_Tx_Ok (Tx) then
-         return Database.Status.Failure
-           (Database.Status.Read_Only_Transaction,
+         return Database.Transactions.Write_Refusal
+           (Tx, Database.Status.Read_Only_Transaction,
             "write attempted in read-only transaction");
       end if;
       if DB = null then
@@ -298,8 +298,8 @@ package body Database.Migrations is
       C : Database.Schema.Column;
    begin
       if not Write_Tx_Ok (Tx) then
-         return Database.Status.Failure
-           (Database.Status.Read_Only_Transaction,
+         return Database.Transactions.Write_Refusal
+           (Tx, Database.Status.Read_Only_Transaction,
             "write attempted in read-only transaction");
       end if;
       if DB = null then
@@ -336,8 +336,8 @@ package body Database.Migrations is
       Pos : Natural;
    begin
       if not Write_Tx_Ok (Tx) then
-         return Database.Status.Failure
-           (Database.Status.Read_Only_Transaction,
+         return Database.Transactions.Write_Refusal
+           (Tx, Database.Status.Read_Only_Transaction,
             "write attempted in read-only transaction");
       end if;
       if DB = null then
@@ -374,8 +374,8 @@ package body Database.Migrations is
       C : Database.Schema.Column;
    begin
       if not Write_Tx_Ok (Tx) then
-         return Database.Status.Failure
-           (Database.Status.Read_Only_Transaction,
+         return Database.Transactions.Write_Refusal
+           (Tx, Database.Status.Read_Only_Transaction,
             "write attempted in read-only transaction");
       end if;
       if DB = null then

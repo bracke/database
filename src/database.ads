@@ -88,6 +88,9 @@ package Database is
       entry Begin_Exclusive;
       --  Take the write side for an operation outside any transaction when no one writes.
       procedure Try_Begin_Exclusive (Granted : out Boolean);
+      --  Take the write side exclusively for closing the database when no one reads or writes; until End_Write,
+      --  Begin_Read waits and Try_Begin_Read refuses.
+      procedure Try_Begin_Close (Granted : out Boolean);
       procedure End_Write;
       function Active_Readers return Natural;
       function Writer_Active return Boolean;
@@ -102,6 +105,7 @@ package Database is
       Readers       : Natural := 0;
       Writer        : Boolean := False;
       Exclusive     : Boolean := False;
+      Closing       : Boolean := False;
       Holder        : Ada.Task_Identification.Task_Id := Ada.Task_Identification.Null_Task_Id;
       Waiting_Write : Natural := 0;
       entry Acquire_Write;

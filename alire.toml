@@ -17,7 +17,7 @@ gnat_native = "=15.2.1"
 cryptolib = "*"
 
 [[pins]]
-cryptolib = { path = "../cryptolib" }
+cryptolib = { url = "https://github.com/bracke/cryptolib.git", commit = "2e5c415f65fd49c2a496c97813740fa9b83e02fa" }
 
 # Build dependencies in the development profile (-Og) too, not the default
 # release (-O3), so this root and the child crates that pin it share object
